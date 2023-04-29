@@ -1,11 +1,23 @@
 all:
-	$(MAKE) Makefile.config
-	$(MAKE) -C src
+	$(MAKE) config
+	$(MAKE) -C src texpresso
+
+dev:
+	$(MAKE) config
+	$(MAKE) -C src texpresso-dev
 
 clean:
-	$(MAKE) -C src clean
+	rm -rf build/objects/*
+
+distclean:
+	rm -rf build Makefile.config
 
 UNAME := $(shell uname)
+
+config: Makefile.config build/objects
+
+build/objects:
+	mkdir -p build/objects
 
 ifeq ($(UNAME), Linux)
 Makefile.config: Makefile
@@ -20,4 +32,4 @@ Makefile.config: Makefile
 	echo >>$@ "LIBS=-L$(BREW)/lib -lmupdf -lm -lmupdf-third -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2"
 endif
 
-.PHONY: all clean
+.PHONY: all dev clean

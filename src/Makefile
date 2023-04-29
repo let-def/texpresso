@@ -1,38 +1,43 @@
 OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o renderer.o engine_tex.o engine_pdf.o engine_dvi.o synctex.o sexp_parser.o
 
-DIR=../build
+BUILD=../build
+DIR=$(BUILD)/objects
 
 DIR_OBJECTS=$(foreach OBJ,$(OBJECTS),$(DIR)/$(OBJ))
+TARGETS=texpresso texpresso-dev texpresso-debug-proxy texpresso.so
 
-all: texpresso-dev
+all: $(TARGETS)
 
-texpresso: $(DIR)/driver.o $(DIR)/main.o $(DIR)/logo.o $(DIR_OBJECTS) ../build/libmydvi.a
+texpresso: $(BUILD)/texpresso
+$(BUILD)/texpresso: $(DIR)/driver.o $(DIR)/main.o $(DIR)/logo.o $(DIR_OBJECTS) $(DIR)/libmydvi.a
 	$(CC) -o $@ $^ $(LIBS)
 
-texpresso-debug-proxy: proxy.c
-	$(CC) -o $@ $^
-
-texpresso-dev: $(DIR)/driver.o $(DIR)/loader.o $(DIR)/logo.o texpresso.so
+texpresso-dev: $(BUILD)/texpresso-dev
+$(BUILD)/texpresso-dev: $(DIR)/driver.o $(DIR)/loader.o $(DIR)/logo.o $(BUILD)/texpresso.so
 	$(CC) -o $@ $^ $(LIBS)
 
-texpresso.so: $(DIR)/main.o $(DIR_OBJECTS) ../build/libmydvi.a
+texpresso.so: $(BUILD)/texpresso.so
+$(BUILD)/texpresso.so: $(DIR)/main.o $(DIR_OBJECTS) $(DIR)/libmydvi.a
 	$(MAKE) -C dvi
 	$(CC) -ldl -shared -o $@ $^ $(LIBS)
 	killall -SIGUSR1 texpresso-dev || true
 
+texpresso-debug-proxy: $(BUILD)/texpresso-debug-proxy
+$(BUILD)/texpresso-debug-proxy: proxy.c
+	$(CC) -o $@ $^
+
 $(DIR)/%.o: %.c
-	$(CC) -c -o $@ -Idvi/ $^
+	$(CC) -c -o $@ -Idvi/ $<
 
-clean:
-	rm -f $(DIR_OBJECTS) $(DIR)/*.o
-	$(MAKE) -C dvi clean
-
-../build/libmydvi.a:
+$(DIR)/libmydvi.a: $(wildcard dvi/*.*)
 	$(MAKE) -C dvi
 
-.PHONY: all clean ../build/libmydvi.a
+clean:
+	rm -f $(DIR)/*.o $(DIR)/*.a
+	$(MAKE) -C dvi clean
 
 ../Makefile.config:
-	$(MAKE) -C .. Makefile.config
-
+	$(MAKE) -C .. config
 include ../Makefile.config
+
+.PHONY: all clean $(TARGETS)

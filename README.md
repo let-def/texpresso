@@ -1,22 +1,11 @@
-# texpresso
+# TeXpresso: live rendering and error reporting for LaTeX 
 
-A wrapper to speed-up latex
+_Note: this is an experimental tool._
 
-Run `make` to build the tool:
-```
-$ make
-```
+TeXpresso has been tested on Linux and macOS and should work with both AMD64 and Apple Silicon architectures.
 
-If build succeeds, artifacts are put in the `output` directory:
-```
-$ ls output/
-libintexcept.so  proxy.exe
-```
+It is made of two components:
+- this repository which implements the `texpresso` binary
+- the [tectonic/](tectonic/) git-submodule which implements a patched version of [Tectonic](https://github.com/tectonic-typesetting/tectonic) that produces the `texpresso-tonic` helper binary
 
-You can test the tool by running pdflatex or latex like that:
-
-```
-output/proxy.exe pdflatex -synctex=-1 -interaction nonstopmode input.tex
-```
-
-The proxy will run the build and wait for changes.
+After a successful build, copy texpresso

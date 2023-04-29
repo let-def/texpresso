@@ -4,7 +4,8 @@ OBJECTS= \
 	tex_tfm.o tex_fontmap.o tex_vf.o tex_enc.o \
     vstack.o pdf_lexer.re2c.o
 
-DIR=../../build
+BUILD=../../build
+DIR=$(BUILD)/objects
 
 DIR_OBJECTS=$(foreach OBJ,$(OBJECTS),$(DIR)/$(OBJ))
 
@@ -14,16 +15,16 @@ $(DIR)/libmydvi.a: $(DIR_OBJECTS)
 	ar cr $@ $^
 
 $(DIR)/dvi_resmanager.o: dvi_resmanager.c
-	$(CC) $(shell pkg-config --cflags freetype2) -c -o $@ $^
+	$(CC) $(shell pkg-config --cflags freetype2) -c -o $@ $<
 
 $(DIR)/%.re2c.c: %.c
-	re2c $^ -o $@ --tags --bit-vectors
+	re2c $< -o $@ --tags --bit-vectors
 
 $(DIR)/%.o: %.c
-	$(CC) -c -o $@ $^
+	$(CC) -c -o $@ $<
 
 $(DIR)/%.o: $(DIR)/%.c
-	$(CC) -c -o $@ $^
+	$(CC) -c -o $@ $<
 
 clean:
 	rm -f $(DIR)/libmydvi.a $(DIR_OBJECTS) $(DIR)/dvi_special.c.re2c.c
@@ -31,5 +32,5 @@ clean:
 .PHONY: all clean
 
 ../../Makefile.config:
-	$(MAKE) -C ../.. Makefile.config
+	$(MAKE) -C ../.. config
 include ../../Makefile.config
