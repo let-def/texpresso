@@ -1,0 +1,8 @@
+tectonic:
+	cd tectonic && $(TECTONIC_ENV) cargo build --release
+
+Makefile.config:
+	$(MAKE) -f Makefile config
+include Makefile.config
+
+.PHONY: tectonic

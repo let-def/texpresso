@@ -26,6 +26,10 @@ texpresso-debug-proxy: $(BUILD)/texpresso-debug-proxy
 $(BUILD)/texpresso-debug-proxy: proxy.c
 	$(CC) -o $@ $^
 
+texpresso-debug: $(BUILD)/texpresso-debug
+$(BUILD)/texpresso-debug: ../scripts/texpresso-debug
+	cp $< $@
+
 $(DIR)/%.o: %.c
 	$(CC) -c -o $@ -Idvi/ $<
 
