@@ -4,8 +4,6 @@ OBJECTS= \
 	tex_tfm.o tex_fontmap.o tex_vf.o tex_enc.o \
     vstack.o pdf_lexer.re2c.o
 
-CC=gcc -O2 -ggdb -I. -fPIC -I/opt/homebrew/include
-LIBS=-lmupdf -lm -lmupdf-third -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo
 DIR=../../build
 
 DIR_OBJECTS=$(foreach OBJ,$(OBJECTS),$(DIR)/$(OBJ))
@@ -31,3 +29,7 @@ clean:
 	rm -f $(DIR)/libmydvi.a $(DIR_OBJECTS) $(DIR)/dvi_special.c.re2c.c
 
 .PHONY: all clean
+
+../../Makefile.config:
+	$(MAKE) -C ../.. Makefile.config
+include ../../Makefile.config
