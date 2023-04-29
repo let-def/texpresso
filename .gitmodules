@@ -1,0 +1,3 @@
+[submodule "tectonic"]
+	path = tectonic
+	url = https://github.com/let-def/tectonic.git

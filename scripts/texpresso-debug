@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+rm -f "$TMPDIR/texpresso.stdin" "$TMPDIR/texpresso.stdout" "$TMPDIR/texpresso.stderr"
+mkfifo "$TMPDIR/texpresso.stdin" "$TMPDIR/texpresso.stdout" "$TMPDIR/texpresso.stderr"
+cat >"$TMPDIR/texpresso.lldb" <<EOF
+settings set target.input-path "$TMPDIR/texpresso.stdin"
+settings set target.output-path "$TMPDIR/texpresso.stdout"
+settings set target.error-path "$TMPDIR/texpresso.stderr"
+EOF
+exec lldb texpresso --source "$TMPDIR/texpresso.lldb" -- "$@"

@@ -1,0 +1,173 @@
+\documentclass{article}
+% General document formatting
+\usepackage[margin=1.0in]{geometry}
+\usepackage[parfill]{parskip}
+\usepackage[utf8]{inputenc}
+\usepackage{fontspec}
+\usepackage{xspace}
+\usepackage{hyperref}
+
+\title{TeXpresso manual}
+\author{Frédéric Bour}
+
+\setmainfont{Cabin}
+%[
+%  Extension = .otf,
+%  UprightFont = *-Regular,
+%  BoldFont = *-Bold,
+%  ItalicFont = *-Italic,
+%  BoldItalicFont = *-BoldItalic,
+%]
+
+\begin{document}
+
+\maketitle
+
+\newcommand{\txp}{\TeX{}presso\xspace}
+\newcommand{\furl}[1]{\footnote{\url{#1}}}
+
+\section{Getting started}
+
+\txp is an incremental previewer for \TeX/\LaTeX{} documents. It is built-on top of the tectonic\furl{https://tectonic-typesetting.github.io} and the XeTeX engine.
+
+A binary distribution is made of the following files:
+
+\begin{itemize}
+  \item {\tt texpresso}, the main binary. It is a graphical application that will display a {\tt .tex} document in a window.
+  \item {\tt texpresso.el}, an Emacs mode integrating \txp, for adding live preview to \TeX{} files
+  \item {\tt tectonic}, a custom version of tectonic with patches applied to speed-up rendering. When used directly, rather than through \txp, it has the same behavior as upstream tectonic.
+\end{itemize}
+
+The integration with the Emacs text editor is the preferred way to use \txp, but it can also be used as a standalone command. The next sections will explain how to install the binaries on your system, how to setup Emacs, and finally how to start working with \txp.
+
+\section{Installation}
+
+Put your answer to part a here
+
+\section{The Emacs mode}
+
+\subsection{Loading the file}
+The Emacs mode is implemented in the \texttt{texpresso.el} file. It can be loaded using load-file command: \texttt{M-x load-file <path-to-texpresso.el>} in a running Emacs. To have it loaded every time you start Emacs, add this to your configuration file (usually \texttt{$\sim$/.emacs}):
+
+\begin{verbatim}
+(load-file "<path-to-texpresso.el>")
+\end{verbatim}
+
+If \texttt{texpresso.el} is in the \texttt{load-path} of Emacs, \texttt{(require 'texpresso)} is also supported.
+
+Before using \txp, make sure that \texttt{texpresso} and the corresponding \texttt{tectonic} binaries are visible from the \texttt{PATH} variable used by Emacs.
+
+\subsection{texpresso command}
+
+\txp is started using the \texttt{texpresso} command from Emacs (\texttt{M-x texpresso}). The command will prompt for the primary \TeX{} file of the document you want to work on. If it is the current file opened in Emacs, you can just press \texttt{Enter}. Otherwise select it in the prompt.
+
+After executing this command, a \txp window pops up.
+Re-executing the command will prompt again for a primary file and restart \txp.
+
+The command also turns on \texttt{texpresso-mode} (see below).
+
+\subsection{texpresso-mode}
+
+\texttt{texpresso-mode} is a global minor Emacs mode. When it is turned on, the changes to all \texttt{.tex} files edited in Emacs are synchronized with \txp (technically, technically it is any major mode deriving from \texttt{'tex-mode}).
+
+You can turn this global mode on-and-off to enable or disable synchronization.
+
+\subsection{texpresso-sync-mode}
+
+This is a local minor mode that forces a file to be synchronized with \txp. Enable it when a non-TeX file is part of a \TeX{} project.
+
+\subsection{Advanced features}
+
+A few other commands are provided, though they are part of the \txp development and debugging workflow rather than for normal use.
+
+\texttt{texpresso-reset} and \texttt{texpresso-reset-buffer}. Use this when the state between Emacs and \txp gets desynchronized. On next change, the whole buffer will be transmitted rather than an incremental patch.
+
+\texttt{texpresso-reset} applies to all synchronized buffers while \texttt{texpresso-reset-buffer} applies to the current buffer only.
+% TODO: drop texpresso-reset-buffer to simplify things, a single command is probably sufficient.
+
+\texttt{texpresso-connect-debugger} is used in conjunction with the \texttt{texpresso-debug} shell script. The later should be started manually in a separate terminal. It spawns a fresh \txp process attached to a debugger. The \texttt{texpresso-connect-debugger} command then connects to it. To do so, it needs the \texttt{texpresso-debug-proxy} binary to be visible from \texttt{PATH}.
+
+\section{The \txp window}
+
+The window can be manipulated using both keyboard and mouse:
+
+\begin{itemize}
+
+\end{itemize}
+
+\section{Alternatives}
+
+\txp is far from being the first solution to bring interactivity to \LaTeX{} rendering. We tried to collect and compare the existing approaches.
+
+This comparison is made with the idea that \txp's goal is to make working with
+\LaTeX{} sources as pleasant as possible with free software accessible to everyone.
+
+\subsection{\TeX-based}
+
+Whizzy\TeX\furl{http://cristal.inria.fr/whizzytex/} is an Emacs mode to speed-up rendering of \LaTeX{} documents. Rather than extending the \TeX{} engine itself, it makes clever use of \LaTeX{} macros to minimize the rendering work.
+This comes with some limitations (not rendering a document but only a specific section, producing intermediate files, usually PDFs). It is a free and open-source solution.
+
+BaKoMa\TeX\furl{http://www.bakoma-tex.com/} describes itself as a ``True WYSIWYG \LaTeX{} System''. It is a GUI program that can edit and live render \TeX{} documents while mostly working from the rendered view rather than the source. It is a proprietary system that was available for Linux, macOS and Windows. Unfortunately, its talented author passed away and the software is not maintained anymore.
+
+Compositor App\furl{https://compositorapp.com/} is a recent addition. Is is only available for macOS and tries to make the edition mostly GUI-based. I cannot tell exactly how this works, though it is in an early development cycle and seems limited to simple documents.
+
+\TeX{}ifier\furl{https://www.texifier.com/}, formerly known as \TeX{}pad, is a custom \TeX{} engine first-designed to run on iOS and later made incremental. According to their blog, the rendering pipeline is quite optimised. However, most of the documents I tried to work with were either incompatible with their engine, exhibited subtle differences, or simply broke the engine after some time. It is a proprietary software that is only available for i(Pad)OS and macOS. As of April 2023, a Windows version is in development.
+
+\subsection{Non-\TeX{} based}
+
+LyX\furl{https://www.lyx.org/} is a GUI editor that uses \TeX{} as a backend for rendering documents, but uses a completely custom frontend language. It is not intended to be edited directly but through their interface that provides some kind of structural editing. Most of the work is supported by nicely integrated features, and it seems to possible to use almost all \LaTeX{} functionalities by directly inputing \TeX{} code. This structural workflow has been dubbed ``WYSIWYM'' (What You See Is What You Mean).
+
+TeXmacs\furl{https://www.texmacs.org/} also comes with its own frontend language, but does not use \TeX{} for rendering. Instead, it has its own high-quality typesetting engine, truly built with WYSIWYG interactions in mind. While incompatible with a fully \TeX{}-based workflow, it is a powerful software.
+
+Typst\furl{https://typst.app} is a newcomer to the document composition market. It has its own scripting language and is designed to provide a much more reactive experience than \TeX{}. This is still a ``source''-first experience, but a GUI is provided to make it accessible. The scripting langage is much modern thatn \TeX{}, providing higher-order functions rather than textual macro substitution. It is still early in its development phase and is not yet suitable for all the domains traditionnally targeted by \TeX/\LaTeX.
+
+
+\section{Reference}
+
+\subsection{\txp filesystem protocol}
+
+\subsection{\txp editor protocol}
+
+TeXpresso communicates with the editor using a simple sexp-based protocol\footnote{It is only implemented in Emacs, but in principle it is editor agnostic.}.
+Messages from the editor are read on the standard input, messages from \txp to the editor are written on the standard output and separated by newlines.
+
+\subsubsection{Input messages}
+
+\paragraph{File system overlay.} These commands construct a virtual file system seen by \txp that takes priority over the real file system.
+
+\texttt{(open "path" "contents")} overrides the contents of file at {\em path}
+with {\em contents} (the real filesystem is not actually changed, only the view \txp has of it is affected).
+
+\texttt{(close "path")} removes {\em path} from \txp overlay, file at {\em path} will now be looked up from the disk.
+
+\texttt{(change "path" offset length "text")} changes the contents of the overlay at {\em path} by replacing {\em length} bytes at {\em offset} by {\em "text"}.
+
+\paragraph{Configuration.} These commands are use to change the configuration of \txp window.
+
+\texttt{(theme (bg\_r bg\_g bg\_b) (fg\_r fg\_g fg\_b))} sets the background and foreground colors of \txp window. Intensities are specified as floats in the $0.0-1.0$ range.
+
+\subsubsection{Output messages}
+
+\paragraph{Notification channels.} These commands are used by \txp to share the standard output and the log file of the underlying \LaTeX{} process.
+
+\texttt{(append out|log "text")} appends {\em "text"} to the standard output (if the second argument is {\em out}) or the log file (if the second argument is {\em log}). Emacs interpets this by adding this text to the \texttt{*texpresso-out} or \texttt{*texpresso-log*} buffers.
+
+\section{Plan}
+\begin{itemize}
+  \item Installation
+    \begin{itemize}
+      \item \TeX{}live version
+      \item tectonic version
+    \end{itemize}
+  \item Utilisation avec Emacs
+  \item Limitations
+  \item Alternatives
+  \item Développement
+    \begin{itemize}
+      \item Qu'elles sont les prochaines étapes ?
+      \item Design: incdvi, intexcept, protocole latex-driver, protocole driver-emacs
+    \end{itemize}
+  \item Roadmap: prochaines fonctionnalités pour l'utilisateur
+\end{itemize}
+
+\end{document}
