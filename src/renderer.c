@@ -688,7 +688,7 @@ static void update_texture(fz_context *ctx,
     upload_texture_rect(self->tex, self->st.rect, pixels);
   }
 
-  fprintf(stderr, "[txp_renderer] updated texture, new pixels: %d\n", w * h);
+  // fprintf(stderr, "[txp_renderer] updated texture, new pixels: %d\n", w * h);
 }
 
 static void render_caret(txp_renderer *self, int x, int y, int h)
@@ -757,9 +757,9 @@ void txp_renderer_render(fz_context *ctx, txp_renderer *self)
   clock_gettime(CLOCK_MONOTONIC, &update_start);
   update_texture(ctx, self, &page_rect, &view_rect);
   clock_gettime(CLOCK_MONOTONIC, &update_end);
-  fprintf(stderr, "[txp_renderer] updated texture in %ldus\n",
-          (update_end.tv_sec - update_start.tv_sec) * 1000 * 1000 +
-          (update_end.tv_nsec - update_start.tv_nsec) / 1000);
+  // fprintf(stderr, "[txp_renderer] updated texture in %ldus\n",
+  //         (update_end.tv_sec - update_start.tv_sec) * 1000 * 1000 +
+  //         (update_end.tv_nsec - update_start.tv_nsec) / 1000);
   // fprintf(stderr, "[txp_renderer] txp_renderer_render: blit texture to screen\n");
 
   int bx0 = floorf(view_rect.x);
@@ -786,13 +786,13 @@ void txp_renderer_render(fz_context *ctx, txp_renderer *self)
       }
       else
       {
-        fprintf(stderr, "[render] fill rect: %d %d %d %d\n", r.x, r.y, r.w, r.h);
+        // fprintf(stderr, "[render] fill rect: %d %d %d %d\n", r.x, r.y, r.w, r.h);
         SDL_SetRenderDrawColor(self->sdl, 96, 96, 255, 64);
         SDL_RenderFillRect(self->sdl, &r);
       }
     }
   }
-  fprintf(stderr, "[render] pixels pushed to screen: %d\n", pixel_pushed);
+  // fprintf(stderr, "[render] pixels pushed to screen: %d\n", pixel_pushed);
 }
 
 static float point_to_rect_dist(fz_point p, fz_rect r)
