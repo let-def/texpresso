@@ -204,7 +204,7 @@ color_parse_cmyk(float color[3], cursor_t c, cursor_t m, cursor_t y, cursor_t k,
 
 static bool parse_color(dvi_colorstate *state, cursor_t cur, cursor_t lim)
 {
-  cursor_t mar, f0, f1, f2;
+  cursor_t mar, f0, f1, f2, f3;
   // fprintf(stderr, "parse_color: %.*s\n", (int)(lim - cur), cur);
   float color[3];
 
@@ -226,6 +226,15 @@ static bool parse_color(dvi_colorstate *state, cursor_t cur, cursor_t lim)
           ws+ @f2 float
     {
       color_parse_rgb(color, f0, f1, f2, lim);
+      break;
+    }
+
+    "cmyk" ws+ @f0 float
+           ws+ @f1 float
+           ws+ @f2 float
+           ws+ @f3 float
+    {
+      color_parse_cmyk(color, f0, f1, f2, f3, lim);
       break;
     }
 
