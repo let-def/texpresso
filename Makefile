@@ -1,6 +1,8 @@
 all:
 	$(MAKE) texpresso
 	$(MAKE) texpresso-tonic
+	@echo "# Build succeeded. Try running:"
+	@echo "# build/texpresso test/simple.tex"
 
 texpresso:
 	$(MAKE) -C src texpresso
