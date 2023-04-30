@@ -848,6 +848,9 @@ static void rollback(fz_context *ctx, struct tex_engine *self, int trace)
         fprintf(stderr, "kill(%d, SIGTERM)\n", self->pid);
         kill(self->pid, SIGTERM);
 
+	// Under Linux, the process needs to be resumed for the signal to be delivered 
+        kill(self->pid, SIGCONT);
+
         // If a we killed a child process, its parent with resume operations and
         // write a "BACK" message.
         // The root process has to be cleaned up explicitly.
