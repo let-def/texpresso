@@ -1,0 +1,53 @@
+pkgname=texpresso-git
+pkgver=ec7c8fa
+pkgrel=1
+pkgdesc="Live rendering and error reporting for LaTeX"
+arch=('x86_64')
+license=('MIT')
+depends=('sdl2' 'fontconfig' 'openssl' 'tectonic')
+makedepends=('libmupdf' 're2c' 'rust' 'gcc' 'pkg-config' 'git')
+provides=("${pkgname%-git}")
+conflicts=("${pkgname%-git}")
+source=(
+  "${pkgname}::git+https://github.com/let-def/texpresso.git"
+  "texpresso-tonic::git+https://github.com/let-def/tectonic.git#commit=03e79075be9ee35587c529c3bae6b5868997fa7c"
+  "harfbuzz::git+https://github.com/harfbuzz/harfbuzz.git#commit=4a1d891c6317d2c83e5f3c2607ec5f5ccedffcde"
+  "tectonic-staging::git+https://github.com/tectonic-typesetting/tectonic-staging.git#commit=70dbe0603c4b27f17b3b4dcb25a85e9da3050fe9"
+)
+sha256sums=(
+  "SKIP"
+  "SKIP"
+  "SKIP"
+  "SKIP"
+) 
+
+pkgver() {
+    cd "${srcdir}/${pkgname}"
+    #git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//g'
+    git rev-parse --short HEAD
+}
+
+prepare() {
+  cd "${srcdir}/${pkgname}"
+  git submodule init
+  git config submodule.tectonic.url "${srcdir}/texpresso-tonic"
+  git -c protocol.file.allow=always submodule update
+  cd tectonic
+  git config submodule.crates/bridge_harfbuzz/harfbuzz.url "${srcdir}/harfbuzz"
+  git config submodule.reference_sources.url "${srcdir}/tectonic-staging" 
+  git -c protocol.file.allow=always submodule update
+}
+
+build() {
+    cd "${srcdir}/${pkgname}"
+    make
+}
+
+package() {
+    cd "${srcdir}/${pkgname}"
+
+    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+    install -Dm755 build/texpresso "${pkgdir}/usr/bin/texpresso"
+    install -Dm755 build/texpresso-tonic "${pkgdir}/usr/bin/texpresso-tonic"
+    install -Dm644 emacs/texpresso.el "${pkgdir}/usr/share/emacs/site-lisp/texpresso.el"
+}
