@@ -1,5 +1,7 @@
+CARGO_BUILD_FLAGS ?= --release
+
 tectonic:
-	cd tectonic && $(TECTONIC_ENV) cargo build --release
+	cd tectonic && $(TECTONIC_ENV) cargo build $(CARGO_BUILD_FLAGS)
 
 Makefile.config:
 	$(MAKE) -f Makefile config
