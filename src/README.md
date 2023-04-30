@@ -3,7 +3,7 @@
 The binary can be compiled in two ways:
 
 1. `texpresso-dev` is a frontend that supports _hot-loading_ by dynamically linking `texpresso.so`.
-After updating `texpresso.so`, send a USR1 to reload it (`killall -SIGUSR1 texpresso-dev`). 
+After updating `texpresso.so`, send a USR1 to reload it (`killall -SIGUSR1 texpresso-dev`).
 
 2. `texpresso` is a standalone version.
 
@@ -29,7 +29,7 @@ control to `texpresso_main`.
 is a component that takes the input file provided to `texpresso` and turns it
 into something that can be displayed:
 
-- [engine_dvi.c](engine_dvi.c) renders a DVI and XDV files. 
+- [engine_dvi.c](engine_dvi.c) renders a DVI and XDV files.
 - [engine_pdf.c](engine_pdf.c) renders a PDF file (using MuPDF).
 - [engine_tex.c](engine_tex.c) renders a .tex file, by turning it into an XDV stream using
   texpresso-tonic (TeXpresso flavor of [tectonic](https://github.com/tectonic-typesetting/tectonic))

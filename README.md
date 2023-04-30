@@ -1,4 +1,4 @@
-# TeXpresso: live rendering and error reporting for LaTeX 
+# TeXpresso: live rendering and error reporting for LaTeX
 
 _Note: this is an experimental tool._
 
@@ -18,15 +18,15 @@ Otherwise, read below.
 
 ## Build TeXpresso
 
-For, make sure the dependencies are available: `pkg-config`, `re2c`, `SDL2`, `mupdf` and its dependencies (`libjpeg`, `libpng`, `freetype2`, `gumbo`, ...). 
-Under macOS, `brew` is also used to find local files 
+For, make sure the dependencies are available: `pkg-config`, `re2c`, `SDL2`, `mupdf` and its dependencies (`libjpeg`, `libpng`, `freetype2`, `gumbo`, ...).
+Under macOS, `brew` is also used to find local files
 
 If it succeeds, `make texpresso` produces `build/texpresso`.
 
 Other targets are:
 - `config` to generate configuration in `Makefile.config` (automatically called during building)
-- `dev` produces `build/texpresso-dev` which supports hot-reloading to ease development 
-- `debug` produces debugging tools in `build/` 
+- `dev` produces `build/texpresso-dev` which supports hot-reloading to ease development
+- `debug` produces debugging tools in `build/`
 - `clean` to remove intermediate build files
 - `distclean` to remove all build files (`build/` and `Makefile.config`)
 
@@ -58,9 +58,9 @@ build/texpresso test/simple.tex
 TeXpresso comes with an Emacs mode. The source can be found in
 [emacs/texpresso.el](emacs/texpresso.el).  Load this file in Emacs (using `M-X load-file`; it is also compatible with `require`).
 
-Start TeXpresso with `M-x texpresso`. The prompt will let you select the master/root TeX file. 
+Start TeXpresso with `M-x texpresso`. The prompt will let you select the master/root TeX file.
 It will try to start `texpresso` command. If it is not possible, it will open
 `(customize-variable 'texpresso-binary)` to let you set the path to texpresso
 binary.
 
-To work correctly, `texpresso` needs `texpresso-tonic` helper; when copying them, make sure they are both in the same directory. 
+To work correctly, `texpresso` needs `texpresso-tonic` helper; when copying them, make sure they are both in the same directory.
