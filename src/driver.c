@@ -24,10 +24,15 @@
 
 #include <unistd.h>
 #include <signal.h>
-#include <sys/syslimits.h>
 #include <mupdf/fitz/document.h>
 #include "logo.h"
 #include "driver.h"
+
+#ifdef __APPLE__
+#include <sys/syslimits.h>
+#else
+#include <linux/limits.h>
+#endif
 
 /* Custom SDL events  */
 
