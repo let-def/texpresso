@@ -1,6 +1,6 @@
 # Utilisation
 
-Depuis Emacs, il faut ouvrir un fichier .tex et activer `texpresso-mode` (c'est un mode mineur global).
+Depuis Emacs, il faut ouvrir un fichier .tex et activer `texpresso`.
 
 À l'activation, il demande de choisir le fichier .tex racine. Pour un fichier auto-contenu, on peut juste valider pour utiliser le fichier courant. Pour un fichier multi-projet, on peut naviguer pour choisir la racine.
 
