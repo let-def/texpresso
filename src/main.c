@@ -1005,8 +1005,8 @@ bool texpresso_main(struct persistent_state *ps)
             schedule_event(RENDER_EVENT);
             break;
 
-          case SDLK_r:
-            reload = 1;
+          // case SDLK_r:
+          //   reload = 1;
           case SDLK_q:
             quit = 1;
             break;
