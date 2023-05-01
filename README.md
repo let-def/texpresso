@@ -10,16 +10,25 @@ It is made of two components:
 - this repository which implements the `texpresso` binary
 - the [tectonic/](tectonic/) git-submodule which implements a patched version of [Tectonic](https://github.com/tectonic-typesetting/tectonic) that produces the `texpresso-tonic` helper binary
 
+At the moment, it requires a functional installation of [Tectonic](https://github.com/tectonic-typesetting/tectonic). Install it first and make it compile simple TeX file to generate initial LaTeX format. For instance, run "tectonic test/simple.tex" at the root of this repository.
+
 # Building
 
 If all dependencies are installed and out-of-the-box configuration works, `make all` should be sufficient to build both `texpresso` and `texpresso-tonic` in `build/` directory.
+
+For Archlinux users, a PKGBUILD is provided. Move to a temporary directory and build the package:
+
+``` sh
+$ wget https://github.com/let-def/texpresso/raw/main/packaging/archlinux/PKGBUILD
+$ makepkg
+```
 
 Otherwise, read below.
 
 ## Build TeXpresso
 
-For, make sure the dependencies are available: `pkg-config`, `re2c`, `SDL2`, `mupdf` and its dependencies (`libjpeg`, `libpng`, `freetype2`, `gumbo`, ...).
-Under macOS, `brew` is also used to find local files
+First make sure the dependencies are available: `pkg-config`, `re2c`, `SDL2`, `mupdf` (and its own dependencies: `libjpeg`, `libpng`, `freetype2`, `gumbo`, ...).
+Under macOS, `brew` is also used to find local files.
 
 If it succeeds, `make texpresso` produces `build/texpresso`.
 
@@ -53,6 +62,10 @@ If both commands built succesfully, you can try TeXpresso using:
 build/texpresso test/simple.tex
 ```
 
+This is just a minimal test to make sure that TeXpresso is installed correctly.
+If TeXpresso window does not display the document, please report an issue.
+Recommended use is with Emacs, see below. Vim support will come later.
+
 # Emacs mode
 
 TeXpresso comes with an Emacs mode. The source can be found in
@@ -64,3 +77,8 @@ It will try to start `texpresso` command. If it is not possible, it will open
 binary.
 
 To work correctly, `texpresso` needs `texpresso-tonic` helper; when copying them, make sure they are both in the same directory.
+
+`M-x texpresso-display-output` will open a small window listing TeX warnings and errors on the current page.
+Use `M-x texpresso-next-page` and `M-x texpresso-previous-page` to move between pages without leaving Emacs.
+
+# Navigating TeXpresso window
