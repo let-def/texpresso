@@ -372,6 +372,25 @@ static void wakeup_poll_thread(int poll_stdin_pipe[2], char c)
 
 /* Command interpreter */
 
+static void previous_page(ui_state *ui)
+{
+  if (ui->page > 0)
+  {
+    ui->page -= 1;
+    int page_count = send(page_count, ui->eng);
+    if (page_count > 0 && ui->page >= page_count &&
+        send(get_status, ui->eng) == DOC_TERMINATED)
+      ui->page = page_count - 1;
+    schedule_event(RELOAD_EVENT);
+  }
+}
+
+static void next_page(ui_state *ui)
+{
+  ui->page += 1;
+  schedule_event(RELOAD_EVENT);
+}
+
 static const char *relative_path(const char *path, const char *dir, int *go_up)
 {
   const char *rel_path = path, *dir_path = dir;
@@ -745,6 +764,10 @@ static void interpret_command(struct persistent_state *ps,
     }
     fprintf(stderr, "[command] theme %x %x\n", ps->theme_bg, ps->theme_fg);
   }
+  else if (strcmp(verb, "previous-page") == 0)
+    previous_page(ui);
+  else if (strcmp(verb, "next-page") == 0)
+    next_page(ui);
   else
     fprintf(stderr, "[command] unknown verb: %s\n", verb);
 
@@ -922,21 +945,12 @@ bool texpresso_main(struct persistent_state *ps)
         {
           case SDLK_LEFT:
           case SDLK_PAGEUP:
-            if (ui->page > 0)
-            {
-              ui->page -= 1;
-              int page_count = send(page_count, ui->eng);
-              if (page_count > 0 && ui->page >= page_count &&
-                  send(get_status, ui->eng) == DOC_TERMINATED)
-                ui->page = page_count - 1;
-              schedule_event(RELOAD_EVENT);
-            }
+            previous_page(ui);
             break;
 
           case SDLK_RIGHT:
           case SDLK_PAGEDOWN:
-            ui->page += 1;
-            schedule_event(RELOAD_EVENT);
+            next_page(ui);
             break;
 
           case SDLK_p:

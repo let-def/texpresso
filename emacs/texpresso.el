@@ -349,7 +349,18 @@ If FILENAME is nil, use `(buffer-file-name)'."
   "Tell TeXpresso processes to check filesystem for changed files.
 This is an alternative, more manual, workflow.
 During development, it can also be used to hot-reload TeXpresso code."
+  (interactive)
   (call-process "killall" nil 0 nil "-SIGUSR1" "texpresso"))
+
+(defun texpresso-previous-page ()
+  "Tell TeXpresso to move to previous page"
+  (interactive)
+  (texpresso--send 'previous-page))
+
+(defun texpresso-next-page ()
+  "Tell TeXpresso to move to next page"
+  (interactive)
+  (texpresso--send 'next-page))
 
 (provide 'texpresso)
 ;;; texpresso.el ends here
