@@ -5,6 +5,10 @@ _Note: this is an experimental tool._
 **Important: this repository uses submodules. Clone using `git clone --recurse-submodules`.**
 
 TeXpresso has been tested on Linux and macOS and should work with both AMD64 and Apple Silicon architectures.
+Here is a sample recording of me editing and browsing @fabiensanglard [Game Engine Black Book: Doom](https://github.com/fabiensanglard/gebbdoom) in TeXpresso (using my emacs theme):
+
+https://user-images.githubusercontent.com/1048096/235424858-a5a2900b-fb48-40b7-a167-d0b71af39034.mp4
+
 
 It is made of two components:
 - this repository which implements the `texpresso` binary
