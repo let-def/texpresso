@@ -222,6 +222,7 @@ standard output. This function interprets one of these."
         (let ((inhibit-read-only t)
               (pos (byte-to-position (1+ (nth 2 expr))))
               (text (nth 3 expr))
+              (window (get-buffer-window))
               lines endpos)
           (setq endpos (+ pos (length text)))
           (unless (and (>= (point-max) endpos)
@@ -232,7 +233,9 @@ standard output. This function interprets one of these."
             (setq lines (- (line-number-at-pos (point)) lines))
             (when (> lines 0)
               (kill-line lines))
-            (goto-char (point-max)))
+            (when window (with-selected-window window
+                           (goto-char (1- (point-max)))
+                           (recenter -1))))
           (texpresso--output-schedule-truncate endpos))))
 
      ((eq tag 'flush)
