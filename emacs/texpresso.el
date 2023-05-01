@@ -89,6 +89,24 @@ Otherwise a buffer is synchronized if its major mode derives from `tex-mode'."
   :type '(choice (file :tag "Path")
                  (const :tag "Auto" nil)))
 
+(defvar-local texpresso--output-bound nil)
+(defvar-local texpresso--output-timer nil)
+
+(defun texpresso--output-truncate (buffer)
+  (with-current-buffer buffer
+    (when texpresso--output-timer
+      (cancel-timer texpresso--output-timer))
+    (when texpresso--output-bound
+      (let ((inhibit-read-only t))
+        (delete-region texpresso--output-bound (point-max))))))
+
+(defun texpresso--output-schedule-truncate (point)
+  (when texpresso--output-timer
+    (cancel-timer texpresso--output-timer))
+  (setq texpresso--output-bound point)
+  (setq texpresso--output-timer
+        (run-with-timer 1 nil #'texpresso--output-truncate (current-buffer))))
+
 (defun texpresso--enabled-p ()
   "Check if TeXpresso is running and enabled for the current buffer."
   (and (process-live-p texpresso--process)
@@ -194,16 +212,33 @@ standard output. This function interprets one of these."
       (let ((buffer (texpresso--get-output-buffer (nth 1 expr))))
         (when buffer
           (with-current-buffer buffer
-            (let ((pos (byte-to-position (1+ (nth 2 expr))))
-                  (inhibit-read-only t))
-              (when pos (delete-region pos (point-max))))))))
+            (let ((pos (byte-to-position (1+ (nth 2 expr)))))
+              (when pos
+                (texpresso--output-schedule-truncate pos)))))))
+
 
      ((eq tag 'append)
       (with-current-buffer (texpresso--get-output-buffer (nth 1 expr) 'force)
-        (let ((inhibit-read-only t))
-          (save-excursion
-            (goto-char (point-max))
-            (insert (nth 2 expr))))))
+        (let ((inhibit-read-only t)
+              (pos (byte-to-position (1+ (nth 2 expr))))
+              (text (nth 3 expr))
+              (prev-point (if (= (point) (point-max)) nil (point)))
+              lines endpos)
+          (setq endpos (min (point-max) (+ pos (length text))))
+          (unless (string= text (buffer-substring pos endpos))
+            (goto-char pos)
+            (setq lines (line-number-at-pos pos))
+            (insert text)
+            (setq lines (- (line-number-at-pos (point)) lines))
+            (when (> lines 0)
+              (kill-line lines))
+            (goto-char (or prev-point (point-max))))
+          (texpresso--output-schedule-truncate endpos))))
+
+     ((eq tag 'flush)
+      (dolist (buffer (list (texpresso--get-output-buffer 'out)
+                            (texpresso--get-output-buffer 'log)))
+        (when buffer (texpresso--output-truncate buffer))))
 
      ((eq tag 'synctex)
       (let ((buf (and (file-exists-p (nth 1 expr))

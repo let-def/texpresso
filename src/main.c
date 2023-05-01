@@ -72,6 +72,7 @@ typedef struct {
   int last_mouse_x, last_mouse_y;
   uint32_t last_click_ticks;
   enum ui_mouse_status mouse_status;
+  bool advancing;
 } ui_state;
 
 /* UI rendering */
@@ -120,6 +121,9 @@ static bool need_advance(ui_state *ui)
 static bool advance_engine(fz_context *ctx, ui_state *ui)
 {
   bool need = need_advance(ui);
+  if (!need && ui->advancing)
+    fprintf(stdout, "(flush)\n");
+  ui->advancing = need;
   if (!need)
     return false;
 

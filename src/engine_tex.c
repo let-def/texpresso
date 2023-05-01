@@ -575,13 +575,13 @@ static void answer_standard_query(fz_context *ctx, struct tex_engine *self, chan
       }
       else if (self->st.log.entry == e)
       {
-        fprintf(stdout, "(append log \"");
+        fprintf(stdout, "(append log %d \"", q->writ.pos);
         output_sexp_string(stdout, q->writ.buf, q->writ.size);
         fprintf(stdout, "\")\n");
       }
       else if (self->st.stdout.entry == e)
       {
-        fprintf(stdout, "(append out \"");
+        fprintf(stdout, "(append out %d \"", q->writ.pos);
         output_sexp_string(stdout, q->writ.buf, q->writ.size);
         fprintf(stdout, "\")\n");
       }
