@@ -86,3 +86,21 @@ To work correctly, `texpresso` needs `texpresso-tonic` helper; when copying them
 Use `M-x texpresso-next-page` and `M-x texpresso-previous-page` to move between pages without leaving Emacs.
 
 # Navigating TeXpresso window
+
+Keyboard controls: 
+- `←`, `→`: change page
+- `p` (for "page"): switch between "fit-to-page" and "fit-to-width" zoom modes
+- `c` ("crop"): crop borders
+- `q` ("quit"): quit
+- `i` ("invert"): dark mode
+- `I` : use Emacs theme
+- `t` ("top"): toggle stay-on-top (above Emacs window)
+- `b` ("border"): toggle window borders
+- `F5`: start fullscreen presentation (leave with `ESC`)
+
+Mouse controls:
+
+- click: select text in window (TODO: move Emacs buffer with SyncTeX)
+- control+click: pan page
+- wheel: scroll page
+- control+wheel: zoom
