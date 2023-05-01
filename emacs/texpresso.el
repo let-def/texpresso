@@ -222,17 +222,17 @@ standard output. This function interprets one of these."
         (let ((inhibit-read-only t)
               (pos (byte-to-position (1+ (nth 2 expr))))
               (text (nth 3 expr))
-              (prev-point (if (= (point) (point-max)) nil (point)))
               lines endpos)
-          (setq endpos (min (point-max) (+ pos (length text))))
-          (unless (string= text (buffer-substring pos endpos))
+          (setq endpos (+ pos (length text)))
+          (unless (and (>= (point-max) endpos)
+                       (string= text (buffer-substring pos endpos)))
             (goto-char pos)
             (setq lines (line-number-at-pos pos))
             (insert text)
             (setq lines (- (line-number-at-pos (point)) lines))
             (when (> lines 0)
               (kill-line lines))
-            (goto-char (or prev-point (point-max))))
+            (goto-char (point-max)))
           (texpresso--output-schedule-truncate endpos))))
 
      ((eq tag 'flush)
@@ -265,8 +265,11 @@ remainder."
         (while t
           (let ((result (read-from-string text pos)))
             (setq pos (cdr result))
-            (with-demoted-errors "Error in texpresso--stdout-filter: %S"
-              (texpresso--stdout-dispatch process (car result)))))
+            (condition-case-unless-debug err
+                (texpresso--stdout-dispatch process (car result))
+              (error (message
+                      "Error in texpresso--stdout-filter: %S\nWhile processing: %S"
+                      err (car result))))))
       ((end-of-file)
        (process-put process 'buffer (substring text pos))))))
 
