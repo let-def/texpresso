@@ -1206,7 +1206,7 @@ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileen
       self->rollback.changed = te->entry;
     }
     te->entry->rollback.cursor = te->seen_before;
-    if (te->entry == e && te->seen_before < changed)
+    if (te->entry == e && te->seen_before <= changed)
     {
       self->rollback.trace = trace;
       self->rollback.offset = changed;
