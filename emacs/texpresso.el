@@ -232,7 +232,10 @@ standard output. This function interprets one of these."
             (insert text)
             (setq lines (- (line-number-at-pos (point)) lines))
             (when (> lines 0)
-              (kill-line lines))
+              (save-excursion
+                (let ((beg (point)))
+                  (forward-line lines)
+                  (delete-region beg (point)))))
             (when window (with-selected-window window
                            (goto-char (1- (point-max)))
                            (recenter -1))))
