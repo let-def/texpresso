@@ -1,3 +1,4 @@
 [submodule "tectonic"]
 	path = tectonic
+	branch = master
 	url = https://github.com/let-def/tectonic.git
