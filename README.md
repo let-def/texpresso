@@ -20,12 +20,7 @@ At the moment, it requires a functional installation of [Tectonic](https://githu
 
 If all dependencies are installed and out-of-the-box configuration works, `make all` should be sufficient to build both `texpresso` and `texpresso-tonic` in `build/` directory.
 
-For Archlinux users, a PKGBUILD is provided. Move to a temporary directory and build the package:
-
-``` sh
-$ wget https://github.com/let-def/texpresso/raw/main/packaging/archlinux/PKGBUILD
-$ makepkg
-```
+For Arch Linux users, [a PKGBUILD is available in the AUR](https://aur.archlinux.org/packages/texpresso-git) that builds from the latest Git HEAD on installation.
 
 Otherwise, read below.
 
@@ -60,7 +55,7 @@ Then `make texpresso-tonic` should work.
 
 ## Testing TeXpresso
 
-If both commands built succesfully, you can try TeXpresso using:
+If both commands built successfully, you can try TeXpresso using:
 
 ```sh
 build/texpresso test/simple.tex
