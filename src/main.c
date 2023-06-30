@@ -23,6 +23,7 @@
  */
 
 #include <SDL2/SDL.h>
+#include <string.h>
 #include <time.h>
 #include <poll.h>
 #include <stdio.h>
@@ -680,6 +681,11 @@ static uint32_t parse_color(fz_context *ctx, vstack *stack, val col)
   return (rgb[0] << 16) | (rgb[1] << 8) | (rgb[2]);
 }
 
+static bool lisp_truth_value(fz_context *ctx, vstack *t, val v)
+{
+  return !(val_is_name(v) && strcmp(val_as_name(ctx, t, v), "nil") == 0);
+}
+
 static void interpret_command(struct persistent_state *ps,
                               ui_state *ui,
                               vstack *stack,
@@ -768,6 +774,26 @@ static void interpret_command(struct persistent_state *ps,
     previous_page(ui);
   else if (strcmp(verb, "next-page") == 0)
     next_page(ui);
+  else if (strcmp(verb, "move-window") == 0)
+  {
+    if (len != 5) goto arity;
+    float x = val_number(ps->ctx, val_array_get(ps->ctx, stack, command, 1));
+    float y = val_number(ps->ctx, val_array_get(ps->ctx, stack, command, 2));
+    float w = val_number(ps->ctx, val_array_get(ps->ctx, stack, command, 3));
+    float h = val_number(ps->ctx, val_array_get(ps->ctx, stack, command, 4));
+    SDL_SetWindowPosition(ui->window, x, y);
+    int x0 = x, y0 = y;
+    SDL_GetWindowPosition(ui->window, &x0, &y0);
+    SDL_SetWindowSize(ui->window, w + x - x0, h + y - y0);
+    fprintf(stderr, "[command] move-window %f %f %f %f (pos: %d %d)\n", x, y, w, h, x0, y0);
+  }
+  else if (strcmp(verb, "stay-on-top") == 0)
+  {
+    if (len != 2) goto arity;
+    bool on_top = lisp_truth_value(ps->ctx, stack, val_array_get(ps->ctx, stack, command, 1));
+    SDL_SetWindowAlwaysOnTop(ui->window, on_top);
+    fprintf(stderr, "[command] stay-on-top %d\n", on_top);
+  }
   else
     fprintf(stderr, "[command] unknown verb: %s\n", verb);
 
