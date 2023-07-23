@@ -18,6 +18,7 @@ clean:
 
 distclean:
 	rm -rf build Makefile.config
+	cd tectonic && cargo clean
 
 UNAME := $(shell uname)
 
