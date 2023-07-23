@@ -511,14 +511,17 @@ static void realize_change(struct persistent_state *ps,
   send(notify_file_changes, ui->eng, ps->ctx, e, offset);
 }
 
+#define BUFFERED_OPS 64
+#define BUFFERED_CHARS 4096
+
 struct {
-  char buffer[4096];
+  char buffer[BUFFERED_CHARS];
   int cursor;
   struct delayed_op {
     const char *path;
     const char *data;
     int offset, remove, length;
-  } op[16];
+  } op[BUFFERED_OPS];
   int count;
 } delayed_changes = {0,};
 
@@ -552,8 +555,8 @@ static void interpret_change(struct persistent_state *ps,
 
   if ((page_count == ui->page - 2 || page_count == ui->page - 1) &&
       send(get_status, ui->eng) == DOC_RUNNING &&
-      delayed_changes.count < 16 &&
-      cursor + plen + 1 + length <= 4096)
+      delayed_changes.count < BUFFERED_OPS &&
+      cursor + plen + 1 + length <= BUFFERED_CHARS)
   {
     char *op_path = delayed_changes.buffer + cursor;
     memcpy(op_path, path, plen + 1);

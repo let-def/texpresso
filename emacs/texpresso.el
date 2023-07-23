@@ -36,8 +36,9 @@ not used anywhere.\)")
   "Send VALUE as a serialized s-expression to `texpresso--process'."
   (setq value (prin1-to-string value))
   ; (with-current-buffer (get-buffer-create "*texpresso-log*")
-  ;   (insert value)
-  ;   (insert "\n"))
+  ;   (let ((inhibit-read-only t))
+  ;     (insert value)
+  ;     (insert "\n")))
   (process-send-string texpresso--process value))
 
 (defvar-local texpresso--state nil

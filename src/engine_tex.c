@@ -501,10 +501,15 @@ static void answer_standard_query(fz_context *ctx, struct tex_engine *self, chan
         n = self->fences[self->fence_pos].position - q->read.pos;
         fork = (n == 0);
       }
-
-      memmove(channel_write_buffer(c, q->read.size), data->data + q->read.pos, n);
-      a.tag = fork ? A_FORK : A_READ;
-      a.read.size = n;
+      if (fork)
+        a.tag = A_FORK;
+      else
+      {
+        memmove(channel_write_buffer(c, q->read.size),
+                data->data + q->read.pos, n);
+        a.tag = A_READ;
+        a.read.size = n;
+      }
       if (0)
       {
         if (fork)
@@ -848,10 +853,11 @@ static void rollback(fz_context *ctx, struct tex_engine *self, int trace)
         fprintf(stderr, "kill(%d, SIGTERM)\n", self->pid);
         kill(self->pid, SIGTERM);
 
-	// Under Linux, the process needs to be resumed for the signal to be delivered 
+        // Under Linux, the process needs to be resumed for the signal to be
+        // delivered
         kill(self->pid, SIGCONT);
 
-        // If a we killed a child process, its parent with resume operations and
+        // If we killed a child process, its parent will resume operations and
         // write a "BACK" message.
         // The root process has to be cleaned up explicitly.
         if (self->pid == self->rootpid)
