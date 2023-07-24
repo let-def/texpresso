@@ -202,6 +202,7 @@ typedef struct {
 } dvi_reshooks;
 
 dvi_reshooks dvi_tectonic_hooks(fz_context *ctx, const char *document_directory);
+dvi_reshooks dvi_bundle_serve_hooks(fz_context *ctx, const char *tectonic_path, const char *document_directory);
 
 void dvi_free_hooks(fz_context *ctx, const dvi_reshooks *hooks);
 

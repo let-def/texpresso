@@ -225,6 +225,223 @@ dvi_reshooks dvi_tectonic_hooks(fz_context *ctx, const char *document_dir)
   };
 }
 
+struct bundle_serve_env {
+  char *document_dir;
+  FILE *fd;
+};
+
+static fz_stream *
+bundle_serve_hooks_cat(fz_context *ctx, struct bundle_serve_env *env, const char *name)
+{
+
+  if (fwrite(name, strlen(name), 1, env->fd) != 1)
+  {
+    fprintf(stderr, "bundle_serve_hooks_cat: cannot send request\n");
+    return NULL;
+  }
+  if (fwrite("\n", 1, 1, env->fd) != 1)
+  {
+    fprintf(stderr, "bundle_serve_hooks_cat: cannot send newline\n");
+    return NULL;
+  }
+  if (fflush(env->fd) != 0)
+  {
+    perror("bundle_serve_hooks_cat: fflush");
+    return NULL;
+  }
+  uint8_t answer[9];
+  if (fread(answer, 9, 1, env->fd) != 1)
+  {
+    fprintf(stderr, "bundle_serve_hooks_cat: cannot read answer\n");
+    return NULL;
+  }
+  bool success = answer[0];
+  uint64_t size =
+    ((uint64_t)answer[1] << (7 * 8)) |
+    ((uint64_t)answer[2] << (6 * 8)) |
+    ((uint64_t)answer[3] << (5 * 8)) |
+    ((uint64_t)answer[4] << (4 * 8)) |
+    ((uint64_t)answer[5] << (3 * 8)) |
+    ((uint64_t)answer[6] << (2 * 8)) |
+    ((uint64_t)answer[7] << (1 * 8)) |
+    ((uint64_t)answer[8] << (0 * 8));
+  fz_buffer *buffer = fz_new_buffer(ctx, size);
+  buffer->len = size;
+  fprintf(stderr, "success:%d size:%lld\n", success, size);
+  if (fread(buffer->data, size, 1, env->fd) != 1)
+  {
+    fz_drop_buffer(ctx, buffer);
+    fprintf(stderr, "bundle_serve_hooks_cat: cannot read data\n");
+    return NULL;
+  }
+
+  fz_stream *result = NULL;
+  if (success)
+    result = fz_open_buffer(ctx, buffer);
+  else
+    fprintf(stderr, "bundle_serve_hooks_cat: error loading %s: %*s\n",
+            name, (int)size, buffer->data);
+  fz_drop_buffer(ctx, buffer);
+
+  return result;
+}
+
+static fz_stream *
+bundle_serve_hooks_open_file(fz_context *ctx, void *_env, dvi_reskind kind, const char *name)
+{
+  char *path = NULL;
+  bool free_path = 0;
+  fprintf(stderr, "[dvi] loading %s\n", name);
+  struct bundle_serve_env *env = _env;
+  switch (kind)
+  {
+    case RES_PDF:
+      if (name[0] == '/')
+        path = (char*)name;
+      else
+      {
+        const char *root = env->document_dir;
+        int root_len = strlen(root);
+        int name_len = strlen(name);
+        int len = root_len + name_len;
+        int need_slash = (root_len > 0 && root[root_len - 1] != '/');
+
+        if (need_slash)
+          len += 1;
+
+        path = malloc(len + 1);
+        if (!path) abort();
+        free_path = 1;
+
+        memcpy(path, root, root_len);
+        if (need_slash)
+        {
+          path[root_len] = '/';
+          memcpy(path + root_len + 1, name, name_len);
+        }
+        else
+          memcpy(path + root_len, name, name_len);
+        path[len] = 0;
+      }
+      break;
+
+    case RES_FONT:
+      if (name[0] == '/')
+      {
+        path = (char *)name;
+        break;
+      }
+    case RES_ENC:
+    case RES_MAP:
+    case RES_TFM:
+    case RES_VF:
+    {
+      const char *ext0 = name;
+      while (*ext0 && *ext0 != '.') ext0++;
+      const char *exts[5] = {ext0, NULL};
+      if (!*ext0)
+      {
+        switch (kind)
+        {
+          case RES_ENC:
+            exts[0] = ".enc";
+            break;
+          case RES_MAP:
+            exts[0] = ".map";
+            break;
+          case RES_TFM:
+            exts[0] = ".tfm";
+            break;
+          case RES_VF:
+            exts[0] = ".vf";
+            break;
+          case RES_FONT:
+            exts[0] = ".pfb";
+            exts[1] = ".otf";
+            exts[2] = ".ttf";
+            exts[3] = NULL;
+            break;
+          default:
+            exts[0] = "";
+        }
+      }
+      else
+        exts[0] = "";
+
+      for (const char **ext = exts; *ext; ++ext)
+      {
+        char path[1024];
+        sprintf(path, "%s%s", name, *ext);
+        fz_stream *stream = bundle_serve_hooks_cat(ctx, env, path);
+        if (stream)
+          return stream;
+      }
+      return NULL;
+    }
+    break;
+
+    default:
+      abort();
+  }
+
+  fz_ptr(fz_stream, result);
+
+  if (path == NULL)
+  {
+    fprintf(stderr, "dvi_resmanager_open_file(%s): no path found\n", name);
+    return NULL;
+  }
+
+  fz_try(ctx)
+  {
+    result = fz_open_file(ctx, path);
+  }
+  fz_catch(ctx)
+  {
+    fz_warn(
+      ctx,
+      "dvi_resmanager_open_file(%s): %s",
+      name,
+      fz_caught_message(ctx)
+    );
+  };
+
+  if (free_path)
+    free(path);
+
+  return result;
+}
+
+static void
+bundle_serve_free_env(fz_context *ctx, void *_env)
+{
+  struct bundle_serve_env *env = _env;
+
+  if (pclose(env->fd) != 0)
+    perror("bundle_serve_free_env: pclose");
+
+  fz_free(ctx, env->document_dir);
+  fz_free(ctx, env);
+}
+
+dvi_reshooks dvi_bundle_serve_hooks(fz_context *ctx, const char *tectonic_path, const char *document_dir)
+{
+  char buffer[4096];
+  strcpy(buffer, tectonic_path);
+  strcat(buffer, " -X bundle serve");
+  FILE *pipe = popen(buffer, "r+");
+  if (!pipe) abort();
+  char *path = fz_strdup(ctx, document_dir ? document_dir : "");
+  struct bundle_serve_env *env = fz_malloc_struct(ctx, struct bundle_serve_env);
+  env->fd = pipe;
+  env->document_dir = path;
+  return (dvi_reshooks){
+    .env = env,
+    .free_env = bundle_serve_free_env,
+    .open_file = bundle_serve_hooks_open_file,
+  };
+}
+
 void dvi_free_hooks(fz_context *ctx, const dvi_reshooks *hooks)
 {
   if (hooks->free_env)
