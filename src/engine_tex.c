@@ -198,33 +198,43 @@ static pid_t exec_xelatex_generic(char **args, channel_t **c)
 # define st_time(a) st_##a##tim
 #endif
 
-static void set_more_recent(uint64_t *time, char **result, char *candidate)
+static bool is_more_recent(uint64_t *time, char *candidate)
 {
   struct stat st;
-  if (!(stat(candidate, &st) == 0 && st.st_time(c).tv_sec > *time))
-    return;
-  *time = st.st_time(c).tv_sec;
-  *result = candidate;
+  if (stat(candidate, &st) == 0 && st.st_time(c).tv_sec > *time)
+  {
+    *time = st.st_time(c).tv_sec;
+    return 1;
+  }
+  return 0;
+}
+
+static void set_more_recent(uint64_t *time, char **result, char *candidate)
+{
+  if (is_more_recent(time, candidate))
+    *result = candidate;
+}
+
+static void find_tectonic(char tectonic_path[4096], const char *exec_path)
+{
+  strcpy(tectonic_path, exec_path);
+  char *basename = NULL;
+  for (int i = 0; i < 4096 && tectonic_path[i]; ++i)
+    if (tectonic_path[i] == '/')
+      basename = tectonic_path + i + 1;
+  uint64_t time = 0;
+  if (basename)
+  {
+    strcpy(basename, "texpresso-tonic");
+    if (!is_more_recent(&time, tectonic_path))
+      strcpy(tectonic_path, "texpresso-tonic");
+  }
 }
 
 static pid_t exec_xelatex(const char *exec_path, const char *filename, channel_t **c)
 {
-  char buffer[4096];
-  char *tectonic_path = "texpresso-tonic";
-
-  {
-    strcpy(buffer, exec_path);
-    char *basename = NULL;
-    for (int i = 0; i < 4096 && buffer[i]; ++i)
-      if (buffer[i] == '/')
-        basename = buffer + i + 1;
-    uint64_t time = 0;
-    if (basename)
-    {
-      strcpy(basename, "texpresso-tonic");
-      set_more_recent(&time, &tectonic_path, buffer);
-    }
-  }
+  char tectonic_path[4096];
+  find_tectonic(tectonic_path, exec_path);
 
   char *args[] = {
     tectonic_path,
@@ -1316,7 +1326,11 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   self->fence_pos = -1;
   self->restart = log_snapshot(ctx, self->log);
   self->status = DOC_TERMINATED;
-  self->dvi = incdvi_new(ctx, directory);
+
+  char tectonic_path[4096];
+  find_tectonic(tectonic_path, executable_path);
+  self->dvi = incdvi_new(ctx, tectonic_path, directory);
+
   self->stex = synctex_new(ctx);
   self->rollback.changed = NULL;
   self->rollback.trace = NOT_IN_TRANSACTION;

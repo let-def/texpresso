@@ -38,9 +38,9 @@
 typedef struct txp_engine_s txp_engine;
 
 txp_engine *txp_create_tex_engine(fz_context *ctx,
-                                  const char *executable_path,
-                                  const char *directory,
-                                  const char *name);
+                                  const char *exe_path,
+                                  const char *tex_dir,
+                                  const char *tex_name);
 
 txp_engine *txp_create_pdf_engine(fz_context *ctx, const char *pdf_path);
 
