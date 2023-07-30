@@ -205,6 +205,7 @@ void synctex_update(fz_context *ctx, synctex_t *stx, fz_buffer *buf)
       if (cur > bol)
         synctex_process_line(ctx, stx, bol, ptr + bol, ptr + cur);
       cur += 1;
+      // fprintf(stderr, "synctex: %.*s\n", (int)(cur - bol - 1), &ptr[bol]);
       bol = cur;
     }
     else
@@ -411,6 +412,8 @@ struct candidate {
   float area;
   fz_irect rect;
   struct link link;
+  int len;
+  const char *filename;
 };
 
 static float rect_area(fz_irect r)
@@ -418,8 +421,36 @@ static float rect_area(fz_irect r)
   return (float)(r.y1 - r.y0) * (float)(r.x1 - r.x0);
 }
 
+static int get_filename(synctex_t *stx, fz_buffer *buf, struct candidate *c, int tag)
+{
+  if (tag <= 0)
+    return 0;
+
+  const uint8_t *filename = &buf->data[stx->inputs.ptr[tag - 1]];
+  while (*filename != ':')
+    filename++;
+  filename++;
+  while (*filename != ':')
+    filename++;
+  filename++;
+  const uint8_t *fend = filename;
+  while (*fend != '\n')
+    fend++;
+  int len = (fend - filename);
+
+  if (len)
+  {
+    c->filename = (const char *)filename;
+    c->len = len;
+  }
+
+  // fprintf(stderr, "tag:%d, filename:%.*s\n", tag, len, filename);
+
+  return len;
+}
+
 static void
-parse_tree(const uint8_t *ptr, int x, int y, struct candidate *c)
+parse_tree(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr, int x, int y, struct candidate *c)
 {
   int nest = 0;
   struct size saved[256];
@@ -445,20 +476,25 @@ parse_tree(const uint8_t *ptr, int x, int y, struct candidate *c)
             rect.x0 = x;
           }
           float area = rect_area(rect);
-          if (area < c->area)
+          // fprintf(stderr, "synctex pre-candidate area:%.2f (current:%.2f)\n", area, c->area);
+          if (area < c->area && get_filename(stx, buf, c, r.link.tag))
           {
+            // fprintf(stderr, "synctex candidate\n");
             c->area = area;
             c->rect = rect;
             c->link = r.link;
           }
         }
+        break;
       case STEX_ENTER_H:
       case STEX_ENTER_V:
         if (fz_is_point_inside_irect(x, y, rect))
         {
+          // fprintf(stderr, "synctex pre-candidate\n");
           float area = rect_area(rect);
-          if (area < c->area)
+          if (area < c->area && get_filename(stx, buf, c, r.link.tag))
           {
+            // fprintf(stderr, "synctex candidate\n");
             c->area = area;
             c->rect = rect;
             c->link = r.link;
@@ -519,7 +555,7 @@ void synctex_scan(fz_context *ctx, synctex_t *stx, fz_buffer *buf, unsigned page
   struct candidate c = {0,};
   c.area = INFINITY;
 
-  parse_tree(ptr, x, y, &c);
+  parse_tree(stx, buf, ptr, x, y, &c);
   if (c.link.tag)
   {
     const uint8_t *filename = &buf->data[stx->inputs.ptr[c.link.tag-1]];
