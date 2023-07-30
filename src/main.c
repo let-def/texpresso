@@ -893,7 +893,7 @@ bool texpresso_main(struct persistent_state *ps)
   {
     ui->page = 0;
     ui->zoom = 0;
-    ui->need_synctex = 0;
+    ui->need_synctex = 1;
   }
 
   ui->mouse_status = UI_MOUSE_NONE;

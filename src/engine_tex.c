@@ -417,7 +417,7 @@ static void answer_standard_query(fz_context *ctx, struct tex_engine *self, chan
             incdvi_reset(self->dvi);
             fprintf(stderr, "[info] this is the output document\n");
           }
-          else if ((strcmp(ext, "synctex(busy)") == 0))
+          else if ((strcmp(ext, "synctex") == 0))
           {
             if (self->st.synctex.entry != NULL)
             {
