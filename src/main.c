@@ -242,8 +242,8 @@ static void ui_mouse_down(fz_context *ctx, ui_state *ui, int x, int y, bool ctrl
       {
         fz_point pt = txp_renderer_screen_to_document(ctx, ui->doc_renderer, p);
         float f = 1 / send(scale_factor, ui->eng);
-        pt.x -= 72;
-        pt.y -= 72;
+        // pt.x -= 72;
+        // pt.y -= 72;
         fprintf(stderr, "click: (%f,%f) mapped:(%f,%f)\n",
                 pt.x, pt.y, f * pt.x, f * pt.y);
         synctex_scan(ctx, stx, buf, ui->page, f * pt.x, f * pt.y);
