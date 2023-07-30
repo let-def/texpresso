@@ -61,59 +61,7 @@ void dvi_context_free(fz_context *ctx, dvi_context *dc)
   dvi_context_set_device(ctx, dc, NULL);
   dvi_resmanager_free(ctx, dc->resmanager);
   dvi_scratch_release(ctx, &dc->scratch);
-  if (dc->sync.input_names)
-  {
-    for (int i = 0; i < dc->sync.input_cap; i++)
-    {
-      void *iname = dc->sync.input_names[i];
-      if (iname)
-        fz_free(ctx, iname);
-    }
-    fz_free(ctx, dc->sync.input_names);
-  }
   fz_free(ctx, dc);
-}
-
-void dvi_context_set_input_name(fz_context *ctx, dvi_context *dc, int index, const char *name, const char *lim)
-{
-  if (index < 0) abort();
-  if (index >= dc->sync.input_cap)
-  {
-    int new_cap = dc->sync.input_cap;
-    if (new_cap == 0) new_cap = 1;
-    while (new_cap <= index)
-      new_cap *= 2;
-    char **input_tmp = fz_malloc_array(ctx, new_cap, char *);
-    if (dc->sync.input_names)
-    {
-      memmove(input_tmp, dc->sync.input_names, dc->sync.input_cap * sizeof(char *));
-      fz_free(ctx, dc->sync.input_names);
-    }
-    dc->sync.input_names = input_tmp;
-    dc->sync.input_cap = new_cap;
-  }
-
-  size_t len = ((const char*)lim - name);
-  fprintf(stderr, "set_input_name(%d, %.*s)\n", index, (int)len, name);
-
-  char *iname;
-
-  iname = dc->sync.input_names[index];
-  if (iname)
-    fz_free(ctx, iname);
-
-  iname = fz_malloc_array(ctx, len+1, char);
-  memmove(iname, name, len);
-  iname[len] = 0;
-  dc->sync.input_names[index] = iname;
-}
-
-const char *dvi_context_get_input_name(fz_context *ctx, dvi_context *dc, int index)
-{
-  if (index < 0) abort();
-  if (index >= dc->sync.input_cap)
-    return NULL;
-  return dc->sync.input_names[index];
 }
 
 void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev, dvi_sync_cb *cb, void *cb_data)

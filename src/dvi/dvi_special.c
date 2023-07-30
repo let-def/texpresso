@@ -1339,12 +1339,6 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
       return 1;
     }
 
-    "Input:" @i nat ":" @j
-    {
-      dvi_context_set_input_name(ctx, dc, pnat(i, j), j, lim);
-      return 1;
-    }
-
     ''
     { return unhandled("special", cur, lim, 0); }
 

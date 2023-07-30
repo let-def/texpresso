@@ -38,7 +38,7 @@ void incdvi_update(fz_context *ctx, incdvi_t *d, fz_buffer *buf);
 int incdvi_page_count(incdvi_t *d);
 void incdvi_page_dim(incdvi_t *d, fz_buffer *buf, int page, float *width, float *height, bool *landscape);
 void incdvi_render_page(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page, fz_device *dev);
-void incdvi_find_page_loc(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page, float x, float y);
+void incdvi_find_page_loc(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page);
 float incdvi_tex_scale_factor(incdvi_t *d);
 
 #endif /*!INCDVI_H*/

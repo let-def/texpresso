@@ -111,11 +111,6 @@ static void engine_notify_file_changes(txp_engine *_self,
 {
 }
 
-static void engine_find_loc(txp_engine *_self, fz_context *ctx,
-                            int page, float x, float y)
-{
-}
-
 txp_engine *txp_create_pdf_engine(fz_context *ctx, const char *pdf_path)
 {
   fz_document *doc = fz_open_document(ctx, pdf_path);

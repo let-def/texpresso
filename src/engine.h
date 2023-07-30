@@ -73,7 +73,6 @@ struct txp_engine_class
   synctex_t *(*synctex)(txp_engine *self, fz_buffer **buf);
   fileentry_t *(*find_file)(txp_engine *self, fz_context *ctx, const char *path);
   void (*notify_file_changes)(txp_engine *self, fz_context *ctx, fileentry_t *entry, int offset);
-  void (*find_loc)(txp_engine *self, fz_context *ctx, int page, float x, float y);
 };
 
 #define TXP_ENGINE_DEF_CLASS                                                \
@@ -93,8 +92,6 @@ struct txp_engine_class
                                        const char *path);                   \
   static void engine_notify_file_changes(txp_engine *self, fz_context *ctx, \
                                          fileentry_t *entry, int offset);   \
-  static void engine_find_loc(txp_engine *self, fz_context *ctx,            \
-                              int page, float x, float y);                  \
                                                                             \
   static struct txp_engine_class _class = {                                 \
       .destroy = engine_destroy,                                            \
@@ -109,7 +106,6 @@ struct txp_engine_class
       .detect_changes = engine_detect_changes,                              \
       .end_changes = engine_end_changes,                                    \
       .notify_file_changes = engine_notify_file_changes,                    \
-      .find_loc = engine_find_loc,                                          \
   }
 
 #endif // GENERIC_ENGINE_H_
