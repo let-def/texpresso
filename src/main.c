@@ -51,6 +51,45 @@ static bool should_reload_binary(void)
   return pstate->should_reload_binary();
 }
 
+#ifdef __APPLE__
+# define st_time(a) st_##a##timespec
+#else
+# define st_time(a) st_##a##tim
+#endif
+
+static bool is_more_recent(uint64_t *time, char *candidate)
+{
+  struct stat st;
+  if (stat(candidate, &st) == 0 && st.st_time(c).tv_sec > *time)
+  {
+    *time = st.st_time(c).tv_sec;
+    return 1;
+  }
+  return 0;
+}
+
+static void set_more_recent(uint64_t *time, char **result, char *candidate)
+{
+  if (is_more_recent(time, candidate))
+    *result = candidate;
+}
+
+static void find_tectonic(char tectonic_path[4096], const char *exec_path)
+{
+  strcpy(tectonic_path, exec_path);
+  char *basename = NULL;
+  for (int i = 0; i < 4096 && tectonic_path[i]; ++i)
+    if (tectonic_path[i] == '/')
+      basename = tectonic_path + i + 1;
+  uint64_t time = 0;
+  if (basename)
+  {
+    strcpy(basename, "texpresso-tonic");
+    if (!is_more_recent(&time, tectonic_path))
+      strcpy(tectonic_path, "texpresso-tonic");
+  }
+}
+
 /* UI state */
 
 enum ui_mouse_status {
@@ -827,12 +866,16 @@ bool texpresso_main(struct persistent_state *ps)
     if (*ptr == '.')
       doc_ext = ptr + 1;
 
+  char tectonic_path[4096];
+  find_tectonic(tectonic_path, ps->exe_path);
+  fprintf(stderr, "[info] tectonic path: %s\n", tectonic_path);
+
   if (doc_ext && strcmp(doc_ext, "pdf") == 0)
     ui->eng = txp_create_pdf_engine(ps->ctx, ps->doc_name);
   else if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
-    ui->eng = txp_create_dvi_engine(ps->ctx, ps->exe_path, ps->doc_path, ps->doc_name);
+    ui->eng = txp_create_dvi_engine(ps->ctx, tectonic_path, ps->doc_path, ps->doc_name);
   else
-    ui->eng = txp_create_tex_engine(ps->ctx, ps->exe_path, ps->doc_path, ps->doc_name);
+    ui->eng = txp_create_tex_engine(ps->ctx, tectonic_path, ps->doc_path, ps->doc_name);
 
   ui->sdl_renderer = ps->renderer;
   ui->doc_renderer = txp_renderer_new(ps->ctx, ui->sdl_renderer);

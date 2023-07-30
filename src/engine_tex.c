@@ -62,7 +62,7 @@ struct tex_engine
 
   txp_engine_status status;
   char *name;
-  char *exec_path;
+  char *tectonic_path;
   filesystem_t *fs;
   state_t st;
   log_t *log;
@@ -136,7 +136,7 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
   incdvi_free(ctx, self->dvi);
   synctex_free(ctx, self->stex);
   fz_free(ctx, self->name);
-  fz_free(ctx, self->exec_path);
+  fz_free(ctx, self->tectonic_path);
   fz_free(ctx, self);
 }
 
@@ -192,50 +192,8 @@ static pid_t exec_xelatex_generic(char **args, channel_t **c)
   return pid;
 }
 
-#ifdef __APPLE__
-# define st_time(a) st_##a##timespec
-#else
-# define st_time(a) st_##a##tim
-#endif
-
-static bool is_more_recent(uint64_t *time, char *candidate)
+static pid_t exec_xelatex(char *tectonic_path, const char *filename, channel_t **c)
 {
-  struct stat st;
-  if (stat(candidate, &st) == 0 && st.st_time(c).tv_sec > *time)
-  {
-    *time = st.st_time(c).tv_sec;
-    return 1;
-  }
-  return 0;
-}
-
-static void set_more_recent(uint64_t *time, char **result, char *candidate)
-{
-  if (is_more_recent(time, candidate))
-    *result = candidate;
-}
-
-static void find_tectonic(char tectonic_path[4096], const char *exec_path)
-{
-  strcpy(tectonic_path, exec_path);
-  char *basename = NULL;
-  for (int i = 0; i < 4096 && tectonic_path[i]; ++i)
-    if (tectonic_path[i] == '/')
-      basename = tectonic_path + i + 1;
-  uint64_t time = 0;
-  if (basename)
-  {
-    strcpy(basename, "texpresso-tonic");
-    if (!is_more_recent(&time, tectonic_path))
-      strcpy(tectonic_path, "texpresso-tonic");
-  }
-}
-
-static pid_t exec_xelatex(const char *exec_path, const char *filename, channel_t **c)
-{
-  char tectonic_path[4096];
-  find_tectonic(tectonic_path, exec_path);
-
   char *args[] = {
     tectonic_path,
     "-X",
@@ -262,7 +220,7 @@ static void prepare_process(struct tex_engine *self)
     if (self->c != NULL) mabort();
     if (self->rootpid != 0) mabort();
 
-    pid_t child = exec_xelatex(self->exec_path, self->name, &self->c);
+    pid_t child = exec_xelatex(self->tectonic_path, self->name, &self->c);
     self->rootpid = self->pid = child;
 
     if (!channel_handshake(self->c))
@@ -341,6 +299,7 @@ static fz_buffer *entry_data(fileentry_t *e)
   return e->fs_data;
 }
 
+// TODO CLEANUP
 static void output_sexp_string(FILE *f, const char *ptr, int len)
 {
   for (const char *lim = ptr + len; ptr < lim; ptr++)
@@ -1045,7 +1004,6 @@ static fz_display_list *engine_render_page(txp_engine *_self, fz_context *ctx, i
   fz_display_list *dl = fz_new_display_list(ctx, box);
   fz_device *dev = fz_new_list_device(ctx, dl);
   incdvi_render_page(ctx, self->dvi, data, page, dev);
-  incdvi_find_page_loc(ctx, self->dvi, data, page);
   fz_close_device(ctx, dev);
   fz_drop_device(ctx, dev);
   return dl;
@@ -1306,7 +1264,7 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
 }
 
 txp_engine *txp_create_tex_engine(fz_context *ctx,
-                                  const char *executable_path,
+                                  const char *tectonic_path,
                                   const char *directory,
                                   const char *name)
 {
@@ -1314,7 +1272,7 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   self->_class = &_class;
 
   self->name = fz_strdup(ctx, name);
-  self->exec_path = fz_strdup(ctx, executable_path);
+  self->tectonic_path = fz_strdup(ctx, tectonic_path);
   state_init(&self->st);
   self->fs = filesystem_new(ctx);
   self->log = log_new(ctx);
@@ -1327,8 +1285,6 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   self->restart = log_snapshot(ctx, self->log);
   self->status = DOC_TERMINATED;
 
-  char tectonic_path[4096];
-  find_tectonic(tectonic_path, executable_path);
   self->dvi = incdvi_new(ctx, tectonic_path, directory);
 
   self->stex = synctex_new(ctx);

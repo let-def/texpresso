@@ -118,13 +118,13 @@ static void engine_notify_file_changes(txp_engine *_self,
 {
 }
 
-txp_engine *txp_create_dvi_engine(fz_context *ctx, const char *dvi_dir, const char *dvi_path)
+txp_engine *txp_create_dvi_engine(fz_context *ctx, const char *tectonic_path, const char *dvi_dir, const char *dvi_path)
 {
   fz_buffer *buffer = fz_read_file(ctx, dvi_path);
   struct dvi_engine *self = fz_malloc_struct(ctx, struct dvi_engine);
   self->_class = &_class;
   self->buffer = buffer;
-  self->dvi = incdvi_new(ctx, dvi_dir);
+  self->dvi = incdvi_new(ctx, tectonic_path, dvi_dir);
   incdvi_update(ctx, self->dvi, buffer);
   return (txp_engine*)self;
 }
