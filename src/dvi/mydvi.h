@@ -320,15 +320,6 @@ typedef struct
 } dvi_state;
 
 // Shared data common to DVI interpreter and renderer
-
-typedef void dvi_sync_cb(void *data, int file, int line, char c, fz_matrix ctm, float w, float h, float d);
-
-typedef struct
-{
-  int file;
-  int line;
-} dvi_sync_pos;
-
 typedef struct
 {
   fz_device *dev;
@@ -339,12 +330,6 @@ typedef struct
   dvi_state root;
   dvi_registers registers_stack[256];
   dvi_graphicstate gs_stack[256];
-
-  struct {
-    dvi_sync_pos pos[2];
-    dvi_sync_cb *cb;
-    void *cb_data;
-  } sync;
 
   // Default color stack (used by dvipdfmx)
   dvi_colorstack colorstack;
@@ -360,7 +345,7 @@ void dvi_context_free(fz_context *ctx, dvi_context *dc);
 dvi_state *dvi_context_state(dvi_context *dc);
 bool dvi_state_enter_vf(dvi_context *dc, dvi_state *vfst, const dvi_state *st, dvi_fonttable *fonts, int font, fixed_t scale);
 void dvi_context_flush_text(fz_context *ctx, dvi_context *dc, dvi_state *st);
-void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev, dvi_sync_cb *cb, void *cb_data);
+void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev);
 void dvi_context_end_frame(fz_context *ctx, dvi_context *dc);
 
 #define inlined static inline __attribute__((unused))

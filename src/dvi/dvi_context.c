@@ -64,7 +64,7 @@ void dvi_context_free(fz_context *ctx, dvi_context *dc)
   fz_free(ctx, dc);
 }
 
-void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev, dvi_sync_cb *cb, void *cb_data)
+void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev)
 {
   dvi_context_set_device(ctx, dc, dev);
   dvi_state *st = &dc->root;
@@ -79,19 +79,12 @@ void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev, d
   dc->colorstack.depth = 0;
   for (int i = 0; i < dc->pdfcolorstacks.capacity; i++)
     dc->pdfcolorstacks.stacks[i].depth = 0;
-
-  dc->sync.pos[0].file = -1;
-  dc->sync.pos[0].line = -1;
-  dc->sync.cb = cb;
-  dc->sync.cb_data = cb_data;
 }
 
 void dvi_context_end_frame(fz_context *ctx, dvi_context *dc)
 {
   dvi_scratch_clear(ctx, &dc->scratch);
   dvi_context_set_device(ctx, dc, NULL);
-  dc->sync.cb = NULL;
-  dc->sync.cb_data = NULL;
 
   if (dc->colorstack.depth > 0)
     fprintf(stderr, "default color stack: ending frame with %d colors\n", dc->colorstack.depth);

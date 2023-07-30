@@ -175,16 +175,11 @@ void dvi_exec_char(fz_context *ctx, dvi_context *dc, dvi_state *st, uint32_t c, 
     {
       tex_tfm *tfm = font->tfm;
       fixed_t w = fixed_mul(tex_tfm_char_width(tfm, c), scale_factor);
-      if (dc->sync.cb || debug)
+      if (debug)
       {
         float s = dc->scale * scale_factor.value;
         fixed_t h = tex_tfm_char_height(tfm, c);
         fixed_t d = tex_tfm_char_depth(tfm, c);
-        if (dc->sync.cb)
-          dc->sync.cb(dc->sync.cb_data, dc->sync.pos[0].file,
-                     dc->sync.pos[0].line, c,
-                      fz_pre_scale(dvi_get_ctm(dc, st), s, s),
-                      w.value * dc->scale, h.value * s, d.value * s);
         if (debug)
         {
           h = fixed_mul(h, scale_factor);
@@ -339,8 +334,7 @@ void dvi_exec_xdvglyphs(fz_context *ctx, dvi_context *dc, dvi_state *st, fixed_t
   }
   fz_font *font = def->xdv_font.font;
   fixed_t size = def->xdv_font.spec.size;
-  dvi_sync_cb *cb = dc->sync.cb;
-  if (!dc->dev && !cb);
+  if (!dc->dev);
   else if (font)
   {
     float ds = dc->scale;
@@ -359,21 +353,6 @@ void dvi_exec_xdvglyphs(fz_context *ctx, dvi_context *dc, dvi_state *st, fixed_t
             fz_pre_scale(fz_pre_translate(st->gs.ctm, h * ds, -v * ds), fs, fs);
         fz_show_glyph(ctx, text, font, ctm, glyphs[i], 0, 0, 0, FZ_BIDI_LTR,
                       FZ_LANG_UNSET);
-      }
-    }
-    if (cb)
-    {
-      for (int i = 0; i < num_glyphs; ++i)
-      {
-        int32_t h = sh + dx[i].value;
-        int32_t v = dy ? sv + dy[i].value : sv;
-        fz_rect r =
-          fz_bound_glyph(ctx, font, glyphs[i], fz_identity);
-        fz_matrix ctm =
-          fz_pre_scale(fz_pre_translate(st->gs.ctm, (h + r.x0 * size.value) * ds, -v * ds), fs, fs);
-        cb(dc->sync.cb_data, dc->sync.pos[0].file, dc->sync.pos[0].line,
-           (chars && i < char_count) ? chars[i] : ' ',
-           ctm, (r.x1 - r.x0), r.y0, r.y1);
       }
     }
   }

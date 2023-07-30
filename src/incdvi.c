@@ -194,45 +194,7 @@ void incdvi_render_page(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page, 
 
   dvi_context *dc = d->dc;
   enum dvi_version version = dvi_context_state(dc)->version;
-  dvi_context_begin_frame(ctx, d->dc, dev, NULL, NULL);
-  while (offset < eop)
-  {
-    int ilen = dvi_instr_size(buf->data + offset, eop - offset, version);
-    if (ilen <= 0) abort();
-    dvi_interp(ctx, dc, buf->data + offset);
-    offset += ilen;
-  }
-  dvi_context_end_frame(ctx, dc);
-}
-
-static void
-incdvi_find_page_loc_cb(void *data, int file, int line, char c, fz_matrix ctm, float w, float h, float d)
-{
-  if (0)
-  {
-    fz_quad q;
-    q.ul = fz_transform_point(fz_make_point(0, -h), ctm);
-    q.ur = fz_transform_point(fz_make_point(w, -h), ctm);
-    q.ll = fz_transform_point(fz_make_point(0, d), ctm);
-    q.lr = fz_transform_point(fz_make_point(w, d), ctm);
-    fz_rect r = fz_rect_from_quad(q);
-    fprintf(stderr, "file %d, line %d: char %C @ (%.02f,%.02f)-(%.02f,%.02f)\n",
-            file, line, c, r.x0, r.y0, r.x1, r.y1);
-  }
-}
-
-void incdvi_find_page_loc(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page)
-{
-  if (page < 0 || page >= incdvi_page_count(d))
-    return;
-
-  int offset = d->pages[page * 2];
-  int eop = d->pages[page * 2 + 1];
-  incdvi_parse_fontdef(ctx, d, buf, offset);
-
-  dvi_context *dc = d->dc;
-  enum dvi_version version = dvi_context_state(dc)->version;
-  dvi_context_begin_frame(ctx, d->dc, NULL, incdvi_find_page_loc_cb, NULL);
+  dvi_context_begin_frame(ctx, d->dc, dev);
   while (offset < eop)
   {
     int ilen = dvi_instr_size(buf->data + offset, eop - offset, version);
