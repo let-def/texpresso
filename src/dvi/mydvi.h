@@ -344,6 +344,9 @@ typedef struct
     dvi_sync_pos pos[2];
     dvi_sync_cb *cb;
     void *cb_data;
+
+    int input_cap;
+    char **input_names;
   } sync;
 
   // Default color stack (used by dvipdfmx)
@@ -362,6 +365,8 @@ bool dvi_state_enter_vf(dvi_context *dc, dvi_state *vfst, const dvi_state *st, d
 void dvi_context_flush_text(fz_context *ctx, dvi_context *dc, dvi_state *st);
 void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev, dvi_sync_cb *cb, void *cb_data);
 void dvi_context_end_frame(fz_context *ctx, dvi_context *dc);
+void dvi_context_set_input_name(fz_context *ctx, dvi_context *dc, int index, const char *name, const char *lim);
+const char *dvi_context_get_input_name(fz_context *ctx, dvi_context *dc, int index);
 
 #define inlined static inline __attribute__((unused))
 

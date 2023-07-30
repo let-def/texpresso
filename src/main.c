@@ -236,18 +236,17 @@ static void ui_mouse_down(fz_context *ctx, ui_state *ui, int x, int y, bool ctrl
       diff = txp_renderer_select_char(ctx, ui->doc_renderer, p) || diff;
       ui->last_click_ticks = ticks;
 
-      fz_buffer *buf;
-      synctex_t *stx = send(synctex, ui->eng, &buf);
-      if (stx && buf)
-      {
         fz_point pt = txp_renderer_screen_to_document(ctx, ui->doc_renderer, p);
         float f = 1 / send(scale_factor, ui->eng);
+        send(find_loc, ui->eng, ctx, ui->page, pt.x, pt.y);
         pt.x -= 72;
         pt.y -= 72;
         fprintf(stderr, "click: (%f,%f) mapped:(%f,%f)\n",
                 pt.x, pt.y, f * pt.x, f * pt.y);
-        synctex_scan(ctx, stx, buf, ui->page, f * pt.x, f * pt.y);
-      }
+        fz_buffer *buf;
+        synctex_t *stx = send(synctex, ui->eng, &buf);
+        if (stx && buf)
+          synctex_scan(ctx, stx, buf, ui->page, f * pt.x, f * pt.y);
     }
 
     if (diff)

@@ -205,23 +205,64 @@ void incdvi_render_page(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page, 
   dvi_context_end_frame(ctx, dc);
 }
 
-static void
-incdvi_find_page_loc_cb(void *data, int file, int line, char c, fz_matrix ctm, float w, float h, float d)
+struct loc_cb_data {
+  fz_context *ctx;
+  dvi_context *dc;
+  float x, y;
+};
+
+// TODO CLEANUP
+static void output_sexp_string(FILE *f, const char *ptr, int len)
 {
-  if (0)
+  for (const char *lim = ptr + len; ptr < lim; ptr++)
   {
-    fz_quad q;
-    q.ul = fz_transform_point(fz_make_point(0, -h), ctm);
-    q.ur = fz_transform_point(fz_make_point(w, -h), ctm);
-    q.ll = fz_transform_point(fz_make_point(0, d), ctm);
-    q.lr = fz_transform_point(fz_make_point(w, d), ctm);
-    fz_rect r = fz_rect_from_quad(q);
-    fprintf(stderr, "file %d, line %d: char %C @ (%.02f,%.02f)-(%.02f,%.02f)\n",
-            file, line, c, r.x0, r.y0, r.x1, r.y1);
+    char c = *ptr;
+    switch (c)
+    {
+      case '\t':
+        putc_unlocked('\\', f);
+        c = 't';
+        break;
+      case '\r':
+        putc_unlocked('\\', f);
+        c = 'r';
+        break;
+      case '\n':
+        c = 'n';
+      case '"':
+      case '\\':
+        putc_unlocked('\\', f);
+    }
+    putc_unlocked(c, f);
   }
 }
 
-void incdvi_find_page_loc(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page)
+static void
+incdvi_find_page_loc_cb(void *data, int file, int line, char c, fz_matrix ctm, float w, float h, float d)
+{
+  struct loc_cb_data *cb_data = data;
+  if (!cb_data->ctx) return;
+
+  fz_quad q;
+  q.ul = fz_transform_point(fz_make_point(0, -h), ctm);
+  q.ur = fz_transform_point(fz_make_point(w, -h), ctm);
+  q.ll = fz_transform_point(fz_make_point(0, d), ctm);
+  q.lr = fz_transform_point(fz_make_point(w, d), ctm);
+  fz_rect r = fz_rect_from_quad(q);
+  if (fz_is_point_inside_rect(fz_make_point(cb_data->x, cb_data->y), r))
+  {
+    const char *filename = dvi_context_get_input_name(cb_data->ctx, cb_data->dc, file);
+    fprintf(stderr, "file %s(%d), line %d: char %C @ (%.02f,%.02f)-(%.02f,%.02f)\n",
+            filename, file, line, c, r.x0, r.y0, r.x1, r.y1);
+    fprintf(stdout, "(synctex \"");
+    if (filename)
+      output_sexp_string(stdout, filename, strlen(filename));
+    fprintf(stdout, "\" %d %d)\n", line, 0);
+    cb_data->ctx = NULL;
+  }
+}
+
+void incdvi_find_page_loc(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page, float x, float y)
 {
   if (page < 0 || page >= incdvi_page_count(d))
     return;
@@ -232,7 +273,15 @@ void incdvi_find_page_loc(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page
 
   dvi_context *dc = d->dc;
   enum dvi_version version = dvi_context_state(dc)->version;
-  dvi_context_begin_frame(ctx, d->dc, NULL, incdvi_find_page_loc_cb, NULL);
+
+  struct loc_cb_data cb_data = {
+      .ctx = ctx,
+      .dc = d->dc,
+      .x = x,
+      .y = y,
+  };
+
+  dvi_context_begin_frame(ctx, d->dc, NULL, incdvi_find_page_loc_cb, &cb_data);
   while (offset < eop)
   {
     int ilen = dvi_instr_size(buf->data + offset, eop - offset, version);

@@ -1263,6 +1263,14 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
   return filesystem_lookup_or_create(ctx, self->fs, path);
 }
 
+static void engine_find_loc(txp_engine *_self, fz_context *ctx,
+                            int page, float x, float y)
+{
+  SELF;
+  fz_buffer *data = self->st.document.entry->saved.data;
+  incdvi_find_page_loc(ctx, self->dvi, data, page, x, y);
+}
+
 txp_engine *txp_create_tex_engine(fz_context *ctx,
                                   const char *tectonic_path,
                                   const char *directory,
