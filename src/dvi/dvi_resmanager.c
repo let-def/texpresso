@@ -430,7 +430,11 @@ dvi_reshooks dvi_bundle_serve_hooks(fz_context *ctx, const char *tectonic_path, 
   strcpy(buffer, tectonic_path);
   strcat(buffer, " -X bundle serve");
   FILE *pipe = popen(buffer, "r+");
-  if (!pipe) abort();
+  if (!pipe)
+  {
+    perror("dvi_bundle_serve_hooks: popen");
+    abort();
+  }
   char *path = fz_strdup(ctx, document_dir ? document_dir : "");
   struct bundle_serve_env *env = fz_malloc_struct(ctx, struct bundle_serve_env);
   env->fd = pipe;
