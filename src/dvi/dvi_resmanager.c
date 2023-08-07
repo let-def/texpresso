@@ -26,6 +26,7 @@
 #include FT_FREETYPE_H
 #include "mydvi.h"
 #include "fz_util.h"
+#include <unistd.h>
 
 typedef struct cell_dvi_font cell_dvi_font;
 typedef struct cell_tex_enc cell_tex_enc;
@@ -227,30 +228,31 @@ dvi_reshooks dvi_tectonic_hooks(fz_context *ctx, const char *document_dir)
 
 struct bundle_serve_env {
   char *document_dir;
-  FILE *fd;
+  pid_t pid;
+  FILE *o, *i;
 };
 
 static fz_stream *
 bundle_serve_hooks_cat(fz_context *ctx, struct bundle_serve_env *env, const char *name)
 {
 
-  if (fwrite(name, strlen(name), 1, env->fd) != 1)
+  if (fwrite(name, strlen(name), 1, env->o) != 1)
   {
     fprintf(stderr, "bundle_serve_hooks_cat: cannot send request\n");
     return NULL;
   }
-  if (fwrite("\n", 1, 1, env->fd) != 1)
+  if (fwrite("\n", 1, 1, env->o) != 1)
   {
     fprintf(stderr, "bundle_serve_hooks_cat: cannot send newline\n");
     return NULL;
   }
-  if (fflush(env->fd) != 0)
+  if (fflush(env->o) != 0)
   {
     perror("bundle_serve_hooks_cat: fflush");
     return NULL;
   }
   uint8_t answer[9];
-  if (fread(answer, 9, 1, env->fd) != 1)
+  if (fread(answer, 9, 1, env->i) != 1)
   {
     fprintf(stderr, "bundle_serve_hooks_cat: cannot read answer\n");
     return NULL;
@@ -268,7 +270,7 @@ bundle_serve_hooks_cat(fz_context *ctx, struct bundle_serve_env *env, const char
   fz_buffer *buffer = fz_new_buffer(ctx, size);
   buffer->len = size;
   fprintf(stderr, "success:%d size:%lld\n", success, size);
-  if (fread(buffer->data, size, 1, env->fd) != 1)
+  if (fread(buffer->data, size, 1, env->i) != 1)
   {
     fz_drop_buffer(ctx, buffer);
     fprintf(stderr, "bundle_serve_hooks_cat: cannot read data\n");
@@ -417,8 +419,15 @@ bundle_serve_free_env(fz_context *ctx, void *_env)
 {
   struct bundle_serve_env *env = _env;
 
-  if (pclose(env->fd) != 0)
-    perror("bundle_serve_free_env: pclose");
+  if (fclose(env->i) != 0)
+    perror("bundle_serve_free_env: fclose(i)");
+
+  if (fclose(env->o) != 0)
+    perror("bundle_serve_free_env: fclose(o)");
+
+  int *dummy = 0;
+  if (waitpid(env->pid, dummy, 0) != env->pid)
+    perror("bundle_serve_free_env: waitpid");
 
   fz_free(ctx, env->document_dir);
   fz_free(ctx, env);
@@ -429,15 +438,61 @@ dvi_reshooks dvi_bundle_serve_hooks(fz_context *ctx, const char *tectonic_path, 
   char buffer[4096];
   strcpy(buffer, tectonic_path);
   strcat(buffer, " -X bundle serve");
-  FILE *pipe = popen(buffer, "r+");
-  if (!pipe)
+
+  int to_child[2], from_child[2];
+
+  if (pipe(to_child) == -1)
   {
-    perror("dvi_bundle_serve_hooks: popen");
+    perror("dvi_bundle_serve_hooks: pipe(to_child)");
     abort();
   }
+
+  if (pipe(from_child) == -1)
+  {
+    perror("dvi_bundle_serve_hooks: pipe(to_child)");
+    abort();
+  }
+
+  pid_t pid = fork();
+
+  if (pid == -1)
+  {
+    perror("dvi_bundle_serve_hooks: fork");
+    abort();
+  }
+
+  if (pid == 0)
+  {
+    dup2(to_child[0], STDIN_FILENO);
+    dup2(from_child[1], STDOUT_FILENO);
+    close(to_child[1]);
+    close(from_child[0]);
+    execlp(tectonic_path, "texpresso-tonic", "-X", "bundle", "serve", NULL);
+    abort();
+  }
+
+  FILE *o = fdopen(to_child[1], "wb");
+  if (!o)
+  {
+    perror("dvi_bundle_serve_hooks: fdopen");
+    abort();
+  }
+
+  FILE *i = fdopen(from_child[0], "rb");
+  if (!i)
+  {
+    perror("dvi_bundle_serve_hooks: fdopen");
+    abort();
+  }
+
+  close(to_child[0]);
+  close(from_child[1]);
+
   char *path = fz_strdup(ctx, document_dir ? document_dir : "");
   struct bundle_serve_env *env = fz_malloc_struct(ctx, struct bundle_serve_env);
-  env->fd = pipe;
+  env->i = i;
+  env->o = o;
+  env->pid = pid;
   env->document_dir = path;
   return (dvi_reshooks){
     .env = env,
