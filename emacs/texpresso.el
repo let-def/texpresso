@@ -58,6 +58,9 @@ it is too late to access the number of bytes.  To work around this limitation,
 the changed region is saved by the `texpresso--before-change' function (a
 `before-change-functions' hook).")
 
+(defvar texpresso--root-file nil
+  "Root file")
+
 (define-minor-mode texpresso-mode
   "A global minor mode that synchronizes buffer with TeXpresso.
 Also launches a new TeXpresso process if none is running."
@@ -248,8 +251,19 @@ standard output. This function interprets one of these."
         (when buffer (texpresso--output-truncate buffer))))
 
      ((eq tag 'synctex)
-      (let ((buf (and (file-exists-p (nth 1 expr))
-                      (find-file (nth 1 expr)))))
+      (let ((fname (nth 1 expr)) buf)
+        (setq buf (and (file-exists-p fname)
+                       (if (string= (buffer-name) "*TeXpresso window*")
+                           (find-file-other-window fname)
+                         (find-file fname))))
+        (unless buf
+          (setq fname (concat
+                       (file-name-parent-directory texpresso--root-file)
+                       "/" fname))
+          (setq buf (and (file-exists-p fname)
+                         (if (string= (buffer-name) "*TeXpresso window*")
+                             (find-file-other-window fname)
+                           (find-file fname)))))
         (if buf
             (with-current-buffer buf
               (goto-char (point-min))
@@ -344,9 +358,10 @@ If FILENAME is nil, use `(buffer-file-name)'."
   (interactive "fRoot file: ")
   (unless texpresso-mode
     (texpresso-mode 1))
+  (setq texpresso--root-file (or filename (buffer-file-name)))
   (condition-case err
       (texpresso--make-process (or texpresso-binary "texpresso")
-                               (expand-file-name (or filename (buffer-file-name))))
+                               (expand-file-name texpresso--root-file))
     ((file-missing)
      (customize-variable 'texpresso-binary)
      (message "Cannot launch TeXpresso. Please select the executable file and try again. (error: %S)"
