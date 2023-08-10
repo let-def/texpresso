@@ -26,6 +26,7 @@
 #include FT_FREETYPE_H
 #include "mydvi.h"
 #include "fz_util.h"
+#include <sys/wait.h>
 #include <unistd.h>
 
 typedef struct cell_dvi_font cell_dvi_font;
