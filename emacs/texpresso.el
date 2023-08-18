@@ -100,7 +100,8 @@ Otherwise a buffer is synchronized if its major mode derives from `tex-mode'."
   (with-current-buffer buffer
     (when texpresso--output-timer
       (cancel-timer texpresso--output-timer))
-    (when texpresso--output-bound
+    (when (and texpresso--output-bound
+               (<= texpresso--output-bound (point-max)))
       (let ((inhibit-read-only t))
         (delete-region texpresso--output-bound (point-max))))))
 
@@ -289,7 +290,7 @@ remainder."
             (condition-case-unless-debug err
                 (texpresso--stdout-dispatch process (car result))
               (error (message
-                      "Error in texpresso--stdout-filter: %S\nWhile processing: %S"
+                      "Error in texpresso--stdout-dispatch: %S\nWhile processing: %S"
                       err (car result))))))
       ((end-of-file)
        (process-put process 'buffer (substring text pos))))))
