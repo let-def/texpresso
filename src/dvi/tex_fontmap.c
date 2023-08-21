@@ -262,10 +262,10 @@ int max_poschain = 0, max_negchain = 0, lookup_count = 0, lookup_probe = 0;
 
 static void print_chain(void)
 {
-  printf("tex_fontmap: max_pos_chain: %d\n", max_poschain);
-  printf("tex_fontmap: max_neg_chain: %d\n", max_negchain);
-  printf("tex_fontmap: lookup_count: %d\n", lookup_count);
-  printf("tex_fontmap: average_chain: %f\n", (double)lookup_probe / (double)lookup_count);
+  fprintf(stderr, "tex_fontmap: max_pos_chain: %d\n", max_poschain);
+  fprintf(stderr, "tex_fontmap: max_neg_chain: %d\n", max_negchain);
+  fprintf(stderr, "tex_fontmap: lookup_count: %d\n", lookup_count);
+  fprintf(stderr, "tex_fontmap: average_chain: %f\n", (double)lookup_probe / (double)lookup_count);
 }
 #endif
 

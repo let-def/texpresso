@@ -36,7 +36,7 @@ static void print_backtrace(void)
   char **strings;
 
   nptrs = backtrace(buffer, BT_BUF_SIZE);
-  printf("backtrace() returned %d addresses\n", nptrs);
+  fprintf(stderr, "backtrace() returned %d addresses\n", nptrs);
 
   /* The call backtrace_symbols_fd(buffer, nptrs, STDOUT_FILENO)
      would produce similar output to the following: */
@@ -48,7 +48,7 @@ static void print_backtrace(void)
   }
 
   for (int j = 0; j < nptrs; j++)
-    printf("%s\n", strings[j]);
+    fprintf(stderr, "%s\n", strings[j]);
 
   free(strings);
 }
@@ -57,9 +57,9 @@ static void print_backtrace(void)
 void myabort_(const char *file, int line, const char *msg, uint32_t code)
 {
   if (code == 42424242)
-    printf("Aborting from %s:%d (%s)\n", file, line, msg);
+    fprintf(stderr, "Aborting from %s:%d (%s)\n", file, line, msg);
   else
-    printf("Aborting from %s:%d (%s: %08X, '%c%c%c%c')\n", file, line, msg, code, code & 0xFF, (code >> 8) & 0XFF, (code >> 16) & 0xFF, (code >> 24) & 0xFF);
+    fprintf(stderr, "Aborting from %s:%d (%s: %08X, '%c%c%c%c')\n", file, line, msg, code, code & 0xFF, (code >> 8) & 0XFF, (code >> 16) & 0xFF, (code >> 24) & 0xFF);
 
   print_backtrace();
   abort();

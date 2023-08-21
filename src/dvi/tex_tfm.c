@@ -246,18 +246,18 @@ tex_tfm *tex_tfm_load(fz_context *ctx, fz_stream *stm)
     if (p - buf != 24) abort();
 
 #ifdef DEBUG_TFM
-    printf("lf = %4u   %% length of the entire file, in words\n",        lf);
-    printf("lh = %4u   %% length of the header data, in words\n",        lh);
-    printf("bc = %4u   %% smallest character code in the font\n",        bc);
-    printf("ec = %4u   %% largest character code in the font\n",         ec);
-    printf("nw = %4u   %% number of words in the width table\n",         nw);
-    printf("nh = %4u   %% number of words in the height table\n",        nh);
-    printf("nd = %4u   %% number of words in the depth table\n",         nd);
-    printf("ni = %4u   %% number of words in the italic correction table\n",   ni);
-    printf("nl = %4u   %% number of words in the lig/kern table\n",        nl);
-    printf("nk = %4u   %% number of words in the kern table\n",          nk);
-    printf("ne = %4u   %% number of words in the extensible character table\n",  ne);
-    printf("np = %4u   %% number of font parameter words\n",           np);
+    fprintf(stderr, "lf = %4u   %% length of the entire file, in words\n",        lf);
+    fprintf(stderr, "lh = %4u   %% length of the header data, in words\n",        lh);
+    fprintf(stderr, "bc = %4u   %% smallest character code in the font\n",        bc);
+    fprintf(stderr, "ec = %4u   %% largest character code in the font\n",         ec);
+    fprintf(stderr, "nw = %4u   %% number of words in the width table\n",         nw);
+    fprintf(stderr, "nh = %4u   %% number of words in the height table\n",        nh);
+    fprintf(stderr, "nd = %4u   %% number of words in the depth table\n",         nd);
+    fprintf(stderr, "ni = %4u   %% number of words in the italic correction table\n",   ni);
+    fprintf(stderr, "nl = %4u   %% number of words in the lig/kern table\n",        nl);
+    fprintf(stderr, "nk = %4u   %% number of words in the kern table\n",          nk);
+    fprintf(stderr, "ne = %4u   %% number of words in the extensible character table\n",  ne);
+    fprintf(stderr, "np = %4u   %% number of font parameter words\n",           np);
 #endif
 
     int expected_len = 6+lh+(ec - bc +1)+nw+nh+nd+ni+nl+nk+ne+np;

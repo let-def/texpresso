@@ -51,7 +51,7 @@ dvi_fontdef *dvi_fonttable_get(fz_context *ctx, dvi_fonttable *ft, int f)
 {
   if (f < 0 || f > 9999)
   {
-    printf("dvi_fonttable_get(_, %d)\n", f);
+    fprintf(stderr, "dvi_fonttable_get(_, %d)\n", f);
     abort();
   }
   if (f >= ft->capacity)
