@@ -38,6 +38,7 @@
 #include "synctex.h"
 #include "vstack.h"
 #include "sexp_parser.h"
+#include "editor.h"
 
 struct persistent_state *pstate;
 
@@ -162,7 +163,7 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
 {
   bool need = need_advance(ui);
   if (!need && ui->advancing)
-    fprintf(stdout, "(flush)\n");
+    editor_flush();
   ui->advancing = need;
   if (!need)
     return false;
@@ -708,13 +709,8 @@ static void interpret_close(struct persistent_state *ps,
   send(notify_file_changes, ui->eng, ps->ctx, e, changed);
 }
 
-static uint32_t parse_color(fz_context *ctx, vstack *stack, val col)
+static uint32_t convert_color(fz_context *ctx, vstack *stack, float frgb[3])
 {
-  float frgb[3];
-  frgb[0] = val_number(ctx, val_array_get(ctx, stack, col, 0));
-  frgb[1] = val_number(ctx, val_array_get(ctx, stack, col, 1));
-  frgb[2] = val_number(ctx, val_array_get(ctx, stack, col, 2));
-
   uint8_t rgb[3];
 
   for (int i = 0; i < 3; ++i)
@@ -723,131 +719,72 @@ static uint32_t parse_color(fz_context *ctx, vstack *stack, val col)
   return (rgb[0] << 16) | (rgb[1] << 8) | (rgb[2]);
 }
 
-static bool lisp_truth_value(fz_context *ctx, vstack *t, val v)
-{
-  return !(val_is_name(v) && strcmp(val_as_name(ctx, t, v), "nil") == 0);
-}
-
 static void interpret_command(struct persistent_state *ps,
                               ui_state *ui,
                               vstack *stack,
                               val command)
 {
-  if (!val_is_array(command))
-  {
-    fprintf(stderr, "[command] invalid (not an array)");
+  struct editor_command cmd;
+  if (!editor_parse(ps->ctx, stack, command, &cmd))
     return;
-  }
 
-  int len = val_array_length(ps->ctx, stack, command);
-  if (len == 0)
+  switch (cmd.tag)
   {
-    fprintf(stderr, "[command] invalid (empty array)");
-    return;
-  }
+    case EDIT_OPEN:
+      interpret_open(ps, ui, cmd.open.path, cmd.open.data, cmd.open.length);
+      break;
 
-  const char *verb =
-      val_as_name(ps->ctx, stack, val_array_get(ps->ctx, stack, command, 0));
+    case EDIT_CLOSE:
+      interpret_close(ps, ui, cmd.close.path);
+      break;
 
-  if (!verb)
-  {
-    fprintf(stderr, "[command] invalid (no verb)");
-    return;
-  }
+    case EDIT_CHANGE:
+      interpret_change(ps, ui, cmd.change.path, cmd.change.offset,
+                       cmd.change.remove_length, cmd.change.data,
+                       cmd.change.insert_length);
+      break;
 
-  if (strcmp(verb, "open") == 0)
-  {
-    if (len != 3) goto arity;
-    val path = val_array_get(ps->ctx, stack, command, 1);
-    val data = val_array_get(ps->ctx, stack, command, 2);
-    if (!val_is_string(path) || !val_is_string(data))
-      goto arguments;
-    interpret_open(ps, ui,
-                   val_string(ps->ctx, stack, path),
-                   val_string(ps->ctx, stack, data),
-                   val_string_length(ps->ctx, stack, data));
-  }
-  else if (strcmp(verb, "close") == 0)
-  {
-    if (len != 2) goto arity;
-    val path = val_array_get(ps->ctx, stack, command, 1);
-    if (!val_is_string(path))
-      goto arguments;
-    interpret_close(ps, ui, val_string(ps->ctx, stack, path));
-  }
-  else if (strcmp(verb, "change") == 0)
-  {
-    if (len != 5) goto arity;
-    val path = val_array_get(ps->ctx, stack, command, 1);
-    val offset = val_array_get(ps->ctx, stack, command, 2);
-    val length = val_array_get(ps->ctx, stack, command, 3);
-    val data = val_array_get(ps->ctx, stack, command, 4);
-    if (!val_is_string(path) ||
-        !val_is_number(offset) ||
-        !val_is_number(length) ||
-        !val_is_string(data))
-      goto arguments;
-    interpret_change(ps, ui,
-                     val_string(ps->ctx, stack, path),
-                     val_number(ps->ctx, offset),
-                     val_number(ps->ctx, length),
-                     val_string(ps->ctx, stack, data),
-                     val_string_length(ps->ctx, stack, data));
-  }
-  else if (strcmp(verb, "theme") == 0)
-  {
-    if (len != 3) goto arity;
-    val bg = val_array_get(ps->ctx, stack, command, 1);
-    val fg = val_array_get(ps->ctx, stack, command, 2);
-    ps->theme_bg = parse_color(ps->ctx, stack, bg);
-    ps->theme_fg = parse_color(ps->ctx, stack, fg);
-    txp_renderer_config *config =
-        txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-    if (config->background_color != 0xFFFFFF &&
-        config->foreground_color != 0x000000)
+    case EDIT_THEME:
+      ps->theme_bg = convert_color(ps->ctx, stack, cmd.theme.bg);
+      ps->theme_fg = convert_color(ps->ctx, stack, cmd.theme.fg);
+      txp_renderer_config *config =
+          txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+      if (config->background_color != 0xFFFFFF &&
+          config->foreground_color != 0x000000)
+      {
+        config->background_color = ps->theme_bg;
+        config->foreground_color = ps->theme_fg;
+        schedule_event(RENDER_EVENT);
+      }
+      fprintf(stderr, "[command] theme %x %x\n", ps->theme_bg, ps->theme_fg);
+      break;
+
+    case EDIT_PREVIOUS_PAGE:
+      previous_page(ui);
+      break;
+
+    case EDIT_NEXT_PAGE:
+      next_page(ui);
+      break;
+
+    case EDIT_MOVE_WINDOW:
     {
-      config->background_color = ps->theme_bg;
-      config->foreground_color = ps->theme_fg;
-      schedule_event(RENDER_EVENT);
+      float x = cmd.move_window.x, y = cmd.move_window.y,
+            w = cmd.move_window.w, h = cmd.move_window.h;
+      int x0 = x, y0 = y;
+      SDL_SetWindowPosition(ui->window, x, y);
+      SDL_GetWindowPosition(ui->window, &x0, &y0);
+      SDL_SetWindowSize(ui->window, w + x - x0, h + y - y0);
+      fprintf(stderr, "[command] move-window %f %f %f %f (pos: %d %d)\n",
+              x, y, w, h, x0, y0);
     }
-    fprintf(stderr, "[command] theme %x %x\n", ps->theme_bg, ps->theme_fg);
-  }
-  else if (strcmp(verb, "previous-page") == 0)
-    previous_page(ui);
-  else if (strcmp(verb, "next-page") == 0)
-    next_page(ui);
-  else if (strcmp(verb, "move-window") == 0)
-  {
-    if (len != 5) goto arity;
-    float x = val_number(ps->ctx, val_array_get(ps->ctx, stack, command, 1));
-    float y = val_number(ps->ctx, val_array_get(ps->ctx, stack, command, 2));
-    float w = val_number(ps->ctx, val_array_get(ps->ctx, stack, command, 3));
-    float h = val_number(ps->ctx, val_array_get(ps->ctx, stack, command, 4));
-    SDL_SetWindowPosition(ui->window, x, y);
-    int x0 = x, y0 = y;
-    SDL_GetWindowPosition(ui->window, &x0, &y0);
-    SDL_SetWindowSize(ui->window, w + x - x0, h + y - y0);
-    fprintf(stderr, "[command] move-window %f %f %f %f (pos: %d %d)\n", x, y, w, h, x0, y0);
-  }
-  else if (strcmp(verb, "stay-on-top") == 0)
-  {
-    if (len != 2) goto arity;
-    bool on_top = lisp_truth_value(ps->ctx, stack, val_array_get(ps->ctx, stack, command, 1));
-    SDL_SetWindowAlwaysOnTop(ui->window, on_top);
-    fprintf(stderr, "[command] stay-on-top %d\n", on_top);
-  }
-  else
-    fprintf(stderr, "[command] unknown verb: %s\n", verb);
+    break;
 
-  return;
-
-arity:
-  fprintf(stderr, "[command] %s: invalid arity\n", verb);
-  return;
-
-arguments:
-  fprintf(stderr, "[command] %s: invalid arguments\n", verb);
-  return;
+    case EDIT_STAY_ON_TOP:
+      SDL_SetWindowAlwaysOnTop(ui->window, cmd.stay_on_top.status);
+      fprintf(stderr, "[command] stay-on-top %d\n", cmd.stay_on_top.status);
+      break;
+  }
 }
 
 /* Entry point */
@@ -887,7 +824,7 @@ bool texpresso_main(struct persistent_state *ps)
     ui->need_synctex = ps->initial.need_synctex;
     *txp_renderer_get_config(ps->ctx, ui->doc_renderer) = ps->initial.config;
     txp_renderer_set_contents(ps->ctx, ui->doc_renderer, ps->initial.display_list);
-    puts("(reset-sync)\n");
+    editor_reset_sync();
   }
   else
   {

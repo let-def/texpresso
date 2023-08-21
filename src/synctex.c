@@ -22,9 +22,10 @@
  * IN THE SOFTWARE.
  */
 
-#include "synctex.h"
 #include <math.h>
 #include <string.h>
+#include "synctex.h"
+#include "editor.h"
 
 struct offset_buffer
 {
@@ -517,31 +518,6 @@ parse_tree(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr, int x, int y, str
   }
 }
 
-static void output_sexp_string(FILE *f, const char *ptr, int len)
-{
-  for (const char *lim = ptr + len; ptr < lim; ptr++)
-  {
-    char c = *ptr;
-    switch (c)
-    {
-      case '\t':
-        putc_unlocked('\\', f);
-        c = 't';
-        break;
-      case '\r':
-        putc_unlocked('\\', f);
-        c = 'r';
-        break;
-      case '\n':
-        c = 'n';
-      case '"':
-      case '\\':
-        putc_unlocked('\\', f);
-    }
-    putc_unlocked(c, f);
-  }
-}
-
 void synctex_scan(fz_context *ctx, synctex_t *stx, fz_buffer *buf, unsigned page, int x, int y)
 {
   if (synctex_page_count(stx) <= page)
@@ -572,8 +548,6 @@ void synctex_scan(fz_context *ctx, synctex_t *stx, fz_buffer *buf, unsigned page
             c.rect.x0, c.rect.y0, c.rect.x1, c.rect.y1,
             len, filename,
             c.link.line, c.link.column);
-    fprintf(stdout, "(synctex \"");
-    output_sexp_string(stdout, (const void *)filename, len);
-    fprintf(stdout, "\" %d %d)\n", c.link.line, c.link.column);
+    editor_synctex((const void *)filename, len, c.link.line, c.link.column);
   }
 }

@@ -36,6 +36,7 @@
 #include "incdvi.h"
 #include "state.h"
 #include "synctex.h"
+#include "editor.h"
 
 typedef struct
 {
@@ -300,31 +301,6 @@ static fz_buffer *entry_data(fileentry_t *e)
 }
 
 // TODO CLEANUP
-static void output_sexp_string(FILE *f, const char *ptr, int len)
-{
-  for (const char *lim = ptr + len; ptr < lim; ptr++)
-  {
-    char c = *ptr;
-    switch (c)
-    {
-      case '\t':
-        putc_unlocked('\\', f);
-        c = 't';
-        break;
-      case '\r':
-        putc_unlocked('\\', f);
-        c = 'r';
-        break;
-      case '\n':
-        c = 'n';
-      case '"':
-      case '\\':
-        putc_unlocked('\\', f);
-    }
-    putc_unlocked(c, f);
-  }
-}
-
 static void answer_standard_query(fz_context *ctx, struct tex_engine *self, channel_t *c, query_t *q)
 {
   answer_t a;
@@ -548,18 +524,9 @@ static void answer_standard_query(fz_context *ctx, struct tex_engine *self, chan
           fprintf(stderr, "[info] synctex used %d input files, is %d pages long\n", ninput, npage);
       }
       else if (self->st.log.entry == e)
-      {
-        fprintf(stdout, "(append log %d \"", q->writ.pos);
-        output_sexp_string(stdout, q->writ.buf, q->writ.size);
-        fprintf(stdout, "\")\n");
-      }
+        editor_append(BUF_LOG, q->writ.pos, q->writ.buf, q->writ.size);
       else if (self->st.stdout.entry == e)
-      {
-        fprintf(stdout, "(append out %d \"", q->writ.pos);
-        output_sexp_string(stdout, q->writ.buf, q->writ.size);
-        fprintf(stdout, "\")\n");
-      }
-
+        editor_append(BUF_OUT, q->writ.pos, q->writ.buf, q->writ.size);
       a.tag = A_DONE;
       channel_write_answer(c, &a);
       break;
@@ -918,8 +885,8 @@ static void rollback(fz_context *ctx, struct tex_engine *self, int trace)
   }
   else
     synctex_rollback(ctx, self->stex, 0);
-  fprintf(stdout, "(truncate out %d)\n", entry_length(self->st.stdout.entry));
-  fprintf(stdout, "(truncate log %d)\n", entry_length(self->st.log.entry));
+  editor_truncate(BUF_OUT, entry_length(self->st.stdout.entry));
+  editor_truncate(BUF_LOG, entry_length(self->st.log.entry));
 }
 
 static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, int offset)
