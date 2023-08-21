@@ -123,9 +123,33 @@ int main(int argc, const char **argv)
   }
   fprintf(stderr, "[info] executable path: %s\n", exe_path);
 
+  const char *doc_arg = NULL;
+  enum editor_protocol protocol = EDITOR_SEXP;
+
+  switch (argc)
+  {
+    case 2:
+      // texpresso foo.tex
+      doc_arg = argv[1];
+      break;
+
+    case 3:
+      // texpresso -json foo.tex
+      if (strcmp(argv[1], "-json") == 0)
+      {
+        doc_arg = argv[2];
+        protocol = EDITOR_JSON;
+        break;
+      }
+
+    default:
+      fprintf(stderr, "Usage: texpresso [-json] root_file.tex\n");
+      exit(1);
+  }
+
   // Move to TeX document directory
   char doc_path[PATH_MAX];
-  if (!realpath(argv[1], doc_path))
+  if (!realpath(doc_arg, doc_path))
   {
     perror("finding document path");
     abort();
@@ -184,6 +208,7 @@ int main(int argc, const char **argv)
 
   struct persistent_state pstate = {
       .initial = {0,},
+      .protocol = protocol,
       .window = window,
       .renderer = renderer,
       .ctx = ctx,

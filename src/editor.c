@@ -1,4 +1,13 @@
 #include "editor.h"
+#include "driver.h"
+#include "vstack.h"
+
+static enum editor_protocol protocol = EDITOR_SEXP;
+
+void editor_set_protocol(enum editor_protocol aprotocol)
+{
+  protocol = aprotocol;
+}
 
 // Processing input
 
@@ -9,8 +18,10 @@ static void parse_color(fz_context *ctx, vstack *stack, float out[3], val col)
   out[2] = val_number(ctx, val_array_get(ctx, stack, col, 2));
 }
 
-static bool lisp_truth_value(fz_context *ctx, vstack *t, val v)
+static bool truth_value(fz_context *ctx, vstack *t, val v)
 {
+  if (val_is_bool(v) || (protocol == EDITOR_JSON))
+    return val_bool(ctx, v);
   return !(val_is_name(v) && strcmp(val_as_name(ctx, t, v), "nil") == 0);
 }
 
@@ -134,7 +145,7 @@ bool editor_parse(fz_context *ctx,
     if (len != 2)
       goto arity;
     bool status =
-        lisp_truth_value(ctx, stack, val_array_get(ctx, stack, command, 1));
+        truth_value(ctx, stack, val_array_get(ctx, stack, command, 1));
     *out = (struct editor_command){.tag = EDIT_STAY_ON_TOP,
                                    .stay_on_top = {.status = status}};
   }
@@ -181,6 +192,21 @@ static void output_sexp_string(FILE *f, const char *ptr, int len)
   }
 }
 
+static void output_data_string(FILE *f, const char *ptr, int len)
+{
+  switch (protocol)
+  {
+    case EDITOR_SEXP:
+      output_sexp_string(f, ptr, len);
+      break;
+
+    case EDITOR_JSON:
+      // TODO
+      abort();
+      break;
+  }
+}
+
 static const char *editor_info_buffer(enum EDITOR_INFO_BUFFER name)
 {
   switch (name)
@@ -198,29 +224,73 @@ void editor_append(enum EDITOR_INFO_BUFFER name,
                    const char *data,
                    int data_len)
 {
-  fprintf(stdout, "(append %s %d \"", editor_info_buffer(name), pos);
-  output_sexp_string(stdout, data, data_len);
-  fprintf(stdout, "\")\n");
+  switch (protocol)
+  {
+    case EDITOR_SEXP:
+      fprintf(stdout, "(append %s %d \"", editor_info_buffer(name), pos);
+      output_data_string(stdout, data, data_len);
+      fprintf(stdout, "\")\n");
+      break;
+    case EDITOR_JSON:
+      fprintf(stdout, "[\"append\", \"%s\", %d, \"", editor_info_buffer(name), pos);
+      output_data_string(stdout, data, data_len);
+      fprintf(stdout, "\"]\n");
+      break;
+  }
 }
 
 void editor_truncate(enum EDITOR_INFO_BUFFER name, int length)
 {
-  fprintf(stdout, "(truncate %s %d)\n", editor_info_buffer(name), length);
+  switch (protocol)
+  {
+    case EDITOR_SEXP:
+      fprintf(stdout, "(truncate %s %d)\n", editor_info_buffer(name), length);
+      break;
+    case EDITOR_JSON:
+      fprintf(stdout, "[\"truncate\", \"%s\", %d]\n", editor_info_buffer(name), length);
+      break;
+  }
 }
 
 void editor_flush(void)
 {
-  puts("(flush)\n");
+  switch (protocol)
+  {
+    case EDITOR_SEXP:
+      puts("(flush)\n");
+      break;
+    case EDITOR_JSON:
+      puts("[\"flush\"]\n");
+      break;
+  }
 }
 
 void editor_synctex(const char *path, int path_len, int line, int column)
 {
-  fprintf(stdout, "(synctex \"");
-  output_sexp_string(stdout, (const void *)path, path_len);
-  fprintf(stdout, "\" %d %d)\n", line, column);
+  switch (protocol)
+  {
+    case EDITOR_SEXP:
+      fprintf(stdout, "(synctex \"");
+      output_data_string(stdout, (const void *)path, path_len);
+      fprintf(stdout, "\" %d %d)\n", line, column);
+      break;
+    case EDITOR_JSON:
+      fprintf(stdout, "[\"synctex\", \"");
+      output_data_string(stdout, (const void *)path, path_len);
+      fprintf(stdout, "\", %d, %d]\n", line, column);
+      break;
+  }
 }
 
 void editor_reset_sync(void)
 {
-  puts("(reset-sync)\n");
+  switch (protocol)
+  {
+    case EDITOR_SEXP:
+      puts("(reset-sync)\n");
+      break;
+    case EDITOR_JSON:
+      puts("[\"reset-sync\"]\n");
+      break;
+  }
 }

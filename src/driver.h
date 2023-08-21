@@ -48,8 +48,15 @@ struct initial_state
   fz_display_list *display_list;
 };
 
+enum editor_protocol
+{
+  EDITOR_SEXP,
+  EDITOR_JSON,
+};
+
 struct persistent_state {
   struct initial_state initial;
+  enum editor_protocol protocol;
   Uint32 custom_event;
 
   uint32_t theme_bg, theme_fg;

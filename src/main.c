@@ -791,6 +791,7 @@ static void interpret_command(struct persistent_state *ps,
 
 bool texpresso_main(struct persistent_state *ps)
 {
+  editor_set_protocol(ps->protocol);
   pstate = ps;
 
   ui_state raw_ui, *ui = &raw_ui;

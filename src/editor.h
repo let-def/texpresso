@@ -1,7 +1,10 @@
 #ifndef EDITOR_H_
 #define EDITOR_H_
 
+#include "driver.h"
 #include "vstack.h"
+
+void editor_set_protocol(enum editor_protocol protocol);
 
 // Receiving commands
 
