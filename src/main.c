@@ -989,11 +989,21 @@ bool texpresso_main(struct persistent_state *ps)
         }
 
         // TODO scroll to point
-        // fz_point p = fz_make_point(x, y);
-        // fz_point pt = txp_renderer_document_to_screen(ps->ctx, ui->doc_renderer, p);
-        // float f = 1 / send(scale_factor, ui->eng);
-        // txp_renderer_page_position
-        // synctex_scan(ctx, stx, buf, ui->page, f * pt.x, f * pt.y);
+        float f = send(scale_factor, ui->eng);
+        fz_point p = fz_make_point(f * x, f * y);
+        fz_point pt = txp_renderer_document_to_screen(ps->ctx, ui->doc_renderer, p);
+        fprintf(stderr, "[synctex forward] position on screen: (%.02f, %.02f)\n",
+                pt.x, pt.y);
+        int w, h;
+        txp_renderer_screen_size(ps->ctx, ui->doc_renderer, &w, &h);
+        float margin = h / 5.0;
+
+        txp_renderer_config *config =
+            txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+        if (pt.y < margin)
+          config->pan.y += - pt.y + margin;
+        else if (pt.y >= h - margin)
+          config->pan.y += h - pt.y - margin;
       }
     }
 

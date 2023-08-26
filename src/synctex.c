@@ -614,7 +614,7 @@ rev_parse_page(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr, int tag, int 
   struct record r = {0,};
   while ((ptr = parse_line(ptr, &r)))
   {
-    if (r.link.tag-1 == tag && r.link.line >= line)
+    if (r.kind == STEX_CURRENT && r.link.tag - 1 == tag && r.link.line >= line)
     {
       if (x) *x = r.point.x;
       if (y) *y = r.point.y;
