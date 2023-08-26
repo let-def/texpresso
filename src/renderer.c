@@ -961,3 +961,9 @@ fz_point txp_renderer_document_to_screen(fz_context *ctx, txp_renderer *self, fz
     return fz_make_point(0, 0);
   return fz_make_point(pt.x * scale + translate.x, pt.y * scale + translate.y);
 }
+
+void txp_renderer_screen_size(fz_context *ctx, txp_renderer *self, int *w, int *h)
+{
+  *w = self->output_w;
+  *h = self->output_h;
+}
