@@ -212,6 +212,41 @@ arguments:
 
 // Sending output
 
+static void output_json_string(FILE *f, const char *ptr, int len)
+{
+  for (const char *lim = ptr + len; ptr < lim; ptr++)
+  {
+    char c = *ptr;
+    if (c < 32)
+    {
+      switch (c)
+      {
+        case '\b': c = 'b'; break;
+        case '\f': c = 'f'; break;
+        case '\n': c = 'n'; break;
+        case '\r': c = 'r'; break;
+        case '\t': c = 't'; break;
+        default:
+          fprintf(f, "\\u%04X", c);
+          continue;
+      }
+      putc_unlocked('\\', f);
+    }
+    else
+    {
+      switch (c)
+      {
+        case '"':
+        case '\\':
+        case '/':
+          putc_unlocked('\\', f);
+          break;
+      }
+    }
+    putc_unlocked(c, f);
+  }
+}
+
 static void output_sexp_string(FILE *f, const char *ptr, int len)
 {
   for (const char *lim = ptr + len; ptr < lim; ptr++)
@@ -246,8 +281,7 @@ static void output_data_string(FILE *f, const char *ptr, int len)
       break;
 
     case EDITOR_JSON:
-      // TODO
-      abort();
+      output_json_string(f, ptr, len);
       break;
   }
 }
