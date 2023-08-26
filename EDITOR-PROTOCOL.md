@@ -90,6 +90,12 @@ Move TeXpresso to the specified screen coordinates. For GUI editors, this can be
 
 Asking the window manager to keep TeXpresso window above the others, or not. This can be convenient to keep a TeXpresso window floating on top of the editor. (`t` and `nil` are the closest approximation of "true" and "false" in emacs-sexp).
 
+```scheme
+(synctex-forward "path" line)
+```
+
+Try to scroll the UI to the contents defined in TeX file at "path" and line. The path can be absolute or relative to the root document.
+
 ## Messages (texpresso -> editor)
 
 ### Synchronizing output messages and log file
@@ -124,6 +130,7 @@ Sample script:
 ```
 
 SyncTeX backward synchronisation: the user clicked on text produced by LaTeX sources at path:line. The action is usually to open this file in the editor and jumps to this line.
+The path is relative to the root document.
 
 
 ### VFS reset

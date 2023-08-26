@@ -18,6 +18,7 @@ enum EDITOR_COMMAND
   EDIT_NEXT_PAGE,
   EDIT_MOVE_WINDOW,
   EDIT_STAY_ON_TOP,
+  EDIT_SYNCTEX_FORWARD,
 };
 
 struct editor_command {
@@ -55,6 +56,11 @@ struct editor_command {
     struct {
       bool status;
     } stay_on_top;
+
+    struct {
+      const char *path;
+      int line;
+    } synctex_forward;
   };
 };
 

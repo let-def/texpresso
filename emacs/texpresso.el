@@ -160,7 +160,8 @@ Character counts are converted to byte offsets using `texpresso--before-change'.
                       (process-get texpresso--process 'marker)))
           (texpresso--send 'open (buffer-file-name)
                            (buffer-substring-no-properties
-                            (point-min) (point-max))))))))
+                            (point-min) (point-max))))
+        (texpresso--send 'synctex-forward (buffer-file-name) (line-number-at-pos nil t))))))
 
 (defun texpresso--stderr-filter (process text)
   "Save debug TEXT from TeXpresso PROCESS in *texpresso-stderr* buffer.
