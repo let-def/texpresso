@@ -43,8 +43,12 @@ bool editor_parse(fz_context *ctx,
     return 0;
   }
 
-  const char *verb =
-      val_as_name(ctx, stack, val_array_get(ctx, stack, command, 0));
+  val vverb = val_array_get(ctx, stack, command, 0);
+  const char *verb;
+  if (val_is_name(vverb))
+    verb = val_as_name(ctx, stack, vverb);
+  else if (val_is_string(vverb) && (protocol == EDITOR_JSON))
+    verb = val_as_string(ctx, stack, vverb);
 
   if (!verb)
   {
