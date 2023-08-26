@@ -62,5 +62,6 @@ bool txp_renderer_drag_selection(fz_context *ctx, txp_renderer *self, fz_point p
 bool txp_renderer_select_word(fz_context *ctx, txp_renderer *self, fz_point pt);
 bool txp_renderer_select_char(fz_context *ctx, txp_renderer *self, fz_point pt);
 fz_point txp_renderer_screen_to_document(fz_context *ctx, txp_renderer *self, fz_point pt);
+fz_point txp_renderer_document_to_screen(fz_context *ctx, txp_renderer *self, fz_point pt);
 
 #endif /*!_RENDERER_H_*/

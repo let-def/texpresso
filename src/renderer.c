@@ -952,3 +952,12 @@ fz_point txp_renderer_screen_to_document(fz_context *ctx, txp_renderer *self, fz
     return fz_make_point(0, 0);
   return fz_make_point((pt.x - translate.x) / scale, (pt.y - translate.y) / scale);
 }
+
+fz_point txp_renderer_document_to_screen(fz_context *ctx, txp_renderer *self, fz_point pt)
+{
+  fz_point translate;
+  float scale;
+  if (!txp_renderer_page_position(ctx, self, NULL, &translate, &scale))
+    return fz_make_point(0, 0);
+  return fz_make_point(pt.x * scale + translate.x, pt.y * scale + translate.y);
+}

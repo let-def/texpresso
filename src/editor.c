@@ -149,6 +149,23 @@ bool editor_parse(fz_context *ctx,
     *out = (struct editor_command){.tag = EDIT_STAY_ON_TOP,
                                    .stay_on_top = {.status = status}};
   }
+  else if (strcmp(verb, "synctex-forward") == 0)
+  {
+    if (len != 3)
+      goto arity;
+    val path = val_array_get(ctx, stack, command, 1);
+    val line = val_array_get(ctx, stack, command, 2);
+    if (!val_is_string(path) || !val_is_number(line))
+      goto arguments;
+    *out = (struct editor_command){
+        .tag = EDIT_SYNCTEX_FORWARD,
+        .synctex_forward =
+            {
+                .path = val_string(ctx, stack, path),
+                .line = val_number(ctx, line),
+            },
+    };
+  }
   else
   {
     fprintf(stderr, "[command] unknown verb: %s\n", verb);

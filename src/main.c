@@ -151,17 +151,26 @@ static int repaint_on_resize(void *data, SDL_Event *event)
 
 /* Document processing */
 
-static bool need_advance(ui_state *ui)
+static bool need_advance(fz_context *ctx, ui_state *ui)
 {
-  return (((send(page_count, ui->eng) <= ui->page) ||
-           (ui->need_synctex &&
-            synctex_page_count(send(synctex, ui->eng, NULL)) <= ui->page)) &&
-          send(get_status, ui->eng) == DOC_RUNNING);
+  int need = send(page_count, ui->eng) <= ui->page;
+
+  if (!need)
+  {
+    fz_buffer *buf;
+    synctex_t *stx = send(synctex, ui->eng, &buf);
+    need =
+      (ui->need_synctex && synctex_page_count(stx) <= ui->page) ||
+      (synctex_has_target(stx) &&
+       !synctex_find_target(ctx, stx, buf, NULL, NULL, NULL));
+  }
+
+  return (need && send(get_status, ui->eng) == DOC_RUNNING);
 }
 
 static bool advance_engine(fz_context *ctx, ui_state *ui)
 {
-  bool need = need_advance(ui);
+  bool need = need_advance(ctx, ui);
   if (!need && ui->advancing)
     editor_flush();
   ui->advancing = need;
@@ -178,7 +187,7 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
       break;
 
     steps -= 1;
-    need = need_advance(ui);
+    need = need_advance(ctx, ui);
 
     if (steps == 0)
     {
@@ -415,6 +424,7 @@ static void wakeup_poll_thread(int poll_stdin_pipe[2], char c)
 
 static void previous_page(ui_state *ui)
 {
+  synctex_set_target(send(synctex, ui->eng, NULL), NULL, 0);
   if (ui->page > 0)
   {
     ui->page -= 1;
@@ -428,6 +438,7 @@ static void previous_page(ui_state *ui)
 
 static void next_page(ui_state *ui)
 {
+  synctex_set_target(send(synctex, ui->eng, NULL), NULL, 0);
   ui->page += 1;
   schedule_event(RELOAD_EVENT);
 }
@@ -719,6 +730,14 @@ static uint32_t convert_color(fz_context *ctx, vstack *stack, float frgb[3])
   return (rgb[0] << 16) | (rgb[1] << 8) | (rgb[2]);
 }
 
+static void display_page(struct persistent_state *ps, ui_state *ui)
+{
+  fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
+  txp_renderer_set_contents(ps->ctx, ui->doc_renderer, dl);
+  fz_drop_display_list(ps->ctx, dl);
+  schedule_event(RENDER_EVENT);
+}
+
 static void interpret_command(struct persistent_state *ps,
                               ui_state *ui,
                               vstack *stack,
@@ -784,6 +803,23 @@ static void interpret_command(struct persistent_state *ps,
       SDL_SetWindowAlwaysOnTop(ui->window, cmd.stay_on_top.status);
       fprintf(stderr, "[command] stay-on-top %d\n", cmd.stay_on_top.status);
       break;
+
+    case EDIT_SYNCTEX_FORWARD:
+    {
+      fz_buffer *buf;
+      synctex_t *stx = send(synctex, ui->eng, &buf);
+      int go_up = 0;
+      const char *path = relative_path(cmd.synctex_forward.path, ps->doc_path, &go_up);
+      if (go_up > 0)
+      {
+        fprintf(stderr,
+                "[command] synctex-forward %s: file has a different root, skipping\n",
+                path);
+      }
+      else
+        synctex_set_target(stx, path, cmd.synctex_forward.line);
+    }
+    break;
   }
 }
 
@@ -935,6 +971,29 @@ bool texpresso_main(struct persistent_state *ps)
           fprintf(stderr, "SDL_WaitEvent error: %s\n", SDL_GetError());
           break;
         }
+      }
+
+      fz_buffer *buf;
+      synctex_t *stx = send(synctex, ui->eng, &buf);
+      int page = -1, x = -1, y = -1;
+      if (synctex_has_target(stx) &&
+          synctex_find_target(ps->ctx, stx, buf, &page, &x, &y))
+      {
+        fprintf(stderr, "SyncTeX forward sync: hit page %d, coordinates (%d, %d)\n",
+                page, x, y);
+
+        if (page != ui->page)
+        {
+          ui->page = page;
+          display_page(ps, ui);
+        }
+
+        // TODO scroll to point
+        // fz_point p = fz_make_point(x, y);
+        // fz_point pt = txp_renderer_document_to_screen(ps->ctx, ui->doc_renderer, p);
+        // float f = 1 / send(scale_factor, ui->eng);
+        // txp_renderer_page_position
+        // synctex_scan(ctx, stx, buf, ui->page, f * pt.x, f * pt.y);
       }
     }
 
@@ -1095,12 +1154,7 @@ bool texpresso_main(struct persistent_state *ps)
               ui->page = page_count - 1;
           }
           if (ui->page < page_count)
-          {
-            fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
-            txp_renderer_set_contents(ps->ctx, ui->doc_renderer, dl);
-            fz_drop_display_list(ps->ctx, dl);
-            schedule_event(RENDER_EVENT);
-          }
+            display_page(ps, ui);
           break;
 
         case STDIN_EVENT:

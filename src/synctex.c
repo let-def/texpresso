@@ -77,6 +77,10 @@ struct synctex_s
 {
   struct offset_buffer inputs, pages;
   int bol, cur;
+
+  char target_path[1024];
+  int target_tag, target_line;
+  int target_inp_len, target_page_cand;
 };
 
 synctex_t *synctex_new(fz_context *ctx)
@@ -85,6 +89,9 @@ synctex_t *synctex_new(fz_context *ctx)
   ob_init(&stx->inputs);
   ob_init(&stx->pages);
   stx->cur = 0;
+  stx->target_path[0] = 0;
+  stx->target_inp_len = 0;
+  stx->target_page_cand = 0;
   return stx;
 }
 
@@ -101,6 +108,12 @@ void synctex_rollback(fz_context *ctx, synctex_t *stx, size_t offset)
   ob_rollback(ctx, &stx->inputs, offset);
   if (stx->cur > offset)
     stx->cur = offset;
+  if (stx->target_inp_len > stx->inputs.len)
+    stx->target_inp_len = stx->inputs.len;
+  if (stx->target_page_cand > stx->pages.len)
+    stx->target_page_cand = 0;
+  if (stx->target_tag >= stx->inputs.len)
+    stx->target_tag = -1;
 }
 
 static const uint8_t *string_parse_int(const uint8_t *string, int *i)
@@ -518,6 +531,25 @@ parse_tree(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr, int x, int y, str
   }
 }
 
+static int get_input(fz_buffer *buf,
+                      synctex_t *stx,
+                      int index,
+                      const char **name)
+{
+  const char *filename = (const char *)&buf->data[stx->inputs.ptr[index]];
+  while (*filename != ':')
+    filename++;
+  filename++;
+  while (*filename != ':')
+    filename++;
+  filename++;
+  const char *fend = filename;
+  while (*fend != '\n')
+    fend++;
+  *name = filename;
+  return (fend - filename);
+}
+
 void synctex_scan(fz_context *ctx, synctex_t *stx, fz_buffer *buf, unsigned page, int x, int y)
 {
   if (synctex_page_count(stx) <= page)
@@ -534,20 +566,109 @@ void synctex_scan(fz_context *ctx, synctex_t *stx, fz_buffer *buf, unsigned page
   parse_tree(stx, buf, ptr, x, y, &c);
   if (c.link.tag)
   {
-    const uint8_t *filename = &buf->data[stx->inputs.ptr[c.link.tag-1]];
-    while (*filename != ':') filename++;
-    filename++;
-    while (*filename != ':') filename++;
-    filename++;
-    const uint8_t *fend = filename;
-    while (*fend != '\n') fend++;
-    int len = (fend - filename);
+    const char *fname;
+    int len = get_input(buf, stx, c.link.tag-1, &fname);
     fprintf(stderr,
             "synctex best candidate: (%d,%d)-(%d,%d) "
             "file:%.*s line:%d column:%d\n",
             c.rect.x0, c.rect.y0, c.rect.x1, c.rect.y1,
-            len, filename,
+            len, fname,
             c.link.line, c.link.column);
-    editor_synctex((const void *)filename, len, c.link.line, c.link.column);
+    editor_synctex(fname, len, c.link.line, c.link.column);
   }
+}
+
+int synctex_has_target(synctex_t *stx)
+{
+  return stx && (stx->target_path[0] != 0);
+}
+
+void synctex_set_target(synctex_t *stx, const char *path, int line)
+{
+  if (!stx)
+    return;
+
+  if (!path)
+  {
+    stx->target_path[0] = 0;
+    return;
+  }
+
+  int length = strlen(path);
+  if (length >= sizeof(stx->target_path))
+    length = sizeof(stx->target_path) - 1;
+  memcpy(stx->target_path, path, length);
+  stx->target_path[length] = 0;
+  stx->target_tag = -1;
+  stx->target_line = line;
+  stx->target_inp_len = -1;
+  stx->target_page_cand = 0;
+}
+
+static int
+rev_parse_page(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr, int tag, int line, int *x, int *y)
+{
+  int nest = 0;
+  struct size saved[256];
+
+  struct record r = {0,};
+  while ((ptr = parse_line(ptr, &r)))
+  {
+    if (r.link.tag-1 == tag && r.link.line >= line)
+    {
+      if (x) *x = r.point.x;
+      if (y) *y = r.point.y;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
+                        int *page, int *x, int *y)
+{
+  if (!stx->target_path[0])
+    return 0;
+
+  if (stx->target_tag == -1)
+  {
+    int plen = strlen(stx->target_path);
+    while (stx->target_inp_len < stx->inputs.len)
+    {
+      const char *fname;
+      int len = get_input(buf, stx, stx->target_inp_len, &fname);
+      if (plen == len && strncmp(stx->target_path, fname, len) == 0)
+      {
+        stx->target_tag = stx->target_inp_len;
+        fprintf(stderr, "[synctex] Target tag index: %d\n", stx->target_tag);
+        int page = 0, offset = stx->inputs.ptr[stx->target_tag];
+        while (page < synctex_page_count(stx) &&
+               stx->pages.ptr[page * 2 + 1] < offset)
+          page += 1;
+        stx->target_page_cand = page;
+        break;
+      }
+      stx->target_inp_len++;
+    }
+  }
+
+  if (stx->target_tag == -1)
+    return 0;
+
+  while (stx->target_page_cand < synctex_page_count(stx))
+  {
+    int bop, eop;
+    synctex_page_offset(ctx, stx, stx->target_page_cand, &bop, &eop);
+    const uint8_t *ptr = &buf->data[bop];
+
+    if (rev_parse_page(stx, buf, ptr, stx->target_tag, stx->target_line, x, y))
+    {
+      if (page) *page = stx->target_page_cand;
+      return 1;
+    }
+    fprintf(stderr, "[synctex] Scanned page %d for target\n", stx->target_page_cand);
+    stx->target_page_cand += 1;
+  }
+
+  return 0;
 }
