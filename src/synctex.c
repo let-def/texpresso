@@ -81,6 +81,7 @@ struct synctex_s
   char target_path[1024];
   int target_tag, target_line;
   int target_inp_len, target_page_cand;
+  int target_page, target_x, target_y;
 };
 
 synctex_t *synctex_new(fz_context *ctx)
@@ -111,7 +112,11 @@ void synctex_rollback(fz_context *ctx, synctex_t *stx, size_t offset)
   if (stx->target_inp_len > stx->inputs.len)
     stx->target_inp_len = stx->inputs.len;
   if (stx->target_page_cand > stx->pages.len)
+  {
     stx->target_page_cand = 0;
+  }
+  if (stx->target_page >= stx->pages.len)
+    stx->target_page = -1;
   if (stx->target_tag >= stx->inputs.len)
     stx->target_tag = -1;
 }
@@ -606,19 +611,26 @@ void synctex_set_target(synctex_t *stx, const char *path, int line)
 }
 
 static int
-rev_parse_page(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr, int tag, int line, int *x, int *y)
+rev_parse_page(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr)
 {
   int nest = 0;
   struct size saved[256];
 
+  int tag = stx->target_tag;
+  int line = stx->target_line;
+
   struct record r = {0,};
   while ((ptr = parse_line(ptr, &r)))
   {
-    if (r.kind == STEX_CURRENT && r.link.tag - 1 == tag && r.link.line >= line)
+    if (r.kind == STEX_CURRENT && r.link.tag - 1 == tag)
     {
-      if (x) *x = r.point.x;
-      if (y) *y = r.point.y;
-      return 1;
+      if (r.link.line <= line || (r.link.line > line && stx->target_page == -1))
+      {
+        stx->target_page = stx->target_page_cand;
+        stx->target_x = r.point.x;
+        stx->target_y = r.point.y;
+      }
+      return (r.link.line >= line);
     }
   }
   return 0;
@@ -661,9 +673,11 @@ int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
     synctex_page_offset(ctx, stx, stx->target_page_cand, &bop, &eop);
     const uint8_t *ptr = &buf->data[bop];
 
-    if (rev_parse_page(stx, buf, ptr, stx->target_tag, stx->target_line, x, y))
+    if (rev_parse_page(stx, buf, ptr))
     {
-      if (page) *page = stx->target_page_cand;
+      if (page) *page = stx->target_page;
+      if (x) *x = stx->target_x;
+      if (y) *y = stx->target_y;
       return 1;
     }
     fprintf(stderr, "[synctex] Scanned page %d for target\n", stx->target_page_cand);
