@@ -492,3 +492,18 @@ bool vstack_at_top_level(vstack *t)
 {
   return (t->struct_kind == CTX_TOP);
 }
+
+bool vstack_in_string(vstack *t)
+{
+  return t->string_kind != CTX_NONE;
+}
+
+bool vstack_in_dict(vstack *t)
+{
+  return t->struct_kind == CTX_DICT;
+}
+
+bool vstack_in_array(vstack *t)
+{
+  return t->struct_kind == CTX_ARRAY;
+}
