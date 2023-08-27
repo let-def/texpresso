@@ -548,10 +548,10 @@ static int get_input(fz_buffer *buf,
   while (*filename != ':')
     filename++;
   filename++;
+  *name = filename;
   const char *fend = filename;
   while (*fend != '\n')
     fend++;
-  *name = filename;
   return (fend - filename);
 }
 
@@ -606,7 +606,7 @@ void synctex_set_target(synctex_t *stx, const char *path, int line)
   stx->target_path[length] = 0;
   stx->target_tag = -1;
   stx->target_line = line;
-  stx->target_inp_len = -1;
+  stx->target_inp_len = 0;
   stx->target_page_cand = 0;
 }
 
