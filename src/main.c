@@ -979,7 +979,7 @@ bool texpresso_main(struct persistent_state *ps)
       if (synctex_has_target(stx) &&
           synctex_find_target(ps->ctx, stx, buf, &page, &x, &y))
       {
-        fprintf(stderr, "SyncTeX forward sync: hit page %d, coordinates (%d, %d)\n",
+        fprintf(stderr, "[synctex forward] sync: hit page %d, coordinates (%d, %d)\n",
                 page, x, y);
 
         if (page != ui->page)
@@ -988,7 +988,7 @@ bool texpresso_main(struct persistent_state *ps)
           display_page(ps, ui);
         }
 
-        // TODO scroll to point
+        // FIXME: Scroll to point
         float f = send(scale_factor, ui->eng);
         fz_point p = fz_make_point(f * x, f * y);
         fz_point pt = txp_renderer_document_to_screen(ps->ctx, ui->doc_renderer, p);
@@ -1000,10 +1000,16 @@ bool texpresso_main(struct persistent_state *ps)
 
         txp_renderer_config *config =
             txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+
+        float delta = 0.0;
         if (pt.y < margin)
-          config->pan.y += - pt.y + margin;
+          delta = - pt.y + margin;
         else if (pt.y >= h - margin)
-          config->pan.y += h - pt.y - margin;
+          delta = h - pt.y - margin;
+        fprintf(stderr, "[synctex forward] pan.y = %.02f + %.02f = %.02f\n",
+                config->pan.y, delta, config->pan.y + delta);
+        config->pan.y += delta;
+        synctex_set_target(stx, NULL, 0);
       }
     }
 
