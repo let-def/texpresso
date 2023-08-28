@@ -26,6 +26,7 @@
 #include <string.h>
 #include "synctex.h"
 #include "editor.h"
+#include "myabort.h"
 
 struct offset_buffer
 {
@@ -249,7 +250,7 @@ int synctex_input_count(synctex_t *stx)
 void synctex_page_offset(fz_context *ctx, synctex_t *stx, unsigned index, int *bop, int *eop)
 {
   if (index * 2 + 1 >= stx->pages.len)
-    abort();
+    myabort();
 
   *bop = stx->pages.ptr[2 * index + 0];
   *eop = stx->pages.ptr[2 * index + 1];
@@ -258,7 +259,7 @@ void synctex_page_offset(fz_context *ctx, synctex_t *stx, unsigned index, int *b
 int synctex_input_offset(fz_context *ctx, synctex_t *stx, unsigned index)
 {
   if (index >= stx->inputs.len)
-    abort();
+    myabort();
 
   return stx->inputs.ptr[index];
 }
@@ -380,7 +381,7 @@ static const uint8_t *
 parse_line(const uint8_t *ptr, struct record *r)
 {
   if (!ptr) return NULL;
-  if (ptr[-1] != '\n') abort();
+  if (ptr[-1] != '\n') myabort();
 
   int has_link = 0, has_point = 0, has_size = 0, has_width = 0;
 
@@ -437,18 +438,18 @@ parse_line(const uint8_t *ptr, struct record *r)
   ptr += 1;
 
   if (has_link && !parse_link(&ptr, &r->link))
-    abort();
+    myabort();
 
   if (has_point && ((*ptr++ != ':') || !parse_point(&ptr, &r->point)))
-    abort();
+    myabort();
 
   if (has_size && ((*ptr++ != ':') || !parse_size(&ptr, &r->size)))
-    abort();
+    myabort();
 
   if (has_width)
   {
     if (*ptr++ != ':')
-      abort();
+      myabort();
     ptr = string_parse_int(ptr, &r->size.width);
   }
 
