@@ -685,7 +685,8 @@ rev_parse_page(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr)
         stx->target_x = r.point.x;
         stx->target_y = r.point.y;
       }
-      return (r.link.line >= line);
+      if (r.link.line >= line)
+        return 1;
     }
   }
   return 0;

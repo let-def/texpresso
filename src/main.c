@@ -996,16 +996,17 @@ bool texpresso_main(struct persistent_state *ps)
                 pt.x, pt.y);
         int w, h;
         txp_renderer_screen_size(ps->ctx, ui->doc_renderer, &w, &h);
-        float margin = h / 5.0;
+        float margin_lo = h / 4.0;
+        float margin_hi = h / 3.0;
 
         txp_renderer_config *config =
             txp_renderer_get_config(ps->ctx, ui->doc_renderer);
 
         float delta = 0.0;
-        if (pt.y < margin)
-          delta = - pt.y + margin;
-        else if (pt.y >= h - margin)
-          delta = h - pt.y - margin;
+        if (pt.y < margin_lo)
+          delta = - pt.y + margin_hi;
+        else if (pt.y >= h - margin_lo)
+          delta = h - pt.y - margin_hi;
         fprintf(stderr, "[synctex forward] pan.y = %.02f + %.02f = %.02f\n",
                 config->pan.y, delta, config->pan.y + delta);
         config->pan.y += delta;
