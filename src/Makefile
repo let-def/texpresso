@@ -13,11 +13,11 @@ $(BUILD)/texpresso: $(DIR)/driver.o $(DIR)/main.o $(DIR)/logo.o $(DIR_OBJECTS) $
 	$(CC) -o $@ $^ $(LIBS)
 
 texpresso-dev: $(BUILD)/texpresso-dev
-$(BUILD)/texpresso-dev: $(DIR)/driver.o $(DIR)/loader.o $(DIR)/logo.o $(BUILD)/texpresso.so
+$(BUILD)/texpresso-dev: $(DIR)/driver.o $(DIR)/loader.o $(DIR)/logo.o | $(BUILD)/texpresso-dev.so
 	$(CC) -o $@ $^ $(LIBS)
 
-texpresso.so: $(BUILD)/texpresso.so
-$(BUILD)/texpresso.so: $(DIR)/main.o $(DIR_OBJECTS) $(DIR)/libmydvi.a
+texpresso-dev.so: $(BUILD)/texpresso-dev.so
+$(BUILD)/texpresso-dev.so: $(DIR)/main.o $(DIR_OBJECTS) $(DIR)/libmydvi.a
 	$(MAKE) -C dvi
 	$(CC) -ldl -shared -o $@ $^ $(LIBS)
 	killall -SIGUSR1 texpresso-dev || true
