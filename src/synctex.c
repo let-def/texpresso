@@ -691,7 +691,7 @@ int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
       if (plen == len && strncmp(stx->target_path, fname, len) == 0)
       {
         stx->target_tag = stx->target_inp_len;
-        fprintf(stderr, "[synctex] Target tag index: %d\n", stx->target_tag);
+        fprintf(stderr, "[synctex forward] target tag: %d\n", stx->target_tag);
         int page = 0, offset = stx->inputs.ptr[stx->target_tag];
         while (page < synctex_page_count(stx) &&
                stx->pages.ptr[page * 2 + 1] < offset)
@@ -720,7 +720,7 @@ int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
       if (y) *y = stx->target_y;
       return 1;
     }
-    fprintf(stderr, "[synctex] Scanned page %d for target\n", stx->target_page_cand);
+    fprintf(stderr, "[synctex forward] scanned page %d\n", stx->target_page_cand);
     stx->target_page_cand += 1;
   }
 
