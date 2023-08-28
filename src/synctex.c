@@ -90,6 +90,7 @@ synctex_t *synctex_new(fz_context *ctx)
   ob_init(&stx->inputs);
   ob_init(&stx->pages);
   stx->cur = 0;
+  stx->target_page = -1;
   stx->target_path[0] = 0;
   stx->target_inp_len = 0;
   stx->target_page_cand = 0;
@@ -268,6 +269,9 @@ enum kind {
   STEX_LEAVE_V,
   STEX_LEAVE_H,
   STEX_CURRENT,
+  STEX_KERN,
+  STEX_GLUE,
+  STEX_MATH,
   STEX_OTHER,
 };
 
@@ -378,13 +382,30 @@ parse_line(const uint8_t *ptr, struct record *r)
   if (!ptr) return NULL;
   if (ptr[-1] != '\n') abort();
 
-  int has_link = 0, has_point = 0, has_size = 0;
+  int has_link = 0, has_point = 0, has_size = 0, has_width = 0;
+
+  *r = (struct record){0, };
 
   switch (*ptr)
   {
     case 'x':
       r->kind = STEX_CURRENT;
       has_link = has_point = 1;
+      break;
+
+    case 'k':
+      r->kind = STEX_KERN;
+      has_link = has_point = has_width = 1;
+      break;
+
+    case 'g':
+      r->kind = STEX_GLUE;
+      has_link = has_point = has_width = 1;
+      break;
+
+    case '$':
+      r->kind = STEX_MATH;
+      has_link = has_point = has_width = 1;
       break;
 
     case '(':
@@ -423,6 +444,13 @@ parse_line(const uint8_t *ptr, struct record *r)
 
   if (has_size && ((*ptr++ != ':') || !parse_size(&ptr, &r->size)))
     abort();
+
+  if (has_width)
+  {
+    if (*ptr++ != ':')
+      abort();
+    ptr = string_parse_int(ptr, &r->size.width);
+  }
 
   return nextline(ptr);
 }
@@ -485,6 +513,9 @@ parse_tree(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr, int x, int y, str
     switch (r.kind)
     {
       case STEX_CURRENT:
+      case STEX_KERN:
+      case STEX_GLUE:
+      case STEX_MATH:
         if (rect.y0 <= y && y <= rect.y1)
         {
           if (rect.x0 < x)
@@ -610,6 +641,11 @@ void synctex_set_target(synctex_t *stx, const char *path, int line)
   stx->target_page_cand = 0;
 }
 
+static bool is_oneliner(enum kind k)
+{
+  return (k >= STEX_CURRENT && k <= STEX_MATH);
+}
+
 static int
 rev_parse_page(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr)
 {
@@ -622,8 +658,10 @@ rev_parse_page(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr)
   struct record r = {0,};
   while ((ptr = parse_line(ptr, &r)))
   {
-    if (r.kind == STEX_CURRENT && r.link.tag - 1 == tag)
-    {
+    fprintf(stderr, "record: kind:%d tag:%d line:%d, point:(%d, %d)\n",
+            r.kind, r.link.tag, r.link.line, r.point.x, r.point.y);
+    if (is_oneliner(r.kind) && r.link.tag - 1 == tag)
+   {
       if (r.link.line <= line || (r.link.line > line && stx->target_page == -1))
       {
         stx->target_page = stx->target_page_cand;
