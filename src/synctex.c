@@ -658,6 +658,7 @@ int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
                stx->pages.ptr[page * 2 + 1] < offset)
           page += 1;
         stx->target_page_cand = page;
+        stx->target_page = -1;
         break;
       }
       stx->target_inp_len++;
