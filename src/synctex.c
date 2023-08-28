@@ -653,16 +653,32 @@ rev_parse_page(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr)
   int nest = 0;
   struct size saved[256];
 
+  int tag0 = -1;
+  int line0 = -1;
   int tag = stx->target_tag;
   int line = stx->target_line;
 
   struct record r = {0,};
   while ((ptr = parse_line(ptr, &r)))
   {
-    fprintf(stderr, "record: kind:%d tag:%d line:%d, point:(%d, %d)\n",
-            r.kind, r.link.tag, r.link.line, r.point.x, r.point.y);
+    // Remember the first location of the page to skip it:
+    // it is the location where the shipout procedure was invoked
+    // not the location of actual source contents
+    if (tag0 == -1 && (r.kind == STEX_ENTER_H || STEX_ENTER_V))
+    {
+      tag0 = r.link.tag;
+      line0 = r.link.line;
+    }
+
+    // fprintf(stderr, "record: kind:%d tag:%d line:%d, point:(%d, %d)\n", r.kind,
+    //         r.link.tag, r.link.line, r.point.x, r.point.y);
+
     if (is_oneliner(r.kind) && r.link.tag - 1 == tag)
-   {
+    {
+      // Ignore first location of the page: it doesn't belong to it.
+      if (r.link.tag == tag0 && r.link.line == line0)
+        continue;
+
       if (r.link.line <= line || (r.link.line > line && stx->target_page == -1))
       {
         stx->target_page = stx->target_page_cand;
