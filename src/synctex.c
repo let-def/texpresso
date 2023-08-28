@@ -400,12 +400,12 @@ parse_line(const uint8_t *ptr, struct record *r)
 
     case 'g':
       r->kind = STEX_GLUE;
-      has_link = has_point = has_width = 1;
+      has_link = has_point = 1;
       break;
 
     case '$':
       r->kind = STEX_MATH;
-      has_link = has_point = has_width = 1;
+      has_link = has_point = 1;
       break;
 
     case '(':
