@@ -258,7 +258,7 @@ standard output. This function interprets one of these."
                        (if (string= (buffer-name) "*TeXpresso window*")
                            (find-file-other-window fname)
                          (find-file fname))))
-        (unless buf
+        (unless (or buf (file-name-absolute-p fname))
           (setq fname (concat
                        (file-name-parent-directory texpresso--root-file)
                        "/" fname))

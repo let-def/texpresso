@@ -587,7 +587,13 @@ static int get_input(fz_buffer *buf,
   return (fend - filename);
 }
 
-void synctex_scan(fz_context *ctx, synctex_t *stx, fz_buffer *buf, unsigned page, int x, int y)
+void synctex_scan(fz_context *ctx,
+                  synctex_t *stx,
+                  fz_buffer *buf,
+                  const char *doc_dir,
+                  unsigned page,
+                  int x,
+                  int y)
 {
   if (synctex_page_count(stx) <= page)
     return;
@@ -611,7 +617,7 @@ void synctex_scan(fz_context *ctx, synctex_t *stx, fz_buffer *buf, unsigned page
             c.rect.x0, c.rect.y0, c.rect.x1, c.rect.y1,
             len, fname,
             c.link.line, c.link.column);
-    editor_synctex(fname, len, c.link.line, c.link.column);
+    editor_synctex(doc_dir, fname, len, c.link.line, c.link.column);
   }
 }
 

@@ -292,18 +292,26 @@ void editor_flush(void)
   }
 }
 
-void editor_synctex(const char *path, int path_len, int line, int column)
+void editor_synctex(const char *dirname,
+                    const char *basename,
+                    int basename_len,
+                    int line,
+                    int column)
 {
   switch (protocol)
   {
     case EDITOR_SEXP:
       fprintf(stdout, "(synctex \"");
-      output_data_string(stdout, (const void *)path, path_len);
+      output_data_string(stdout, dirname, strlen(dirname));
+      output_data_string(stdout, "/", 1);
+      output_data_string(stdout, (const void *)basename, basename_len);
       fprintf(stdout, "\" %d %d)\n", line, column);
       break;
     case EDITOR_JSON:
       fprintf(stdout, "[\"synctex\", \"");
-      output_data_string(stdout, (const void *)path, path_len);
+      output_data_string(stdout, dirname, strlen(dirname));
+      output_data_string(stdout, "/", 1);
+      output_data_string(stdout, (const void *)basename, basename_len);
       fprintf(stdout, "\", %d, %d]\n", line, column);
       break;
   }

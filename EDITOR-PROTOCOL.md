@@ -136,8 +136,6 @@ Sample script:
 ```
 
 SyncTeX backward synchronisation: the user clicked on text produced by LaTeX sources at path:line. The action is usually to open this file in the editor and jumps to this line.
-The path is relative to the root document.
-
 
 ### VFS reset
 

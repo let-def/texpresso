@@ -88,7 +88,7 @@ void editor_append(enum EDITOR_INFO_BUFFER name,
 
 void editor_truncate(enum EDITOR_INFO_BUFFER name, int length);
 void editor_flush(void);
-void editor_synctex(const char *path, int path_len, int line, int column);
+void editor_synctex(const char *dirname, const char *basename, int basename_len, int line, int column);
 void editor_reset_sync(void);
 
 #endif  // EDITOR_H_

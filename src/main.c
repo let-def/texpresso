@@ -219,7 +219,7 @@ static fz_point get_scale_factor(SDL_Window *window)
 
 /* UI events */
 
-static void ui_mouse_down(fz_context *ctx, ui_state *ui, int x, int y, bool ctrl)
+static void ui_mouse_down(struct persistent_state *ps, ui_state *ui, int x, int y, bool ctrl)
 {
   if (ctrl)
     ui->mouse_status = UI_MOUSE_MOVE;
@@ -238,25 +238,25 @@ static void ui_mouse_down(fz_context *ctx, ui_state *ui, int x, int y, bool ctrl
 
     if (double_click)
     {
-      diff = txp_renderer_select_word(ctx, ui->doc_renderer, p);
+      diff = txp_renderer_select_word(ps->ctx, ui->doc_renderer, p);
     }
     else
     {
-      diff = txp_renderer_start_selection(ctx, ui->doc_renderer, p);
-      diff = txp_renderer_select_char(ctx, ui->doc_renderer, p) || diff;
+      diff = txp_renderer_start_selection(ps->ctx, ui->doc_renderer, p);
+      diff = txp_renderer_select_char(ps->ctx, ui->doc_renderer, p) || diff;
       ui->last_click_ticks = ticks;
 
       fz_buffer *buf;
       synctex_t *stx = send(synctex, ui->eng, &buf);
       if (stx && buf)
       {
-        fz_point pt = txp_renderer_screen_to_document(ctx, ui->doc_renderer, p);
+        fz_point pt = txp_renderer_screen_to_document(ps->ctx, ui->doc_renderer, p);
         float f = 1 / send(scale_factor, ui->eng);
         // pt.x -= 72;
         // pt.y -= 72;
         fprintf(stderr, "click: (%f,%f) mapped:(%f,%f)\n",
                 pt.x, pt.y, f * pt.x, f * pt.y);
-        synctex_scan(ctx, stx, buf, ui->page, f * pt.x, f * pt.y);
+        synctex_scan(ps->ctx, stx, buf, ps->doc_path, ui->page, f * pt.x, f * pt.y);
       }
     }
 
@@ -1113,7 +1113,7 @@ bool texpresso_main(struct persistent_state *ps)
         break;
 
       case SDL_MOUSEBUTTONDOWN:
-        ui_mouse_down(ps->ctx, ui, e.button.x, e.button.y,
+        ui_mouse_down(ps, ui, e.button.x, e.button.y,
                       SDL_GetModState() & KMOD_CTRL);
         break;
 
