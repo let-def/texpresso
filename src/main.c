@@ -802,6 +802,10 @@ static void interpret_command(struct persistent_state *ps,
     }
     break;
 
+    case EDIT_RESCAN:
+      schedule_event(SCAN_EVENT);
+      break;
+
     case EDIT_STAY_ON_TOP:
       SDL_SetWindowAlwaysOnTop(ui->window, cmd.stay_on_top.status);
       fprintf(stderr, "[command] stay-on-top %d\n", cmd.stay_on_top.status);

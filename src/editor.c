@@ -121,11 +121,15 @@ bool editor_parse(fz_context *ctx,
   }
   else if (strcmp(verb, "previous-page") == 0)
   {
+    if (len != 1)
+      goto arity;
     *out =
         (struct editor_command){.tag = EDIT_PREVIOUS_PAGE, .previous_page = {}};
   }
   else if (strcmp(verb, "next-page") == 0)
   {
+    if (len != 1)
+      goto arity;
     *out = (struct editor_command){.tag = EDIT_NEXT_PAGE, .next_page = {}};
   }
   else if (strcmp(verb, "move-window") == 0)
@@ -139,6 +143,12 @@ bool editor_parse(fz_context *ctx,
             .w = val_number(ctx, val_array_get(ctx, stack, command, 3)),
             .h = val_number(ctx, val_array_get(ctx, stack, command, 4)),
         }};
+  }
+  else if (strcmp(verb, "rescan") == 0)
+  {
+    if (len != 1)
+      goto arity;
+    *out = (struct editor_command){.tag = EDIT_RESCAN, .next_page = {}};
   }
   else if (strcmp(verb, "stay-on-top") == 0)
   {

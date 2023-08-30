@@ -17,6 +17,7 @@ enum EDITOR_COMMAND
   EDIT_PREVIOUS_PAGE,
   EDIT_NEXT_PAGE,
   EDIT_MOVE_WINDOW,
+  EDIT_RESCAN,
   EDIT_STAY_ON_TOP,
   EDIT_SYNCTEX_FORWARD,
 };
@@ -52,6 +53,9 @@ struct editor_command {
     struct {
       float x, y, w, h;
     } move_window;
+
+    struct {
+    } rescan;
 
     struct {
       bool status;

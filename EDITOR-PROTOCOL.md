@@ -84,6 +84,12 @@ Display previous or the next page of the document. It is convenient to bind thes
 Move TeXpresso to the specified screen coordinates. For GUI editors, this can be convenient to keep TeXpresso positioned relative to the main window.
 
 ```scheme
+(rescan)
+```
+
+Check the filesystem for changes. This will reload and reprocess any changed file.
+
+```scheme
 (stay-on-top t)
 (stay-on-top nil)
 ```
