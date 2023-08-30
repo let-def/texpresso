@@ -714,6 +714,9 @@ static void interpret_close(struct persistent_state *ps,
   if (e->fs_data)
     changed = find_diff(e->fs_data, e->edit_data->data, e->edit_data->len);
 
+  fz_drop_buffer(ps->ctx, e->edit_data);
+  e->edit_data = NULL;
+
   fprintf(stderr, "[command] close %s: closing, changed offset %d\n", path,
           changed);
 
