@@ -58,9 +58,6 @@ it is too late to access the number of bytes.  To work around this limitation,
 the changed region is saved by the `texpresso--before-change' function (a
 `before-change-functions' hook).")
 
-(defvar texpresso--root-file nil
-  "Root file")
-
 (define-minor-mode texpresso-mode
   "A global minor mode that synchronizes buffer with TeXpresso.
 Also launches a new TeXpresso process if none is running."
@@ -206,10 +203,10 @@ returned."
           (texpresso--display-output buffer))))
     buffer))
 
-(defun texpresso-display-output (&optional buffer)
+(defun texpresso-display-output ()
   "Open a small window to display TeXpresso output messages."
   (interactive)
-  (texpresso--display-output (or buffer (texpresso--get-output-buffer 'out 'force))))
+  (texpresso--display-output (texpresso--get-output-buffer 'out 'force
 
 (defun texpresso--stdout-dispatch (process expr)
   "Interpret s-expression EXPR sent by TeXpresso PROCESS.
@@ -264,14 +261,6 @@ standard output. This function interprets one of these."
                        (if (string= (buffer-name) "*TeXpresso window*")
                            (find-file-other-window fname)
                          (find-file fname))))
-        (unless (or buf (file-name-absolute-p fname))
-          (setq fname (concat
-                       (file-name-parent-directory texpresso--root-file)
-                       "/" fname))
-          (setq buf (and (file-exists-p fname)
-                         (if (string= (buffer-name) "*TeXpresso window*")
-                             (find-file-other-window fname)
-                           (find-file fname)))))
         (if buf
             (with-current-buffer buf
               (goto-char (point-min))
@@ -366,10 +355,9 @@ If FILENAME is nil, use `(buffer-file-name)'."
   (interactive "fRoot file: ")
   (unless texpresso-mode
     (texpresso-mode 1))
-  (setq texpresso--root-file (or filename (buffer-file-name)))
   (condition-case err
       (texpresso--make-process (or texpresso-binary "texpresso")
-                               (expand-file-name texpresso--root-file))
+                               (expand-file-name filename))
     ((file-missing)
      (customize-variable 'texpresso-binary)
      (message "Cannot launch TeXpresso. Please select the executable file and try again. (error: %S)"
