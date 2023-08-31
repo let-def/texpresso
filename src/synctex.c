@@ -674,6 +674,13 @@ rev_parse_page(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr)
     {
       tag0 = r.link.tag;
       line0 = r.link.line;
+
+      // Heuristic: if the targetted line is just at the beginning of the next
+      // page and before and at the instruction that trigerred the flush, it is
+      // useful to use the top of next page as an approximation.
+      // (maybe there won't be any other synctex record to attach to).
+      if (tag0 - 1 == tag && line0 <= line)
+        return 0;
     }
 
     // fprintf(stderr, "record: kind:%d tag:%d line:%d, point:(%d, %d)\n", r.kind,
