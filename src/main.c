@@ -825,6 +825,7 @@ static void interpret_command(struct persistent_state *ps,
       }
       else
         synctex_set_target(stx, path, cmd.synctex_forward.line);
+      schedule_event(STDIN_EVENT);
     }
     break;
   }
