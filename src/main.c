@@ -824,8 +824,10 @@ static void interpret_command(struct persistent_state *ps,
                 path);
       }
       else
+      {
         synctex_set_target(stx, path, cmd.synctex_forward.line);
-      schedule_event(STDIN_EVENT);
+        schedule_event(STDIN_EVENT);
+      }
     }
     break;
   }
@@ -1019,6 +1021,8 @@ bool texpresso_main(struct persistent_state *ps)
                 config->pan.y, delta, config->pan.y + delta);
         config->pan.y += delta;
         synctex_set_target(stx, NULL, 0);
+        if (delta != 0.0)
+          schedule_event(RENDER_EVENT);
       }
     }
 
