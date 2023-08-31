@@ -87,7 +87,7 @@ Otherwise a buffer is synchronized if its major mode derives from `tex-mode'."
   (setq texpresso--state nil))
 
 (defcustom texpresso-binary nil
-  "Path of TeXpresso binary"
+  "Path of TeXpresso binary."
   :group 'tex
   :risky t
   :type '(choice (file :tag "Path")
@@ -97,6 +97,7 @@ Otherwise a buffer is synchronized if its major mode derives from `tex-mode'."
 (defvar-local texpresso--output-timer nil)
 
 (defun texpresso--output-truncate (buffer)
+  "Truncate TeXpresso output buffer BUFFER."
   (with-current-buffer buffer
     (when texpresso--output-timer
       (cancel-timer texpresso--output-timer))
@@ -106,6 +107,9 @@ Otherwise a buffer is synchronized if its major mode derives from `tex-mode'."
         (delete-region texpresso--output-bound (point-max))))))
 
 (defun texpresso--output-schedule-truncate (point)
+  "Schedule a truncation of current buffer to POINT.
+Scheduling allows truncation to not happen too often, slowing down the editor
+and causing it to flicker."
   (when texpresso--output-timer
     (cancel-timer texpresso--output-timer))
   (setq texpresso--output-bound point)
@@ -176,6 +180,7 @@ The output is truncated to ~50k."
           (insert text))))))
 
 (defun texpresso--display-output (buffer)
+  "Display BUFFER in a small window at bottom."
   (if nil ;(fboundp '+popup/buffer)
       (with-current-buffer buffer (+popup/buffer))
     (display-buffer-at-bottom buffer '(nil (allow-no-window . t) (window-height . 0.2)))))
@@ -202,6 +207,7 @@ returned."
     buffer))
 
 (defun texpresso-display-output (&optional buffer)
+  "Open a small window to display TeXpresso output messages."
   (interactive)
   (texpresso--display-output (or buffer (texpresso--get-output-buffer 'out 'force))))
 
@@ -308,7 +314,7 @@ remainder."
   (setq texpresso--state nil))
 
 (defadvice enable-theme (after texpresso--theme-change protect activate)
-  "Tell TeXpresso about new theme colors"
+  "Tell TeXpresso about new theme colors."
   (when (process-live-p texpresso--process)
     (texpresso--send 'theme
                      (color-name-to-rgb (face-attribute 'default :background))
@@ -377,12 +383,12 @@ During development, it can also be used to hot-reload TeXpresso code."
   (call-process "killall" nil 0 nil "-SIGUSR1" "texpresso"))
 
 (defun texpresso-previous-page ()
-  "Tell TeXpresso to move to previous page"
+  "Tell TeXpresso to move to previous page."
   (interactive)
   (texpresso--send 'previous-page))
 
 (defun texpresso-next-page ()
-  "Tell TeXpresso to move to next page"
+  "Tell TeXpresso to move to next page."
   (interactive)
   (texpresso--send 'next-page))
 
