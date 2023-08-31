@@ -19,6 +19,27 @@
 ;;
 ;;; Code:
 
+;; Customizable variables
+
+(defcustom texpresso-binary nil
+  "Path of TeXpresso binary."
+  :group 'tex
+  :risky t
+  :type '(choice (file :tag "Path")
+                 (const :tag "Auto" nil)))
+
+(defcustom texpresso-follow-edition nil
+  "If true, TeXpresso scrolls the view to the code being edited."
+  :group 'tex
+  :type 'boolean)
+
+(defcustom texpresso-follow-cursor nil
+  "If true, TeXpresso scrolls the view to the cursor."
+  :group 'tex
+  :type 'boolean)
+
+;; Main code
+
 (defvar texpresso--process nil
   "The running instance of TeXpresso as an Emacs process object, or nil.
 
@@ -68,11 +89,13 @@ Also launches a new TeXpresso process if none is running."
   (if texpresso-mode
       (progn
         (message "TeXpresso ☕ enabled")
-        (add-hook 'after-change-functions #'texpresso--change)
-        (add-hook 'before-change-functions #'texpresso--before-change))
+        (add-hook 'after-change-functions #'texpresso--after-change)
+        (add-hook 'before-change-functions #'texpresso--before-change)
+        (add-hook 'post-command-hook #'texpresso--post-command))
     (message "TeXpresso ☕ disabled")
-    (remove-hook 'after-change-functions #'texpresso--change)
-    (remove-hook 'before-change-functions #'texpresso--before-change)))
+    (remove-hook 'after-change-functions #'texpresso--after-change)
+    (remove-hook 'before-change-functions #'texpresso--before-change)
+    (remove-hook 'post-command-hook #'texpresso--post-command)))
 
 (define-minor-mode texpresso-sync-mode
   "A minor mode that forces a buffer to be synchronized with TeXpresso.
@@ -83,15 +106,16 @@ Otherwise a buffer is synchronized if its major mode derives from `tex-mode'."
   :lighter " ☕"
   (setq texpresso--state nil))
 
-(defcustom texpresso-binary nil
-  "Path of TeXpresso binary."
-  :group 'tex
-  :risky t
-  :type '(choice (file :tag "Path")
-                 (const :tag "Auto" nil)))
-
 (defvar-local texpresso--output-bound nil)
 (defvar-local texpresso--output-timer nil)
+
+(defun texpresso-move-to-cursor (&optional position)
+  "Scroll TeXpresso views to POSITION (or point)."
+  (interactive)
+  (when (texpresso--enabled-p)
+    (texpresso--send 'synctex-forward
+                     (buffer-file-name)
+                     (line-number-at-pos position t))))
 
 (defun texpresso--output-truncate (buffer)
   "Truncate TeXpresso output buffer BUFFER."
@@ -127,42 +151,52 @@ It records the number of bytes between START and END (the bytes removed)."
     (setq texpresso--before-change
           (list start end (buffer-substring-no-properties start end)))))
 
-(defun texpresso--change (start end removed)
+(defun texpresso--after-change (start end removed)
   "An `after-change-functions' hook to synchronize the buffer with TeXpresso.
 It instructs `texpresso--process' to replace REMOVED characters by the contents
 between START and END.
 Character counts are converted to byte offsets using `texpresso--before-change'."
   (when (texpresso--enabled-p)
-    ; (message "after change %S %S %S" start end removed)
+                                        ; (message "after change %S %S %S" start end removed)
     (let ((filename (nth 0 texpresso--state))
           (process  (nth 1 texpresso--state))
           (marker   (nth 2 texpresso--state))
           (bstart   (nth 0 texpresso--before-change))
           (bend     (nth 1 texpresso--before-change))
-          (btext    (nth 2 texpresso--before-change)))
-      (let ((same-process
-             (and (eq filename (buffer-file-name))
-                  (eq process  texpresso--process)
-                  (eq marker   (process-get texpresso--process 'marker)))))
-        (if (and same-process (<= bstart start (+ start removed) bend))
-            (let ((ofs (- start bstart)))
-              (texpresso--send 'change filename (1- (position-bytes start))
-                               (string-bytes (substring btext ofs (+ ofs removed)))
-                               (buffer-substring-no-properties start end)))
-          (when same-process
-            (message "TeXpresso: change hooks called with invalid arguments")
-            (message "(before-change %S %S %S)" bstart bend btext)
-            (message "(after-change %S %S %S)" start end removed))
-          (when (process-live-p process)
-            (process-send-string
-             process (prin1-to-string (list 'close filename))))
-          (setq texpresso--state
-                (list (buffer-file-name) texpresso--process
-                      (process-get texpresso--process 'marker)))
-          (texpresso--send 'open (buffer-file-name)
-                           (buffer-substring-no-properties
-                            (point-min) (point-max))))
-        (texpresso--send 'synctex-forward (buffer-file-name) (line-number-at-pos nil t))))))
+          (btext    (nth 2 texpresso--before-change))
+          same-process)
+      (setq same-process
+            (and (eq filename (buffer-file-name))
+                 (eq process  texpresso--process)
+                 (eq marker   (process-get texpresso--process 'marker))))
+      (if (and same-process (<= bstart start (+ start removed) bend))
+          (let ((ofs (- start bstart)))
+            (texpresso--send 'change filename (1- (position-bytes start))
+                             (string-bytes (substring btext ofs (+ ofs removed)))
+                             (buffer-substring-no-properties start end)))
+        (when same-process
+          (message "TeXpresso: change hooks called with invalid arguments")
+          (message "(before-change %S %S %S)" bstart bend btext)
+          (message "(after-change %S %S %S)" start end removed))
+        (when (process-live-p process)
+          (process-send-string
+           process (prin1-to-string (list 'close filename))))
+        (setq texpresso--state
+              (list (buffer-file-name) texpresso--process
+                    (process-get texpresso--process 'marker)))
+        (texpresso--send 'open (buffer-file-name)
+                         (buffer-substring-no-properties
+                          (point-min) (point-max))))
+      (when texpresso-follow-edition
+        (texpresso--send 'synctex-forward
+                         (buffer-file-name)
+                         (line-number-at-pos nil t))))))
+
+(defun texpresso--post-command ()
+  "Function executed on post-command hook.
+Sends cursor position to TeXpresso if `texpresso-follow-cursor'."
+  (when texpresso-follow-cursor
+    (texpresso-move-to-cursor)))
 
 (defun texpresso--stderr-filter (process text)
   "Save debug TEXT from TeXpresso PROCESS in *texpresso-stderr* buffer.
@@ -206,7 +240,7 @@ returned."
 (defun texpresso-display-output ()
   "Open a small window to display TeXpresso output messages."
   (interactive)
-  (texpresso--display-output (texpresso--get-output-buffer 'out 'force
+  (texpresso--display-output (texpresso--get-output-buffer 'out 'force)))
 
 (defun texpresso--stdout-dispatch (process expr)
   "Interpret s-expression EXPR sent by TeXpresso PROCESS.
