@@ -162,7 +162,7 @@ static bool need_advance(fz_context *ctx, ui_state *ui)
     need =
       (ui->need_synctex && synctex_page_count(stx) <= ui->page) ||
       (synctex_has_target(stx) &&
-       !synctex_find_target(ctx, stx, buf, NULL, NULL, NULL));
+       !synctex_find_target(ctx, stx, buf, ui->page, NULL, NULL, NULL));
   }
 
   return (need && send(get_status, ui->eng) == DOC_RUNNING);
@@ -987,7 +987,7 @@ bool texpresso_main(struct persistent_state *ps)
       synctex_t *stx = send(synctex, ui->eng, &buf);
       int page = -1, x = -1, y = -1;
       if (synctex_has_target(stx) &&
-          synctex_find_target(ps->ctx, stx, buf, &page, &x, &y))
+          synctex_find_target(ps->ctx, stx, buf, ui->page, &page, &x, &y))
       {
         fprintf(stderr, "[synctex forward] sync: hit page %d, coordinates (%d, %d)\n",
                 page, x, y);

@@ -43,6 +43,6 @@ void synctex_scan(fz_context *ctx, synctex_t *stx, fz_buffer *buf, const char *d
 int synctex_has_target(synctex_t *stx);
 void synctex_set_target(synctex_t *stx, const char *path, int line);
 int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
-                        int *page, int *x, int *y);
+                        int current, int *page, int *x, int *y);
 
 #endif // SYNCTEX_H_

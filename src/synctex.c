@@ -654,32 +654,28 @@ static bool is_oneliner(enum kind k)
 }
 
 static int
-rev_parse_page(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr)
+rev_parse_page(synctex_t *stx, fz_buffer *buf, struct record *r0, const uint8_t *ptr)
 {
-  int nest = 0;
-  struct size saved[256];
-
-  int tag0 = -1;
-  int line0 = -1;
   int tag = stx->target_tag;
   int line = stx->target_line;
 
   struct record r = {0,};
+
+  r0->link.tag = -1;
   while ((ptr = parse_line(ptr, &r)))
   {
     // Remember the first location of the page to skip it:
     // it is the location where the shipout procedure was invoked
     // not the location of actual source contents
-    if (tag0 == -1 && (r.kind == STEX_ENTER_H || STEX_ENTER_V))
+    if (r0->link.tag == -1 && (r.kind == STEX_ENTER_H || STEX_ENTER_V))
     {
-      tag0 = r.link.tag;
-      line0 = r.link.line;
+      *r0 = r;
 
       // Heuristic: if the targetted line is just at the beginning of the next
       // page and before and at the instruction that trigerred the flush, it is
       // useful to use the top of next page as an approximation.
       // (maybe there won't be any other synctex record to attach to).
-      if (tag0 - 1 == tag && line0 <= line)
+      if (r0->link.tag - 1 == tag && r0->link.line <= line)
         return 0;
     }
 
@@ -689,7 +685,7 @@ rev_parse_page(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr)
     if (is_oneliner(r.kind) && r.link.tag - 1 == tag)
     {
       // Ignore first location of the page: it doesn't belong to it.
-      if (r.link.tag == tag0 && r.link.line == line0)
+      if (r.link.tag == r0->link.tag && r.link.line == r0->link.line)
         continue;
 
       if (r.link.line <= line || (r.link.line > line && stx->target_page == -1))
@@ -702,11 +698,44 @@ rev_parse_page(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr)
         return 1;
     }
   }
+
+  if (r0->link.tag - 1 == tag && line <= r0->link.line)
+  {
+    stx->target_page = stx->target_page_cand;
+    stx->target_x = r0->point.x;
+    stx->target_y = r0->point.y;
+    return 1;
+  }
+
+  return 0;
+}
+
+static int
+check_beamer_page(synctex_t *stx, fz_buffer *buf, struct record *r0, const uint8_t *ptr)
+{
+  struct record r = {0,};
+  while ((ptr = parse_line(ptr, &r)))
+  {
+    // If the first location of the page is the same as the current match then
+    // we are likely observing the different pages of a same beamer slide.
+    if (r.kind == STEX_ENTER_H || STEX_ENTER_V)
+    {
+      if (r0->kind == r.kind &&
+          r0->link.tag == r.link.tag &&
+          r0->link.line == r.link.line &&
+          r0->link.column == r.link.column &&
+          r0->point.x == r.point.x &&
+          r0->point.y == r.point.y)
+        return 1;
+      else
+        return 0;
+    }
+  }
   return 0;
 }
 
 int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
-                        int *page, int *x, int *y)
+                        int current, int *page, int *x, int *y)
 {
   if (!stx->target_path[0])
     return 0;
@@ -737,17 +766,41 @@ int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
   if (stx->target_tag == -1)
     return 0;
 
+  struct record r;
   while (stx->target_page_cand < synctex_page_count(stx))
   {
     int bop, eop;
-    synctex_page_offset(ctx, stx, stx->target_page_cand, &bop, &eop);
-    const uint8_t *ptr = &buf->data[bop];
+    const uint8_t *ptr;
 
-    if (rev_parse_page(stx, buf, ptr))
+    synctex_page_offset(ctx, stx, stx->target_page_cand, &bop, &eop);
+    ptr = &buf->data[bop];
+    if (rev_parse_page(stx, buf, &r, ptr))
     {
       if (page) *page = stx->target_page;
       if (x) *x = stx->target_x;
       if (y) *y = stx->target_y;
+
+      if (current >= synctex_page_count(stx))
+        current = synctex_page_count(stx) - 1;
+
+      // Beamer hack: check if multiple consecutive pages are at the same location.
+      // If its the case, target the page closest to the current page one.
+      if (stx->target_page == stx->target_page_cand)
+      {
+        while (stx->target_page < current)
+        {
+          stx->target_page += 1;
+          synctex_page_offset(ctx, stx, stx->target_page, &bop, &eop);
+          ptr = &buf->data[bop];
+          if (check_beamer_page(stx, buf, &r, ptr))
+          {
+            stx->target_page_cand = stx->target_page;
+            if (page) *page = stx->target_page;
+          }
+          else
+            break;
+        }
+      }
       return 1;
     }
     fprintf(stderr, "[synctex forward] scanned page %d\n", stx->target_page_cand);
