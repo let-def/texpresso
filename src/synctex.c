@@ -81,8 +81,9 @@ struct synctex_s
 
   char target_path[1024];
   int target_tag, target_line;
-  int target_inp_len, target_page_cand;
-  int target_page, target_x, target_y;
+  int target_inp_len;
+  int target_page, target_current_page, target_page_cand;
+  int target_x, target_y;
 };
 
 synctex_t *synctex_new(fz_context *ctx)
@@ -626,7 +627,7 @@ int synctex_has_target(synctex_t *stx)
   return stx && (stx->target_path[0] != 0);
 }
 
-void synctex_set_target(synctex_t *stx, const char *path, int line)
+void synctex_set_target(synctex_t *stx, int current_page, const char *path, int line)
 {
   if (!stx)
     return;
@@ -646,6 +647,7 @@ void synctex_set_target(synctex_t *stx, const char *path, int line)
   stx->target_line = line;
   stx->target_inp_len = 0;
   stx->target_page_cand = 0;
+  stx->target_current_page = current_page;
 }
 
 static bool is_oneliner(enum kind k)
@@ -734,8 +736,7 @@ check_beamer_page(synctex_t *stx, fz_buffer *buf, struct record *r0, const uint8
   return 0;
 }
 
-int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
-                        int current, int *page, int *x, int *y)
+int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int *page, int *x, int *y)
 {
   if (!stx->target_path[0])
     return 0;
@@ -750,7 +751,7 @@ int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
       if (plen == len && strncmp(stx->target_path, fname, len) == 0)
       {
         stx->target_tag = stx->target_inp_len;
-        fprintf(stderr, "[synctex forward] target tag: %d\n", stx->target_tag);
+        // fprintf(stderr, "[synctex forward] target tag: %d\n", stx->target_tag);
         int page = 0, offset = stx->inputs.ptr[stx->target_tag];
         while (page < synctex_page_count(stx) &&
                stx->pages.ptr[page * 2 + 1] < offset)
@@ -766,6 +767,10 @@ int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
   if (stx->target_tag == -1)
     return 0;
 
+  int current = stx->target_current_page;
+  if (current >= synctex_page_count(stx))
+    current = synctex_page_count(stx) - 1;
+
   struct record r;
   while (stx->target_page_cand < synctex_page_count(stx))
   {
@@ -779,9 +784,6 @@ int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
       if (page) *page = stx->target_page;
       if (x) *x = stx->target_x;
       if (y) *y = stx->target_y;
-
-      if (current >= synctex_page_count(stx))
-        current = synctex_page_count(stx) - 1;
 
       // Beamer hack: check if multiple consecutive pages are at the same location.
       // If its the case, target the page closest to the current page one.
@@ -798,12 +800,15 @@ int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
             if (page) *page = stx->target_page;
           }
           else
+          {
+            synctex_set_target(stx, 0, NULL, 0);
             break;
+          }
         }
       }
       return 1;
     }
-    fprintf(stderr, "[synctex forward] scanned page %d\n", stx->target_page_cand);
+    // fprintf(stderr, "[synctex forward] scanned page %d\n", stx->target_page_cand);
     stx->target_page_cand += 1;
   }
 

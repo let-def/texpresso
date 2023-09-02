@@ -161,8 +161,7 @@ static bool need_advance(fz_context *ctx, ui_state *ui)
     synctex_t *stx = send(synctex, ui->eng, &buf);
     need =
       (ui->need_synctex && synctex_page_count(stx) <= ui->page) ||
-      (synctex_has_target(stx) &&
-       !synctex_find_target(ctx, stx, buf, ui->page, NULL, NULL, NULL));
+      synctex_has_target(stx);
   }
 
   return (need && send(get_status, ui->eng) == DOC_RUNNING);
@@ -424,7 +423,7 @@ static void wakeup_poll_thread(int poll_stdin_pipe[2], char c)
 
 static void previous_page(ui_state *ui)
 {
-  synctex_set_target(send(synctex, ui->eng, NULL), NULL, 0);
+  synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
   if (ui->page > 0)
   {
     ui->page -= 1;
@@ -438,7 +437,7 @@ static void previous_page(ui_state *ui)
 
 static void next_page(ui_state *ui)
 {
-  synctex_set_target(send(synctex, ui->eng, NULL), NULL, 0);
+  synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
   ui->page += 1;
   schedule_event(RELOAD_EVENT);
 }
@@ -825,7 +824,7 @@ static void interpret_command(struct persistent_state *ps,
       }
       else
       {
-        synctex_set_target(stx, path, cmd.synctex_forward.line);
+        synctex_set_target(stx, ui->page, path, cmd.synctex_forward.line);
         schedule_event(STDIN_EVENT);
       }
     }
@@ -986,8 +985,7 @@ bool texpresso_main(struct persistent_state *ps)
       fz_buffer *buf;
       synctex_t *stx = send(synctex, ui->eng, &buf);
       int page = -1, x = -1, y = -1;
-      if (synctex_has_target(stx) &&
-          synctex_find_target(ps->ctx, stx, buf, ui->page, &page, &x, &y))
+      if (synctex_find_target(ps->ctx, stx, buf, &page, &x, &y))
       {
         fprintf(stderr, "[synctex forward] sync: hit page %d, coordinates (%d, %d)\n",
                 page, x, y);
@@ -1020,7 +1018,6 @@ bool texpresso_main(struct persistent_state *ps)
         fprintf(stderr, "[synctex forward] pan.y = %.02f + %.02f = %.02f\n",
                 config->pan.y, delta, config->pan.y + delta);
         config->pan.y += delta;
-        synctex_set_target(stx, NULL, 0);
         if (delta != 0.0)
           schedule_event(RENDER_EVENT);
       }
