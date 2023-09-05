@@ -33,6 +33,41 @@ struct offset_buffer
   int *ptr, len, cap;
 };
 
+enum kind {
+  STEX_ENTER_V,
+  STEX_ENTER_H,
+  STEX_LEAVE_V,
+  STEX_LEAVE_H,
+  STEX_CURRENT,
+  STEX_KERN,
+  STEX_GLUE,
+  STEX_MATH,
+  STEX_OTHER,
+};
+
+struct link
+{
+  int tag, line, column;
+};
+
+struct point
+{
+  int x, y;
+};
+
+struct size
+{
+  int width, height, depth;
+};
+
+struct record
+{
+  enum kind kind;
+  struct link link;
+  struct point point;
+  struct size size;
+};
+
 static void ob_init(struct offset_buffer *ob)
 {
   *ob = (struct offset_buffer){.ptr = NULL, .len = 0, .cap = 0};
@@ -79,11 +114,38 @@ struct synctex_s
   struct offset_buffer inputs, pages;
   int bol, cur;
 
+  /* Backward search state */
+
+  /* Step 0. Initiating search. */
+
+  /* The file:line being searched for, or target_path[0] == 0 if there is no
+     search going on. */
   char target_path[1024];
-  int target_tag, target_line;
-  int target_inp_len;
-  int target_page, target_current_page, target_page_cand;
-  int target_x, target_y;
+  int target_line;
+
+  /* The page that was being displayed when the search started.
+     The heuristics uses it to pick the match closest to the current page when
+     there are multiple matches. */
+  int target_current_page;
+
+  /* Step 1. Finding input file. */
+
+  /* Find the SyncTeX input tag corresponding to target_path (if there is a search going on).
+
+     If input_found, then the input tag is in input_tag.
+     If !input_found, then input_tag is the number of inputs that have already been checked.
+     Search should resume from inputs.ptr[input_tag].
+   */
+  int input_tag, input_found;
+
+  /* Step 2. Scanning pages. */
+
+  /* The number of pages that have been scanned so far.
+     Search should resume from pages.ptr[scanned_pages * 2]. */
+  int scanned_pages;
+
+  /* Best candidate so far (or candidate_page == -1 if there has been no match). */
+  int candidate_page, candidate_line, candidate_x, candidate_y;
 };
 
 synctex_t *synctex_new(fz_context *ctx)
@@ -92,10 +154,7 @@ synctex_t *synctex_new(fz_context *ctx)
   ob_init(&stx->inputs);
   ob_init(&stx->pages);
   stx->cur = 0;
-  stx->target_page = -1;
   stx->target_path[0] = 0;
-  stx->target_inp_len = 0;
-  stx->target_page_cand = 0;
   return stx;
 }
 
@@ -106,22 +165,34 @@ void synctex_free(fz_context *ctx, synctex_t *stx)
   fz_free(ctx, stx);
 }
 
+int synctex_has_target(synctex_t *stx)
+{
+  return stx && (stx->target_path[0] != 0);
+}
+
 void synctex_rollback(fz_context *ctx, synctex_t *stx, size_t offset)
 {
   ob_rollback(ctx, &stx->pages, offset);
   ob_rollback(ctx, &stx->inputs, offset);
   if (stx->cur > offset)
     stx->cur = offset;
-  if (stx->target_inp_len > stx->inputs.len)
-    stx->target_inp_len = stx->inputs.len;
-  if (stx->target_page_cand > stx->pages.len)
+
+  if (synctex_has_target(stx))
   {
-    stx->target_page_cand = 0;
+    if (stx->input_tag >= stx->inputs.len)
+    {
+      stx->input_tag = stx->inputs.len;
+      stx->input_found = 0;
+    }
+    else
+    {
+      int pages = stx->pages.len / 2;
+      if (stx->scanned_pages > pages)
+        stx->scanned_pages = pages;
+      if (stx->candidate_page > pages)
+        stx->candidate_page = -1;
+    }
   }
-  if (stx->target_page >= stx->pages.len)
-    stx->target_page = -1;
-  if (stx->target_tag >= stx->inputs.len)
-    stx->target_tag = -1;
 }
 
 static const uint8_t *string_parse_int(const uint8_t *string, int *i)
@@ -264,41 +335,6 @@ int synctex_input_offset(fz_context *ctx, synctex_t *stx, unsigned index)
 
   return stx->inputs.ptr[index];
 }
-
-enum kind {
-  STEX_ENTER_V,
-  STEX_ENTER_H,
-  STEX_LEAVE_V,
-  STEX_LEAVE_H,
-  STEX_CURRENT,
-  STEX_KERN,
-  STEX_GLUE,
-  STEX_MATH,
-  STEX_OTHER,
-};
-
-struct link
-{
-  int tag, line, column;
-};
-
-struct point
-{
-  int x, y;
-};
-
-struct size
-{
-  int width, height, depth;
-};
-
-struct record
-{
-  enum kind kind;
-  struct link link;
-  struct point point;
-  struct size size;
-};
 
 static const uint8_t *nextline(const uint8_t *ptr)
 {
@@ -622,11 +658,6 @@ void synctex_scan(fz_context *ctx,
   }
 }
 
-int synctex_has_target(synctex_t *stx)
-{
-  return stx && (stx->target_path[0] != 0);
-}
-
 void synctex_set_target(synctex_t *stx, int current_page, const char *path, int line)
 {
   if (!stx)
@@ -640,14 +671,18 @@ void synctex_set_target(synctex_t *stx, int current_page, const char *path, int 
 
   int length = strlen(path);
   if (length >= sizeof(stx->target_path))
-    length = sizeof(stx->target_path) - 1;
+  {
+    // FIXME: Warn about path too long?!
+    abort();
+  }
+
   memcpy(stx->target_path, path, length);
   stx->target_path[length] = 0;
-  stx->target_tag = -1;
   stx->target_line = line;
-  stx->target_inp_len = 0;
-  stx->target_page_cand = 0;
   stx->target_current_page = current_page;
+
+  stx->input_tag = 0;
+  stx->input_found = 0;
 }
 
 static bool is_oneliner(enum kind k)
@@ -655,93 +690,146 @@ static bool is_oneliner(enum kind k)
   return (k >= STEX_CURRENT && k <= STEX_MATH);
 }
 
-static int
-rev_parse_page(fz_context *ctx, synctex_t *stx, fz_buffer *buf, struct record *r0, int page)
+static bool synctex_find_input(fz_context *ctx, synctex_t *stx, fz_buffer *buf)
 {
-  int tag = stx->target_tag;
-  int line = stx->target_line;
+  if (stx->input_found)
+    return 1;
 
-  int bop, eop;
-  synctex_page_offset(ctx, stx, page, &bop, &eop);
-  const uint8_t *ptr = &buf->data[bop];
+  if (stx->input_tag == stx->inputs.len)
+    return 0;
 
-  struct record r = {0,};
-
-  r0->link.tag = -1;
-  while ((ptr = parse_line(ptr, &r)))
+  int plen = strlen(stx->target_path);
+  while (stx->input_tag < stx->inputs.len)
   {
-    // Remember the first location of the page to skip it:
-    // it is the location where the shipout procedure was invoked
-    // not the location of actual source contents
-    if (r0->link.tag == -1 && (r.kind == STEX_ENTER_H || STEX_ENTER_V))
+    const char *fname;
+    if ((plen != get_input(buf, stx, stx->input_tag, &fname)) ||
+        strncmp(stx->target_path, fname, plen) != 0)
     {
-      *r0 = r;
-
-      // Heuristic: if the targetted line is just at the beginning of the next
-      // page and before and at the instruction that trigerred the flush, it is
-      // useful to use the top of next page as an approximation.
-      // (maybe there won't be any other synctex record to attach to).
-      if (r0->link.tag - 1 == tag && r0->link.line <= line)
-        return 0;
+      stx->input_tag += 1;
+      continue;
     }
 
-    // fprintf(stderr, "record: kind:%d tag:%d line:%d, point:(%d, %d)\n", r.kind,
-    //         r.link.tag, r.link.line, r.point.x, r.point.y);
-
-    if (is_oneliner(r.kind) && r.link.tag - 1 == tag)
-    {
-      // Skip other occurrences of the first location of the page: it doesn't belong to it.
-      if (r.link.tag == r0->link.tag && r.link.line == r0->link.line)
-        continue;
-
-      if (r.link.line <= line || (r.link.line > line && stx->target_page == -1))
-      {
-        stx->target_page = page;
-        stx->target_x = r.point.x;
-        stx->target_y = r.point.y;
-      }
-      if (r.link.line >= line)
-        return 1;
-    }
-  }
-
-  if (r0->link.tag - 1 == tag && line <= r0->link.line && page == stx->target_current_page)
-  {
-    stx->target_page = page;
-    stx->target_x = r0->point.x;
-    stx->target_y = r0->point.y;
+    int page = 0, pages = synctex_page_count(stx), offset = stx->inputs.ptr[stx->input_tag];
+    while (page < pages && stx->pages.ptr[page * 2 + 1] < offset)
+      page += 1;
+    stx->scanned_pages = page;
+    stx->input_found = 1;
+    stx->candidate_page = -1;
     return 1;
   }
 
   return 0;
 }
 
-static int
-check_beamer_page(fz_context *ctx, synctex_t *stx, fz_buffer *buf, struct record *r0, int page)
+static const uint8_t *synctex_page_pointer(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int page)
 {
   int bop, eop;
   synctex_page_offset(ctx, stx, page, &bop, &eop);
-  const uint8_t *ptr = &buf->data[bop];
-  struct record r = {0,};
+  return &buf->data[bop];
+}
+
+static void synctex_clear_search(synctex_t *stx)
+{
+  stx->target_path[0] = 0;
+}
+
+static void
+synctex_backscan_page(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int page, int *updated_candidate)
+{
+  int tag = stx->input_tag + 1;
+  int line = stx->target_line;
+  const uint8_t *ptr = synctex_page_pointer(ctx, stx, buf, page);
+
+  struct record r = {0,}, r0;
+  r0.link.tag = -1;
+
+  int had_record = 0;
 
   while ((ptr = parse_line(ptr, &r)))
   {
-    // If the first location of the page is the same as the current match then
-    // we are likely observing the different pages of a same beamer slide.
-    if (r.kind == STEX_ENTER_H || STEX_ENTER_V)
+    // Remember the first location of the page to skip it:
+    // it is the location where the shipout procedure was invoked
+    // not the location of actual source contents
+    if (r0.link.tag == -1 && (r.kind == STEX_ENTER_H || STEX_ENTER_V))
     {
-      if (r0->kind == r.kind &&
-          r0->link.tag == r.link.tag &&
-          r0->link.line == r.link.line &&
-          r0->link.column == r.link.column &&
-          r0->point.x == r.point.x &&
-          r0->point.y == r.point.y)
-        return 1;
-      else
-        return 0;
+      r0 = r;
+
+      // Heuristic: if the targetted line is just at the beginning of the next
+      // page and before and at the instruction that trigerred the flush, it is
+      // useful to use the top of next page as an approximation.
+      // (maybe there won't be any other synctex record to attach to).
+      if (r0.link.tag == tag && r0.link.line < line)
+        return;
+      continue;
+    }
+
+    if (is_oneliner(r.kind) && r.link.tag == tag)
+    {
+      if (r.link.tag == r0.link.tag && r.link.line == r0.link.line)
+        // Skip other occurrences of the first location of the page: it doesn't
+        // belong to it.
+        continue;
+
+      // Remember we processed at least one record
+      had_record = 1;
+
+      // Remember that we have seen at least one record
+      // Check if candidate
+      if (r.link.line <= line || (r.link.line > line && stx->candidate_page == -1))
+      {
+        stx->candidate_page = page;
+        stx->candidate_x = r.point.x;
+        stx->candidate_y = r.point.y;
+        stx->candidate_line = r.link.line;
+        *updated_candidate = 1;
+      }
+
+      // Check if definitive match
+      if (r.link.line >= line)
+      {
+        if (stx->candidate_page != page)
+        {
+          // The beginning and ending of the match crosses two (or more?) pages.
+          // Use current page to decide which one to keep.
+          if (stx->target_current_page == page)
+          {
+            stx->candidate_page = page;
+            stx->candidate_x = r.point.x;
+            stx->candidate_y = r.point.y;
+            stx->candidate_line = r.link.line;
+            *updated_candidate = 1;
+          }
+        }
+        synctex_clear_search(stx);
+        return;
+      }
     }
   }
-  return 0;
+
+  // No record? Could be an empty page or a beamer page.
+  if (!had_record)
+  {
+    // If it is ending after the target, we have a match or at least a candidate.
+    if (r0.link.tag == tag && r0.link.line >= line)
+    {
+      // If we had no candidate, or the current record is not worse, update.
+      if (stx->candidate_page == -1 ||
+          (page <= stx->target_current_page && stx->candidate_line == r0.link.line))
+      {
+        stx->candidate_page = page;
+        stx->candidate_x = r0.point.x;
+        stx->candidate_y = r0.point.y;
+        stx->candidate_line = r0.link.line;
+        *updated_candidate = 1;
+      }
+    }
+    // We have a candidate and future candidates cannot improve or we are past
+    // the current page, consider it a match.
+    if (stx->candidate_page != -1 &&
+        ((r0.link.tag == tag && r0.link.line > stx->candidate_line) ||
+         (page >= stx->target_current_page)))
+      synctex_clear_search(stx);
+  }
 }
 
 int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int *page, int *x, int *y)
@@ -749,69 +837,22 @@ int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int *pa
   if (!stx->target_path[0])
     return 0;
 
-  if (stx->target_tag == -1)
-  {
-    int plen = strlen(stx->target_path);
-    while (stx->target_inp_len < stx->inputs.len)
-    {
-      const char *fname;
-      int len = get_input(buf, stx, stx->target_inp_len, &fname);
-      if (plen == len && strncmp(stx->target_path, fname, len) == 0)
-      {
-        stx->target_tag = stx->target_inp_len;
-        // fprintf(stderr, "[synctex forward] target tag: %d\n", stx->target_tag);
-        int page = 0, offset = stx->inputs.ptr[stx->target_tag];
-        while (page < synctex_page_count(stx) &&
-               stx->pages.ptr[page * 2 + 1] < offset)
-          page += 1;
-        stx->target_page_cand = page;
-        stx->target_page = -1;
-        break;
-      }
-      stx->target_inp_len++;
-    }
-  }
-
-  if (stx->target_tag == -1)
+  if (!synctex_find_input(ctx, stx, buf))
     return 0;
 
-  int current = stx->target_current_page;
-  if (current >= synctex_page_count(stx))
-    current = synctex_page_count(stx) - 1;
-
-  struct record r;
-  while (stx->target_page_cand < synctex_page_count(stx))
+  int pages = synctex_page_count(stx);
+  int updated_candidate = 0;
+  while (stx->target_path[0] && stx->scanned_pages < pages)
   {
-    if (rev_parse_page(ctx, stx, buf, &r, stx->target_page_cand))
-    {
-      if (page) *page = stx->target_page;
-      if (x) *x = stx->target_x;
-      if (y) *y = stx->target_y;
-
-      // Beamer hack: check if multiple consecutive pages are at the same location.
-      // If its the case, target the page closest to the current page one.
-      if (stx->target_page == stx->target_page_cand)
-      {
-        while (stx->target_page < current)
-        {
-          stx->target_page += 1;
-          if (check_beamer_page(ctx, stx, buf, &r, stx->target_page))
-          {
-            stx->target_page_cand = stx->target_page;
-            if (page) *page = stx->target_page;
-          }
-          else
-          {
-            synctex_set_target(stx, 0, NULL, 0);
-            break;
-          }
-        }
-      }
-      return 1;
-    }
-    // fprintf(stderr, "[synctex forward] scanned page %d\n", stx->target_page_cand);
-    stx->target_page_cand += 1;
+    synctex_backscan_page(ctx, stx, buf, stx->scanned_pages, &updated_candidate);
+    stx->scanned_pages += 1;
   }
 
-  return 0;
+  if (updated_candidate)
+  {
+    if (page) *page = stx->candidate_page;
+    if (x) *x = stx->candidate_x;
+    if (y) *y = stx->candidate_y;
+  }
+  return updated_candidate;
 }
