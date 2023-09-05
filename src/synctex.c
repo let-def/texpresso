@@ -656,10 +656,14 @@ static bool is_oneliner(enum kind k)
 }
 
 static int
-rev_parse_page(synctex_t *stx, fz_buffer *buf, struct record *r0, const uint8_t *ptr)
+rev_parse_page(fz_context *ctx, synctex_t *stx, fz_buffer *buf, struct record *r0, int page)
 {
   int tag = stx->target_tag;
   int line = stx->target_line;
+
+  int bop, eop;
+  synctex_page_offset(ctx, stx, page, &bop, &eop);
+  const uint8_t *ptr = &buf->data[bop];
 
   struct record r = {0,};
 
@@ -686,13 +690,13 @@ rev_parse_page(synctex_t *stx, fz_buffer *buf, struct record *r0, const uint8_t 
 
     if (is_oneliner(r.kind) && r.link.tag - 1 == tag)
     {
-      // Ignore first location of the page: it doesn't belong to it.
+      // Skip other occurrences of the first location of the page: it doesn't belong to it.
       if (r.link.tag == r0->link.tag && r.link.line == r0->link.line)
         continue;
 
       if (r.link.line <= line || (r.link.line > line && stx->target_page == -1))
       {
-        stx->target_page = stx->target_page_cand;
+        stx->target_page = page;
         stx->target_x = r.point.x;
         stx->target_y = r.point.y;
       }
@@ -701,9 +705,9 @@ rev_parse_page(synctex_t *stx, fz_buffer *buf, struct record *r0, const uint8_t 
     }
   }
 
-  if (r0->link.tag - 1 == tag && line <= r0->link.line)
+  if (r0->link.tag - 1 == tag && line <= r0->link.line && page == stx->target_current_page)
   {
-    stx->target_page = stx->target_page_cand;
+    stx->target_page = page;
     stx->target_x = r0->point.x;
     stx->target_y = r0->point.y;
     return 1;
@@ -713,9 +717,13 @@ rev_parse_page(synctex_t *stx, fz_buffer *buf, struct record *r0, const uint8_t 
 }
 
 static int
-check_beamer_page(synctex_t *stx, fz_buffer *buf, struct record *r0, const uint8_t *ptr)
+check_beamer_page(fz_context *ctx, synctex_t *stx, fz_buffer *buf, struct record *r0, int page)
 {
+  int bop, eop;
+  synctex_page_offset(ctx, stx, page, &bop, &eop);
+  const uint8_t *ptr = &buf->data[bop];
   struct record r = {0,};
+
   while ((ptr = parse_line(ptr, &r)))
   {
     // If the first location of the page is the same as the current match then
@@ -774,12 +782,7 @@ int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int *pa
   struct record r;
   while (stx->target_page_cand < synctex_page_count(stx))
   {
-    int bop, eop;
-    const uint8_t *ptr;
-
-    synctex_page_offset(ctx, stx, stx->target_page_cand, &bop, &eop);
-    ptr = &buf->data[bop];
-    if (rev_parse_page(stx, buf, &r, ptr))
+    if (rev_parse_page(ctx, stx, buf, &r, stx->target_page_cand))
     {
       if (page) *page = stx->target_page;
       if (x) *x = stx->target_x;
@@ -792,9 +795,7 @@ int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int *pa
         while (stx->target_page < current)
         {
           stx->target_page += 1;
-          synctex_page_offset(ctx, stx, stx->target_page, &bop, &eop);
-          ptr = &buf->data[bop];
-          if (check_beamer_page(stx, buf, &r, ptr))
+          if (check_beamer_page(ctx, stx, buf, &r, stx->target_page))
           {
             stx->target_page_cand = stx->target_page;
             if (page) *page = stx->target_page;
