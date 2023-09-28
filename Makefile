@@ -30,7 +30,7 @@ build/objects:
 ifeq ($(UNAME), Linux)
 Makefile.config: Makefile
 	echo >$@ "CC=gcc -O2 -ggdb -I. -fPIC"
-	echo >>$@ "LIBS=-lmupdf -lm -lmupdf-third -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2"
+	echo >>$@ "LIBS=-lmupdf -lm $(shell ./mupdf-config.sh) -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2"
 	echo >>$@ "TECTONIC_ENV="
 endif
 
