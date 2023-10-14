@@ -801,6 +801,29 @@ static void interpret_command(struct persistent_state *ps,
     }
     break;
 
+    case EDIT_MAP_WINDOW:
+    {
+      float x = cmd.move_window.x, y = cmd.move_window.y,
+            w = cmd.move_window.w, h = cmd.move_window.h;
+      int x0 = x, y0 = y;
+      SDL_SetWindowBordered(ui->window, SDL_FALSE);
+      SDL_SetWindowAlwaysOnTop(ui->window, SDL_TRUE);
+      SDL_SetWindowPosition(ui->window, x, y);
+      SDL_GetWindowPosition(ui->window, &x0, &y0);
+      SDL_SetWindowSize(ui->window, w + x - x0, h + y - y0);
+      fprintf(stderr, "[command] map-window %f %f %f %f (pos: %d %d)\n",
+              x, y, w, h, x0, y0);
+    }
+    break;
+
+    case EDIT_UNMAP_WINDOW:
+    {
+      if (!(SDL_GetWindowFlags(ui->window) & SDL_WINDOW_INPUT_FOCUS))
+        SDL_SetWindowBordered(ui->window, SDL_TRUE);
+      SDL_SetWindowAlwaysOnTop(ui->window, SDL_FALSE);
+      fprintf(stderr, "[command] unmap-window\n");
+    }
+
     case EDIT_RESCAN:
       schedule_event(SCAN_EVENT);
       break;

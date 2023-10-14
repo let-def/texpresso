@@ -148,7 +148,25 @@ bool editor_parse(fz_context *ctx,
   {
     if (len != 1)
       goto arity;
-    *out = (struct editor_command){.tag = EDIT_RESCAN, .next_page = {}};
+    *out = (struct editor_command){.tag = EDIT_RESCAN, .rescan = {}};
+  }
+  else if (strcmp(verb, "map-window") == 0)
+  {
+    if (len != 5) goto arity;
+    *out = (struct editor_command){
+        .tag = EDIT_MAP_WINDOW,
+        .map_window = {
+            .x = val_number(ctx, val_array_get(ctx, stack, command, 1)),
+            .y = val_number(ctx, val_array_get(ctx, stack, command, 2)),
+            .w = val_number(ctx, val_array_get(ctx, stack, command, 3)),
+            .h = val_number(ctx, val_array_get(ctx, stack, command, 4)),
+        }};
+  }
+  else if (strcmp(verb, "unmap-window") == 0)
+  {
+    if (len != 1)
+      goto arity;
+    *out = (struct editor_command){.tag = EDIT_UNMAP_WINDOW, .unmap_window = {}};
   }
   else if (strcmp(verb, "stay-on-top") == 0)
   {

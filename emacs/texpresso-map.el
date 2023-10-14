@@ -16,12 +16,11 @@
           (setq w (- (nth 2 rect) x))
           (setq h (- (nth 3 rect) y))
           ;; (message "rect %S %S %S %S" x y w h)
-          (texpresso--send 'stay-on-top t)
-          (texpresso--send 'move-window x y w h))))))
+          (texpresso--send 'map-window x y w h))))))
 
 (defun texpresso-window-map ()
   (interactive)
-  (setq texpresso--window-buffer (get-buffer-create "*TeXpresso window*"))
+  (setq texpresso--window-buffer (get-buffer-create "*texpresso-window*"))
   (display-buffer texpresso--window-buffer)
   (with-current-buffer texpresso--window-buffer
     (read-only-mode t)
@@ -31,10 +30,9 @@
     (texpresso--window-track)))
 
 (defun texpresso--frame-focus (&rest r)
-  (if (process-live-p texpresso--process)
-      (texpresso--send
-       'stay-on-top
-       (and texpresso--window-buffer
-            (or (frame-focus-state) (frame-parameter nil 'fullscreen))
-            (get-buffer-window texpresso--window-buffer)
-            t))))
+  (when (process-live-p texpresso--process)
+    (if (and texpresso--window-buffer
+             (or (frame-focus-state) (frame-parameter nil 'fullscreen))
+             (get-buffer-window texpresso--window-buffer))
+        (texpresso--window-track)
+      (texpresso--send 'unmap-window))))
