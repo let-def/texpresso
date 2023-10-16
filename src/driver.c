@@ -212,8 +212,6 @@ int main(int argc, const char **argv)
       .window = window,
       .renderer = renderer,
       .ctx = ctx,
-      .theme_fg = 0x000000,
-      .theme_bg = 0xFFFFFF,
       .exe_path = exe_path,
       .doc_path = doc_path,
       .doc_name = doc_name,

@@ -766,19 +766,17 @@ static void interpret_command(struct persistent_state *ps,
       break;
 
     case EDIT_THEME:
-      ps->theme_bg = convert_color(ps->ctx, stack, cmd.theme.bg);
-      ps->theme_fg = convert_color(ps->ctx, stack, cmd.theme.fg);
+    {
       txp_renderer_config *config =
           txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-      if (config->background_color != 0xFFFFFF &&
-          config->foreground_color != 0x000000)
-      {
-        config->background_color = ps->theme_bg;
-        config->foreground_color = ps->theme_fg;
-        schedule_event(RENDER_EVENT);
-      }
-      fprintf(stderr, "[command] theme %x %x\n", ps->theme_bg, ps->theme_fg);
-      break;
+      config->background_color = convert_color(ps->ctx, stack, cmd.theme.bg);
+      config->foreground_color = convert_color(ps->ctx, stack, cmd.theme.fg);
+      config->themed_color = 1;
+      schedule_event(RENDER_EVENT);
+      fprintf(stderr, "[command] theme %x %x\n",
+              config->background_color, config->foreground_color);
+    }
+    break;
 
     case EDIT_PREVIOUS_PAGE:
       previous_page(ui);
@@ -1094,22 +1092,10 @@ bool texpresso_main(struct persistent_state *ps)
             break;
 
           case SDLK_i:
-            if (!(SDL_GetModState() & KMOD_SHIFT))
-              config->invert_color = !config->invert_color;
+            if ((SDL_GetModState() & KMOD_SHIFT))
+              config->themed_color = !config->themed_color;
             else
-            {
-              if (config->foreground_color == 0x000000 &&
-                  config->background_color == 0xFFFFFF)
-              {
-                config->foreground_color = ps->theme_fg;
-                config->background_color = ps->theme_bg;
-              }
-              else
-              {
-                config->foreground_color = 0x000000;
-                config->background_color = 0xFFFFFF;
-              }
-            }
+              config->invert_color = !config->invert_color;
             schedule_event(RENDER_EVENT);
             break;
 

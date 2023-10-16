@@ -59,8 +59,6 @@ struct persistent_state {
   enum editor_protocol protocol;
   Uint32 custom_event;
 
-  uint32_t theme_bg, theme_fg;
-
   void (*schedule_event)(enum custom_events ev);
   bool (*should_reload_binary)(void);
 

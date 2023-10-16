@@ -47,7 +47,7 @@ typedef struct
   float zoom;
   enum txp_fit_mode fit;
   fz_point pan;
-  bool crop, invert_color;
+  bool crop, themed_color, invert_color;
   uint32_t background_color, foreground_color;
 } txp_renderer_config;
 

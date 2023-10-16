@@ -71,16 +71,23 @@ struct txp_renderer_s
 
 static void txp_get_colors(txp_renderer_config *config, uint32_t *bg, uint32_t *fg)
 {
-  if (!config->invert_color)
+  uint32_t cbg = 0xFFFFFF, cfg = 0x000000;
+
+  if (config->themed_color)
   {
-    *bg = config->background_color & 0xFFFFFF;
-    *fg = config->foreground_color & 0xFFFFFF;
+    cbg = config->background_color & 0xFFFFFF;
+    cfg = config->foreground_color & 0xFFFFFF;
   }
-  else
+
+  if (config->invert_color)
   {
-    *fg = config->background_color & 0xFFFFFF;
-    *bg = config->foreground_color & 0xFFFFFF;
+    uint32_t tmp = cfg;
+    cfg = cbg;
+    cbg = tmp;
   }
+
+  *fg = cfg;
+  *bg = cbg;
 }
 
 txp_renderer *txp_renderer_new(fz_context *ctx, SDL_Renderer *sdl)
@@ -93,6 +100,7 @@ txp_renderer *txp_renderer_new(fz_context *ctx, SDL_Renderer *sdl)
     self->config.zoom = 1;
     self->config.background_color = 0xFFFFFF;
     self->config.foreground_color = 0x000000;
+    self->config.themed_color = 1;
     self->config.invert_color = 0;
   }
   fz_catch(ctx)
@@ -354,7 +362,7 @@ static void render_rect(fz_context *ctx, txp_renderer *self, fz_rect bounds, voi
 
   uint32_t bg, fg;
   txp_get_colors(&self->config, &bg, &fg);
-  if (bg != 0x00FFFFFF && fg != 0x00000000)
+  //if (bg != 0x00FFFFFF || fg != 0x00000000)
     invert_pixmap(ctx, pm, fg, bg);
   fz_drop_pixmap(ctx, pm);
 }
