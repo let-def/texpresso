@@ -30,9 +30,9 @@
     (texpresso--window-track)))
 
 (defun texpresso--frame-focus (&rest r)
-  (when (process-live-p texpresso--process)
-    (if (and texpresso--window-buffer
-             (or (frame-focus-state) (frame-parameter nil 'fullscreen))
+  (when (and (process-live-p texpresso--process)
+             (buffer-live-p texpresso--window-buffer))
+    (if (and (or (frame-focus-state) (frame-parameter nil 'fullscreen))
              (get-buffer-window texpresso--window-buffer))
         (texpresso--window-track)
       (texpresso--send 'unmap-window))))
