@@ -1,0 +1,12 @@
+---
+BasedOnStyle: Chromium
+IndentWidth: 2
+BreakBeforeBraces: Allman
+PointerAlignment: Right
+UseTab: Never
+---
+Language: Cpp
+# Force pointers to the type for C++.
+DerivePointerAlignment: false
+# PointerAlignment: Left
+UseTab: Never
