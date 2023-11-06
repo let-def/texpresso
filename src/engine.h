@@ -39,6 +39,7 @@ typedef struct txp_engine_s txp_engine;
 
 txp_engine *txp_create_tex_engine(fz_context *ctx,
                                   const char *tectonic_path,
+                                  const char *inclusion_path,
                                   const char *tex_dir,
                                   const char *tex_name);
 

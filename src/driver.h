@@ -66,7 +66,7 @@ struct persistent_state {
   SDL_Renderer *renderer;
   fz_context *ctx;
 
-  const char *exe_path, *doc_path, *doc_name;
+  const char *exe_path, *doc_path, *doc_name, *inclusion_path;
 };
 
 bool texpresso_main(struct persistent_state *ps);

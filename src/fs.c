@@ -52,7 +52,6 @@ struct filesystem_s
   tablecell *table;
 };
 
-
 static const char *normalize_path(const char *path)
 {
   if (path[0] == '.' && path[1] == '/')

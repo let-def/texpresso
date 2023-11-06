@@ -64,6 +64,7 @@ struct tex_engine
   txp_engine_status status;
   char *name;
   char *tectonic_path;
+  char *inclusion_path;
   filesystem_t *fs;
   state_t st;
   log_t *log;
@@ -138,7 +139,56 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
   synctex_free(ctx, self->stex);
   fz_free(ctx, self->name);
   fz_free(ctx, self->tectonic_path);
+  fz_free(ctx, self->inclusion_path);
   fz_free(ctx, self);
+}
+
+static const char *expand_path(const char **inclusion_path, const char *name, char buffer[1024])
+{
+  if (!*inclusion_path || !(*inclusion_path)[0])
+    return NULL;
+
+  if (name[0] == '/')
+    return NULL;
+
+  if (name[0] == '.' && name[1] == '/')
+  {
+    name += 2;
+    while (*name == '/')
+      name += 1;
+  }
+
+  char *p = buffer;
+  const char *i = *inclusion_path;
+
+  while (*i)
+  {
+    if (p > buffer + 1024) mabort();
+    *p = *i;
+    p += 1;
+    i += 1;
+  }
+  *inclusion_path = i+1;
+
+  if (p[-1] != '/')
+  {
+    if (p > buffer + 1024) mabort();
+    p[0] = '/';
+    p += 1;
+  }
+
+  while (*name)
+  {
+    if (p > buffer + 1024) mabort();
+    *p = *name;
+    p += 1;
+    name += 1;
+  }
+
+  if (p > buffer + 1024) mabort();
+  *p = '\0';
+
+  return buffer;
 }
 
 // Launching processes
@@ -312,16 +362,29 @@ static void answer_standard_query(fz_context *ctx, struct tex_engine *self, chan
       filecell_t *cell = &self->st.table[q->open.fid];
       if (cell->entry != NULL) mabort();
 
-      bool fatal_failure = (q->open.mode[1] != '?');
-
       fileentry_t *e = NULL;
 
-      if (!fatal_failure)
+      char fs_path_buffer[1024];
+      const char *fs_path = NULL;
+
+      if (q->open.mode[0] == 'r')
       {
         e = filesystem_lookup(self->fs, q->open.path);
         if (!e || !entry_data(e))
         {
-          if (!fz_file_exists(ctx, q->open.path))
+          if (fz_file_exists(ctx, q->open.path))
+            fs_path = q->open.path;
+          else
+          {
+            const char *inclusion_path = self->inclusion_path;
+            while ((fs_path = expand_path(&inclusion_path, q->open.path, fs_path_buffer)))
+            {
+              if (fz_file_exists(ctx, fs_path))
+                break;
+            }
+          }
+
+          if (q->open.mode[1] == '?' && !fs_path)
           {
             a.tag = A_PASS;
             channel_write_answer(c, &a);
@@ -344,9 +407,13 @@ static void answer_standard_query(fz_context *ctx, struct tex_engine *self, chan
       {
         if (e->saved.level < FILE_READ)
         {
-          e->fs_data = fz_read_file(ctx, e->path);
+          if (!fs_path)
+            mabort();
+          if (fs_path == q->open.path)
+            fs_path = e->path;
+          e->fs_data = fz_read_file(ctx, fs_path);
           e->saved.level = FILE_READ;
-          stat(e->path, &e->fs_stat);
+          stat(fs_path, &e->fs_stat);
         }
       }
       else
@@ -1009,10 +1076,22 @@ static int scan_entry(fz_context *ctx, struct tex_engine *self, fileentry_t *e)
 
   fprintf(stderr, "[scan] scanning %s\n", e->path);
 
-  if (stat(e->path, &st) == -1)
+  const char *inclusion_path = self->inclusion_path;
+  char fs_path_buffer[1024];
+  const char *fs_path = e->path;
+
+  if (stat(fs_path, &st) == -1)
   {
-    fprintf(stderr, "[scan] file removed\n");
-    return -1;
+    while ((fs_path = expand_path(&inclusion_path, e->path, fs_path_buffer)))
+    {
+      if (stat(fs_path, &st) != -1)
+        break;
+    }
+    if (!fs_path)
+    {
+      fprintf(stderr, "[scan] file removed\n");
+      return -1;
+    }
   }
 
   if (stat_same(&st, &e->fs_stat))
@@ -1026,7 +1105,7 @@ static int scan_entry(fz_context *ctx, struct tex_engine *self, fileentry_t *e)
 
   fz_try(ctx)
   {
-    buf = fz_read_file(ctx, e->path);
+    buf = fz_read_file(ctx, fs_path);
   }
   fz_catch(ctx)
   {
@@ -1235,14 +1314,16 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
 
 txp_engine *txp_create_tex_engine(fz_context *ctx,
                                   const char *tectonic_path,
-                                  const char *directory,
-                                  const char *name)
+                                  const char *inclusion_path,
+                                  const char *tex_dir,
+                                  const char *tex_name)
 {
   struct tex_engine *self = fz_malloc_struct(ctx, struct tex_engine);
   self->_class = &_class;
 
-  self->name = fz_strdup(ctx, name);
+  self->name = fz_strdup(ctx, tex_name);
   self->tectonic_path = fz_strdup(ctx, tectonic_path);
+  self->inclusion_path = fz_strdup(ctx, inclusion_path ? inclusion_path : "");
   state_init(&self->st);
   self->fs = filesystem_new(ctx);
   self->log = log_new(ctx);
@@ -1255,7 +1336,7 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   self->restart = log_snapshot(ctx, self->log);
   self->status = DOC_TERMINATED;
 
-  self->dvi = incdvi_new(ctx, tectonic_path, directory);
+  self->dvi = incdvi_new(ctx, tectonic_path, tex_dir);
 
   self->stex = synctex_new(ctx);
   self->rollback.changed = NULL;

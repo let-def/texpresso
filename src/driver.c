@@ -126,26 +126,70 @@ int main(int argc, const char **argv)
   const char *doc_arg = NULL;
   enum editor_protocol protocol = EDITOR_SEXP;
 
-  switch (argc)
+  int inclusion_path_size = 1;
+  for (int i = 1; i < argc; i++)
   {
-    case 2:
-      // texpresso foo.tex
-      doc_arg = argv[1];
-      break;
+    const char *arg = argv[i];
 
-    case 3:
-      // texpresso -json foo.tex
-      if (strcmp(argv[1], "-json") == 0)
+    if (arg[0] == '-')
+    {
+      if (arg[1] == 'j' &&
+          arg[2] == 's' &&
+          arg[3] == 'o' &&
+          arg[4] == 'n' &&
+          arg[5] == '\0')
       {
-        doc_arg = argv[2];
         protocol = EDITOR_JSON;
-        break;
+      }
+      else if (arg[1] == 'I' && arg[2] == '\0')
+      {
+        i += 1;
+        if (i == argc)
+        {
+          fprintf(stderr, "[error] Expecting a path after -I\n");
+          exit(1);
+        }
+        inclusion_path_size += 1 + strlen(argv[i]);
+      }
+      else
+      {
+        fprintf(stderr, "[error] Unknown option %s\n", arg);
+        exit(1);
       }
 
-    default:
-      fprintf(stderr, "Usage: texpresso [-json] root_file.tex\n");
-      exit(1);
+      continue;
+    }
+
+    if (doc_arg == NULL)
+    {
+      doc_arg = arg;
+      continue;
+    }
+
+    fprintf(stderr, "[error] Expecting a single document argument, got %s and %s\n",
+            doc_arg, arg);
+    exit(1);
   }
+
+  if (doc_arg == NULL)
+  {
+    fprintf(stderr, "Usage: texpresso [-I path]* [-json] root_file.tex\n");
+    exit(1);
+  }
+
+  char *inclusion_path = malloc(inclusion_path_size);
+  if (!inclusion_path) abort();
+
+  char *p = inclusion_path;
+  for (int i = 1; i < argc; i++)
+  {
+    if (argv[i][0] == '-' && argv[i][1] == 'I' && argv[i][2] == '\0')
+    {
+      i += 1;
+      p = stpcpy(p, argv[i]) + 1;
+    }
+  }
+  *p = '\0';
 
   // Move to TeX document directory
   char doc_path[PATH_MAX];
@@ -215,6 +259,7 @@ int main(int argc, const char **argv)
       .exe_path = exe_path,
       .doc_path = doc_path,
       .doc_name = doc_name,
+      .inclusion_path = inclusion_path,
       .custom_event = custom_event,
       .schedule_event = &schedule_event,
       .should_reload_binary = &should_reload_binary,

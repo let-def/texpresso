@@ -879,7 +879,8 @@ bool texpresso_main(struct persistent_state *ps)
   else if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
     ui->eng = txp_create_dvi_engine(ps->ctx, tectonic_path, ps->doc_path, ps->doc_name);
   else
-    ui->eng = txp_create_tex_engine(ps->ctx, tectonic_path, ps->doc_path, ps->doc_name);
+    ui->eng = txp_create_tex_engine(ps->ctx, tectonic_path,
+                                    ps->inclusion_path, ps->doc_path, ps->doc_name);
 
   ui->sdl_renderer = ps->renderer;
   ui->doc_renderer = txp_renderer_new(ps->ctx, ui->sdl_renderer);
