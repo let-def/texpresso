@@ -316,22 +316,22 @@ void editor_synctex(const char *dirname,
                     int line,
                     int column)
 {
+  bool need_dir = basename[0] != '/';
   switch (protocol)
   {
-    case EDITOR_SEXP:
-      fprintf(stdout, "(synctex \"");
-      output_data_string(stdout, dirname, strlen(dirname));
-      output_data_string(stdout, "/", 1);
-      output_data_string(stdout, (const void *)basename, basename_len);
-      fprintf(stdout, "\" %d %d)\n", line, column);
-      break;
-    case EDITOR_JSON:
-      fprintf(stdout, "[\"synctex\", \"");
-      output_data_string(stdout, dirname, strlen(dirname));
-      output_data_string(stdout, "/", 1);
-      output_data_string(stdout, (const void *)basename, basename_len);
-      fprintf(stdout, "\", %d, %d]\n", line, column);
-      break;
+    case EDITOR_SEXP: fprintf(stdout, "(synctex \""); break;
+    case EDITOR_JSON: fprintf(stdout, "[\"synctex\", \""); break;
+  }
+  if (need_dir)
+  {
+    output_data_string(stdout, dirname, strlen(dirname));
+    output_data_string(stdout, "/", 1);
+  }
+  output_data_string(stdout, (const void *)basename, basename_len);
+  switch (protocol)
+  {
+    case EDITOR_SEXP: fprintf(stdout, "\" %d %d)\n", line, column); break;
+    case EDITOR_JSON: fprintf(stdout, "\", %d, %d]\n", line, column); break;
   }
 }
 
