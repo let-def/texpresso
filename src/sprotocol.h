@@ -122,6 +122,7 @@ enum answer {
   A_FORK = PACK('F','O','R','K'),
   A_ACCS = PACK('A','C','C','S'),
   A_STAT = PACK('S','T','A','T'),
+  A_OPEN = PACK('O','P','E','N'),
 };
 
 enum accs_answer {
@@ -157,6 +158,9 @@ typedef struct {
     struct {
       int size;
     } read;
+    struct {
+      int size;
+    } open;
     struct {
       enum accs_answer flag;
     } accs;

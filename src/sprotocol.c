@@ -555,6 +555,10 @@ void channel_write_answer(channel_t *t, answer_t *a)
     case A_SIZE:
       write_u32(t, a->size.size);
       break;
+    case A_OPEN:
+      write_u32(t, a->open.size);
+      write_bytes(t, t->buf, a->open.size);
+      break;
     default:
       mabort();
   }

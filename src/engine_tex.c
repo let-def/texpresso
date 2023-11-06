@@ -419,7 +419,10 @@ static void answer_standard_query(fz_context *ctx, struct tex_engine *self, chan
         }
       }
 
-      a.tag = A_DONE;
+      int n = strlen(q->open.path);
+      a.open.size = n;
+      a.tag = A_OPEN;
+      memmove(channel_write_buffer(c, n), q->open.path, n);
       channel_write_answer(c, &a);
       break;
     }
@@ -450,7 +453,7 @@ static void answer_standard_query(fz_context *ctx, struct tex_engine *self, chan
         a.tag = A_FORK;
       else
       {
-        memmove(channel_write_buffer(c, q->read.size),
+        memmove(channel_write_buffer(c, n),
                 data->data + q->read.pos, n);
         a.tag = A_READ;
         a.read.size = n;
