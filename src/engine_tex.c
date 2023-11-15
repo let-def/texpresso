@@ -350,6 +350,25 @@ static fz_buffer *entry_data(fileentry_t *e)
   return e->fs_data;
 }
 
+static const char *
+lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct stat *st)
+{
+  struct stat st1;
+  if (st == NULL)
+    st = &st1;
+
+  const char *fs_path = path;
+  const char *inclusion_path = self->inclusion_path;
+
+  do {
+    if (stat(fs_path, st) != -1)
+      break;
+  }
+  while ((fs_path = expand_path(&inclusion_path, path, buf)));
+
+  return fs_path;
+}
+
 // TODO CLEANUP
 static void answer_standard_query(fz_context *ctx, struct tex_engine *self, channel_t *c, query_t *q)
 {
@@ -372,17 +391,7 @@ static void answer_standard_query(fz_context *ctx, struct tex_engine *self, chan
         e = filesystem_lookup(self->fs, q->open.path);
         if (!e || !entry_data(e))
         {
-          if (fz_file_exists(ctx, q->open.path))
-            fs_path = q->open.path;
-          else
-          {
-            const char *inclusion_path = self->inclusion_path;
-            while ((fs_path = expand_path(&inclusion_path, q->open.path, fs_path_buffer)))
-            {
-              if (fz_file_exists(ctx, fs_path))
-                break;
-            }
-          }
+          fs_path = lookup_path(self, q->open.path, fs_path_buffer, NULL);
 
           if (q->open.mode[1] == '?' && !fs_path)
           {
@@ -408,7 +417,9 @@ static void answer_standard_query(fz_context *ctx, struct tex_engine *self, chan
         if (e->saved.level < FILE_READ)
         {
           if (!fs_path)
-            mabort();
+            fs_path = lookup_path(self, q->open.path, fs_path_buffer, NULL);
+          if (!fs_path)
+            mabort("path: %s\nmode:%s\n", q->open.path, q->open.mode);
           if (fs_path == q->open.path)
             fs_path = e->path;
           e->fs_data = fz_read_file(ctx, fs_path);
@@ -1078,20 +1089,12 @@ static int scan_entry(fz_context *ctx, struct tex_engine *self, fileentry_t *e)
 
   const char *inclusion_path = self->inclusion_path;
   char fs_path_buffer[1024];
-  const char *fs_path = e->path;
+  const char *fs_path = lookup_path(self, e->path, fs_path_buffer, &st);
 
-  if (stat(fs_path, &st) == -1)
+  if (!fs_path)
   {
-    while ((fs_path = expand_path(&inclusion_path, e->path, fs_path_buffer)))
-    {
-      if (stat(fs_path, &st) != -1)
-        break;
-    }
-    if (!fs_path)
-    {
       fprintf(stderr, "[scan] file removed\n");
       return -1;
-    }
   }
 
   if (stat_same(&st, &e->fs_stat))
