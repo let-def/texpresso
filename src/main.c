@@ -37,7 +37,7 @@
 #include "driver.h"
 #include "synctex.h"
 #include "vstack.h"
-#include "sexp_parser.h"
+#include "prot_parser.h"
 #include "editor.h"
 
 struct persistent_state *pstate;
@@ -915,7 +915,8 @@ bool texpresso_main(struct persistent_state *ps)
   SDL_AddEventWatch(repaint_on_resize, &repaint_on_resize_env);
 
   vstack *cmd_stack = vstack_new(ps->ctx);
-  sexp_parser cmd_parser = initial_sexp_parser;
+  prot_parser cmd_parser;
+  prot_initialize(&cmd_parser, (ps->protocol == EDITOR_JSON));
 
   // Start watching stdin
   int poll_stdin_pipe[2];
@@ -953,7 +954,7 @@ bool texpresso_main(struct persistent_state *ps)
       const char *ptr = buffer, *lim = buffer + n;
       fz_try(ps->ctx)
       {
-        while ((ptr = sexp_parse(ps->ctx, &cmd_parser, cmd_stack, ptr, lim)))
+        while ((ptr = prot_parse(ps->ctx, &cmd_parser, cmd_stack, ptr, lim)))
         {
           val cmds = vstack_get_values(ps->ctx, cmd_stack);
           int n_cmds = val_array_length(ps->ctx, cmd_stack, cmds);
@@ -969,7 +970,7 @@ bool texpresso_main(struct persistent_state *ps)
         fprintf(stderr, "error while reading stdin commands: %s\n",
                 fz_caught_message(ps->ctx));
         vstack_reset(ps->ctx, cmd_stack);
-        cmd_parser = initial_sexp_parser;
+        prot_reinitialize(&cmd_parser);
       }
     }
     if (n == 0) stdin_eof = 1;
