@@ -498,9 +498,19 @@ bool vstack_in_string(vstack *t)
   return t->string_kind != CTX_NONE;
 }
 
+bool vstack_in_name(vstack *t)
+{
+  return t->string_kind == CTX_NAME;
+}
+
 bool vstack_in_dict(vstack *t)
 {
   return t->struct_kind == CTX_DICT;
+}
+
+bool vstack_in_dict_value(vstack *t)
+{
+  return t->struct_kind == CTX_DICT && (t->struct_length & 1);
 }
 
 bool vstack_in_array(vstack *t)

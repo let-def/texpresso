@@ -134,7 +134,9 @@ const char *val_as_string(fz_context *ctx, vstack *t, val v);
 const char *val_as_name(fz_context *ctx, vstack *t, val v);
 
 bool vstack_in_string(vstack *t);
+bool vstack_in_name(vstack *t);
 bool vstack_in_dict(vstack *t);
+bool vstack_in_dict_value(vstack *t);
 bool vstack_in_array(vstack *t);
 
 #endif // VSTACK_H_
