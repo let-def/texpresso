@@ -517,7 +517,8 @@ static void realize_change(struct persistent_state *ps,
                              int offset,
                              int remove,
                              const char *data,
-                             int length)
+                             int length,
+                             int line_based)
 {
   int go_up = 0;
   path = relative_path(path, ps->doc_path, &go_up);
@@ -539,6 +540,45 @@ static void realize_change(struct persistent_state *ps,
   {
     fprintf(stderr, "[command] change %s: file not opened, skipping\n", path);
     return;
+  }
+
+  if (line_based)
+  {
+    // Compute byte offsets from line offsets
+    int line = offset, count = remove;
+
+    offset = remove = 0;
+
+    uint8_t *p = b->data;
+    size_t len = b->len;
+    while (line > 0 && offset < len)
+    {
+      if (p[offset] == '\n')
+        line -= 1;
+      offset++;
+    }
+
+    if (line > 0)
+    {
+      fprintf(stderr, "[command] change line %s: invalid line number, skipping\n", path);
+      return;
+    }
+
+    remove = offset;
+    while (count > 0 && remove < len)
+    {
+      if (p[remove] == '\n')
+        count -= 1;
+      remove++;
+    }
+
+    if (count > 0)
+    {
+      fprintf(stderr, "[command] change line %s: invalid line count, skipping\n", path);
+      return;
+    }
+
+    remove -= offset;
   }
 
   if (remove < 0 || offset < 0 || offset + remove > b->len)
@@ -570,7 +610,7 @@ struct {
   struct delayed_op {
     const char *path;
     const char *data;
-    int offset, remove, length;
+    int offset, remove, length, line_based;
   } op[BUFFERED_OPS];
   int count;
 } delayed_changes = {0,};
@@ -586,7 +626,8 @@ static void flush_changes(struct persistent_state *ps,
     for (int i = 0; i < count; ++i)
     {
       struct delayed_op *op = &delayed_changes.op[i];
-      realize_change(ps, ui, op->path, op->offset, op->remove, op->data, op->length);
+      realize_change(ps, ui, op->path, op->offset, op->remove, op->data, 
+                     op->length, op->line_based);
     }
   }
 }
@@ -597,7 +638,8 @@ static void interpret_change(struct persistent_state *ps,
                              int offset,
                              int remove,
                              const char *data,
-                             int length)
+                             int length,
+                             int line_based)
 {
   int plen = strlen(path);
   int page_count = send(page_count, ui->eng);
@@ -606,13 +648,18 @@ static void interpret_change(struct persistent_state *ps,
   if ((page_count == ui->page - 2 || page_count == ui->page - 1) &&
       send(get_status, ui->eng) == DOC_RUNNING &&
       delayed_changes.count < BUFFERED_OPS &&
-      cursor + plen + 1 + length <= BUFFERED_CHARS)
+      cursor + plen + 1 + length + line_based <= BUFFERED_CHARS)
   {
     char *op_path = delayed_changes.buffer + cursor;
     memcpy(op_path, path, plen + 1);
     cursor += plen + 1;
     char *op_data = delayed_changes.buffer + cursor;
     memcpy(op_data, data, length);
+    if (line_based)
+    {
+      op_data[length] = '\n';
+      length += 1;
+    }
     cursor += length;
     delayed_changes.cursor = cursor;
 
@@ -622,13 +669,14 @@ static void interpret_change(struct persistent_state *ps,
       .offset = offset,
       .remove = remove,
       .length = length,
+      .line_based = line_based,
     };
     delayed_changes.count += 1;
   }
   else
   {
     flush_changes(ps, ui);
-    realize_change(ps, ui, path, offset, remove, data, length);
+    realize_change(ps, ui, path, offset, remove, data, length, line_based);
   }
 }
 
@@ -762,7 +810,13 @@ static void interpret_command(struct persistent_state *ps,
     case EDIT_CHANGE:
       interpret_change(ps, ui, cmd.change.path, cmd.change.offset,
                        cmd.change.remove_length, cmd.change.data,
-                       cmd.change.insert_length);
+                       cmd.change.insert_length, 0);
+      break;
+
+    case EDIT_CHANGE_LINES:
+      interpret_change(ps, ui, cmd.change.path, cmd.change.offset,
+                       cmd.change.remove_length, cmd.change.data,
+                       cmd.change.insert_length, 1);
       break;
 
     case EDIT_THEME:

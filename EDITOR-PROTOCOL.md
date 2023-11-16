@@ -64,6 +64,14 @@ Remove file at "path" from TeXpresso VFS.
 Update file at "path" in VFS (it should have been `open`ed before), by replacing `length` bytes starting at `offset` (both are integers) with the contents of "data".
 
 ```scheme
+(change-lines "path" offset count "data")
+```
+
+Update file at "path" in VFS (it should have been `open`ed before), by replacing `length` lines starting from line number `offset` (both are integers) with the contents of "data".
+Line numbering starts at 0 and line count is defined as the number of '\n'.
+To insert multiple lines, separate them with '\n' in data. Note that if data ends with '\n', it will insert a new empty-line at the end.
+
+```scheme
 (theme (bg_r bg_g bg_b) (fg_r fg_g fg_b))
 ```
 

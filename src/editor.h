@@ -13,6 +13,7 @@ enum EDITOR_COMMAND
   EDIT_OPEN,
   EDIT_CLOSE,
   EDIT_CHANGE,
+  EDIT_CHANGE_LINES,
   EDIT_THEME,
   EDIT_PREVIOUS_PAGE,
   EDIT_NEXT_PAGE,
@@ -41,6 +42,11 @@ struct editor_command {
       const char *path, *data;
       int offset, remove_length, insert_length;
     } change;
+
+    struct {
+      const char *path, *data;
+      int offset, remove_count, insert_length;
+    } change_lines;
 
     struct {
       float bg[3], fg[3];

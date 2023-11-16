@@ -114,6 +114,30 @@ bool editor_parse(fz_context *ctx,
             },
     };
   }
+  else if (strcmp(verb, "change-lines") == 0)
+  {
+    if (len != 5) goto arity;
+    val path = val_array_get(ctx, stack, command, 1);
+    val offset = val_array_get(ctx, stack, command, 2);
+    val count = val_array_get(ctx, stack, command, 3);
+    val data = val_array_get(ctx, stack, command, 4);
+    if (!val_is_string(path) ||
+        !val_is_number(offset) ||
+        !val_is_number(count) ||
+        !val_is_string(data))
+      goto arguments;
+    *out = (struct editor_command){
+        .tag = EDIT_CHANGE_LINES,
+        .change_lines =
+            {
+                .path = val_string(ctx, stack, path),
+                .offset = val_number(ctx, offset),
+                .remove_count = val_number(ctx, count),
+                .data = val_string(ctx, stack, data),
+                .insert_length = val_string_length(ctx, stack, data),
+            },
+    };
+  }
   else if (strcmp(verb, "theme") == 0)
   {
     if (len != 3) goto arity;
