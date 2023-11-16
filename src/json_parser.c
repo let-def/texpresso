@@ -85,6 +85,46 @@ static bool json_pop_context(json_parser *cp, vstack *stack)
 #define POP_CONTEXT(input) \
   if (!json_pop_context(cp, stack)) return (input);
 
+static char extract_bits(int *c, int count)
+{
+  int result = *c & ((1 << count) - 1);
+  *c = *c >> count;
+  return result;
+}
+
+static void push_codepoint(fz_context *ctx, vstack *stack, int cp)
+{
+  char bytes[4], count = 0; 
+  if (cp < 0x80)
+  {
+    count = 1;
+    bytes[0] = cp;
+  }
+  else if (cp < 0x800)
+  {
+    count = 2;
+    bytes[0] = 0xC0 | extract_bits(&cp, 5);
+    bytes[1] = 0x80 | cp;
+  }
+  else if (cp < 0x10000)
+  {
+    count = 3;
+    bytes[0] = 0xE0 | extract_bits(&cp, 4);
+    bytes[1] = 0x80 | extract_bits(&cp, 6);
+    bytes[2] = 0x80 | cp;
+  }
+  else
+  {
+    count = 4;
+    bytes[0] = 0xF0 | extract_bits(&cp, 3);
+    bytes[1] = 0x80 | extract_bits(&cp, 6);
+    bytes[2] = 0x80 | extract_bits(&cp, 6);
+    bytes[3] = 0x80 | cp;
+  }
+  vstack_push_chars(ctx, stack, bytes, count);
+}
+
+
 const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
                        char *input, const char *limit)
 {
@@ -209,6 +249,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
           input++;
           if (cp->state == P_JSON_STRING_U4)
           {
+            push_codepoint(ctx, stack, cp->codepoint);
             cp->state = P_JSON_STRING;
             break;
           }
