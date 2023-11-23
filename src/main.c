@@ -182,7 +182,7 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
   int steps = 10;
   while (need)
   {
-    if (!send(step,ui->eng, ctx, false))
+    if (!send(step, ui->eng, ctx, false))
       break;
 
     steps -= 1;

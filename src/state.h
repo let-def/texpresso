@@ -65,6 +65,14 @@ typedef struct fileentry_s {
                               // may point to another entry during.
     int cursor; // -1 outside of a transaction, current cursor position
                 // during a rollback
+    int invalidated;  // handle race condition when a rollback happened after
+                      // data had been sent but before we are sure it has been
+                      // observed. invalidated is -1 most of the time.
+                      // when a rollback happens, invalidated is set to the last
+                      // unchanged offset.
+                      // it is set to -1 when a read happens before invalidated offset.
+                      // abort when a read happens after invalidated offset.
+                      // backtrack when a seen happens after invalidated offset.
   } rollback;
 } fileentry_t;
 

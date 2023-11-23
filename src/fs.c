@@ -166,6 +166,7 @@ fileentry_t *filesystem_lookup_or_create(fz_context *ctx, filesystem_t *fs, cons
   entry->path = fz_strdup(ctx, path);
   entry->saved.seen = 0;
   entry->rollback.cursor = -1;
+  entry->rollback.invalidated = -1;
   entry->rollback.next = NULL;
   cell->entry = entry;
 
