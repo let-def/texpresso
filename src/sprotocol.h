@@ -175,6 +175,7 @@ typedef struct {
 
 enum ask {
   C_TERM = PACK('T','E','R','M'),
+  C_FLSH = PACK('F','L','S','H'),
 };
 
 typedef struct {

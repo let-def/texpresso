@@ -157,7 +157,6 @@ const char *query_to_string(enum query q)
     CASE(Q,BACK);
     CASE(Q,ACCS);
     CASE(Q,STAT);
-    default: mabort();
   }
 }
 
@@ -172,7 +171,7 @@ const char *answer_to_string(enum answer q)
     CASE(A,FORK);
     CASE(A,ACCS);
     CASE(A,STAT);
-    default: mabort();
+    CASE(A,OPEN);
   }
 }
 
@@ -181,7 +180,7 @@ const char *ask_to_string(enum ask q)
   switch (q)
   {
     CASE(C,TERM);
-    default: mabort();
+    CASE(C,FLSH);
   }
 }
 
@@ -493,12 +492,9 @@ void channel_write_ask(channel_t *t, ask_t *a)
   write_u32(t, a->tag);
   switch (a->tag)
   {
-    case C_TERM:
-      write_u32(t, a->term.pid);
-      break;
-
-    default:
-      mabort();
+    case C_TERM: write_u32(t, a->term.pid); break;
+    case C_FLSH: break;
+    default: mabort();
   }
 }
 
