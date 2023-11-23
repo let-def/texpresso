@@ -88,6 +88,7 @@ struct tex_engine
     fileentry_t *changed;
     int trace;
     int offset; // Last valid offset in trace entry
+    int flush;
   } rollback;
 };
 
@@ -1205,11 +1206,14 @@ static void rollback_begin(fz_context *ctx, struct tex_engine *self)
     abort();
 
   self->rollback.trace = self->trace_len - 1;
+  self->rollback.flush = 0;
 }
 
 static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, int *offsetp)
 {
   int trace = self->rollback.trace;
+  int need_flush = self->rollback.flush;
+  self->rollback.flush = 0;
 
   // Assert we are in a transaction
   if (trace == NOT_IN_TRANSACTION)
@@ -1223,6 +1227,15 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
       abort();
     self->rollback.trace = NOT_IN_TRANSACTION;
     self->rollback.offset = -1;
+
+    if (need_flush && self->status == DOC_RUNNING)
+    {
+      ask_t a;
+      a.tag = C_FLSH;
+      channel_write_ask(self->c, &a);
+      channel_flush(self->c);
+    }
+
     return false;
   }
 
@@ -1270,6 +1283,7 @@ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileen
   if ((e->rollback.cursor == -1) ? (e->saved.seen < changed)
                                  : (e->rollback.cursor < changed))
   {
+    self->rollback.flush = 1;
     if (e->rollback.invalidated == -1 ||
         e->rollback.invalidated > changed)
       e->rollback.invalidated = changed;
