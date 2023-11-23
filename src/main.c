@@ -551,6 +551,7 @@ static void realize_change(struct persistent_state *ps,
 
     uint8_t *p = b->data;
     size_t len = b->len;
+
     while (line > 0 && offset < len)
     {
       if (p[offset] == '\n')
@@ -572,7 +573,7 @@ static void realize_change(struct persistent_state *ps,
       remove++;
     }
 
-    if (count > 0)
+    if (count > 1)
     {
       fprintf(stderr, "[command] change line %s: invalid line count, skipping\n", path);
       return;
@@ -655,12 +656,6 @@ static void interpret_change(struct persistent_state *ps,
     cursor += plen + 1;
     char *op_data = delayed_changes.buffer + cursor;
     memcpy(op_data, data, length);
-    if (line_based)
-    {
-      op_data[length] = '\n';
-      length += 1;
-    }
-    cursor += length;
     delayed_changes.cursor = cursor;
 
     delayed_changes.op[delayed_changes.count] = (struct delayed_op){
