@@ -5,6 +5,7 @@
 #include "vstack.h"
 
 void editor_set_protocol(enum editor_protocol protocol);
+void editor_set_line_output(bool line);
 
 // Receiving commands
 
@@ -97,12 +98,8 @@ enum EDITOR_INFO_BUFFER
   BUF_LOG, // TeX output log file
 };
 
-void editor_append(enum EDITOR_INFO_BUFFER name,
-                   int pos,
-                   const char *data,
-                   int data_len);
-
-void editor_truncate(enum EDITOR_INFO_BUFFER name, int length);
+void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos);
+void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf);
 void editor_flush(void);
 void editor_synctex(const char *dirname, const char *basename, int basename_len, int line, int column);
 void editor_reset_sync(void);

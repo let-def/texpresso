@@ -508,6 +508,7 @@ static int find_diff(const fz_buffer *buf, const void *data, int size)
   const unsigned char *ptr = data;
   int i, len = fz_mini(buf->len, size);
   for (i = 0; i < len && buf->data[i] == ptr[i]; ++i);
+  fprintf(stderr, "i:%d len:%d size:%d\n", i, (int)buf->len, size);
   return i;
 }
 
@@ -907,6 +908,7 @@ static void interpret_command(struct persistent_state *ps,
 bool texpresso_main(struct persistent_state *ps)
 {
   editor_set_protocol(ps->protocol);
+  editor_set_line_output(ps->line_output);
   pstate = ps;
 
   ui_state raw_ui, *ui = &raw_ui;

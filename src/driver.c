@@ -125,6 +125,7 @@ int main(int argc, const char **argv)
 
   const char *doc_arg = NULL;
   enum editor_protocol protocol = EDITOR_SEXP;
+  bool line_output = 0;
 
   int inclusion_path_size = 1;
   for (int i = 1; i < argc; i++)
@@ -134,10 +135,10 @@ int main(int argc, const char **argv)
     if (arg[0] == '-')
     {
       if (arg[1] == 'j' &&
-          arg[2] == 's' &&
-          arg[3] == 'o' &&
-          arg[4] == 'n' &&
-          arg[5] == '\0')
+        arg[2] == 's' &&
+        arg[3] == 'o' &&
+        arg[4] == 'n' &&
+        arg[5] == '\0')
       {
         protocol = EDITOR_JSON;
       }
@@ -150,6 +151,15 @@ int main(int argc, const char **argv)
           exit(1);
         }
         inclusion_path_size += 1 + strlen(argv[i]);
+      }
+      else if (arg[1] == 'l' &&
+        arg[2] == 'i' &&
+        arg[3] == 'n' &&
+        arg[4] == 'e' &&
+        arg[5] == 's' &&
+        arg[6] == '\0')
+      {
+        line_output = 1;
       }
       else
       {
@@ -253,6 +263,7 @@ int main(int argc, const char **argv)
   struct persistent_state pstate = {
       .initial = {0,},
       .protocol = protocol,
+      .line_output = line_output,
       .window = window,
       .renderer = renderer,
       .ctx = ctx,

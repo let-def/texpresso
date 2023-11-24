@@ -3,12 +3,17 @@
 #include "vstack.h"
 
 static enum editor_protocol protocol = EDITOR_SEXP;
+static bool line_output = 0;
 
 void editor_set_protocol(enum editor_protocol aprotocol)
 {
   protocol = aprotocol;
 }
 
+void editor_set_line_output(bool v)
+{
+  line_output = v;
+}
 // Processing input
 
 static void parse_color(fz_context *ctx, vstack *stack, float out[3], val col)
@@ -326,35 +331,89 @@ static const char *editor_info_buffer(enum EDITOR_INFO_BUFFER name)
   }
 }
 
-void editor_append(enum EDITOR_INFO_BUFFER name,
-                   int pos,
-                   const char *data,
-                   int data_len)
+void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos)
 {
-  switch (protocol)
+  if (!buf)
+    return;
+  const char *data = (const char *)buf->data;
+  if (line_output)
   {
-    case EDITOR_SEXP:
-      fprintf(stdout, "(append %s %d \"", editor_info_buffer(name), pos);
-      output_data_string(stdout, data, data_len);
-      fprintf(stdout, "\")\n");
-      break;
-    case EDITOR_JSON:
-      fprintf(stdout, "[\"append\", \"%s\", %d, \"", editor_info_buffer(name), pos);
-      output_data_string(stdout, data, data_len);
-      fprintf(stdout, "\"]\n");
-      break;
+    int next = pos;
+    while (next < buf->len && buf->data[next] != '\n') next++;
+    if (next == buf->len)
+      return;
+
+    // Find where line begins and ends
+    while (pos > 0 && data[pos - 1] != '\n') pos--;
+
+    // Header
+    switch (protocol)
+    {
+      case EDITOR_SEXP: fprintf(stdout, "(append-lines %s", editor_info_buffer(name)); break;
+      case EDITOR_JSON: fprintf(stdout, "[\"append-lines\", \"%s\"", editor_info_buffer(name)); break;
+    }
+
+    // pos points to the beginning of a line,
+    // next points to the ending '\n'
+    while (next < buf->len)
+    {
+      // Not a well-formed line
+      fprintf(stdout, protocol == EDITOR_SEXP ? " \"" : ", \"");
+      output_data_string(stdout, data + pos, next - pos);
+      fprintf(stdout, "\"");
+      pos = next;
+      do {
+        next++;
+      }
+      while (next < buf->len && buf->data[next] != '\n');
+    }
+
+    // Trailer
+    switch (protocol)
+    {
+      case EDITOR_SEXP: fprintf(stdout, ")\n"); break;
+      case EDITOR_JSON: fprintf(stdout, "]\n"); break;
+    }
+  }
+  else
+  {
+    switch (protocol)
+    {
+      case EDITOR_SEXP:
+        fprintf(stdout, "(append %s %d \"", editor_info_buffer(name), pos);
+        output_data_string(stdout, data + pos, (int)buf->len);
+        fprintf(stdout, "\")\n");
+        break;
+      case EDITOR_JSON:
+        fprintf(stdout, "[\"append\", \"%s\", %d, \"", editor_info_buffer(name), pos);
+        output_data_string(stdout, data + pos, (int)buf->len);
+        fprintf(stdout, "\"]\n");
+        break;
+    }
   }
 }
 
-void editor_truncate(enum EDITOR_INFO_BUFFER name, int length)
+void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
 {
+  int count = buf ? buf->len : 0;
+
+  if (line_output && buf)
+  {
+    count = 0;
+    for (int i = 0; i < buf->len; ++i)
+      if (buf->data[i] == '\n')
+        count++;
+  }
+
+  const char *suffix = line_output ? "-lines" : "";
+
   switch (protocol)
   {
     case EDITOR_SEXP:
-      fprintf(stdout, "(truncate %s %d)\n", editor_info_buffer(name), length);
+      fprintf(stdout, "(truncate%s %s %d)\n", suffix, editor_info_buffer(name), count);
       break;
     case EDITOR_JSON:
-      fprintf(stdout, "[\"truncate\", \"%s\", %d]\n", editor_info_buffer(name), length);
+      fprintf(stdout, "[\"truncate%s\", \"%s\", %d]\n", suffix, editor_info_buffer(name), count);
       break;
   }
 }

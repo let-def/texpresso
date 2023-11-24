@@ -458,6 +458,13 @@ static fz_buffer *entry_data(fileentry_t *e)
   return e->fs_data;
 }
 
+static fz_buffer *output_data(fileentry_t *e)
+{
+  if (!e)
+    return NULL;
+  return e->saved.data;
+}
+
 static const char *
 lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct stat *st)
 {
@@ -626,7 +633,10 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
         e->rollback.invalidated = -1;
       }
       if (q->read.pos > data->len)
+      {
+        fprintf(stderr, "read:%d\ndata->len:%d\n", q->read.pos, (int)data->len);
         mabort();
+      }
       size_t n = q->read.size;
       if (n > data->len - q->read.pos)
         n = data->len - q->read.pos;
@@ -719,9 +729,9 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
           fprintf(stderr, "[info] synctex used %d input files, is %d pages long\n", ninput, npage);
       }
       else if (self->st.log.entry == e)
-        editor_append(BUF_LOG, q->writ.pos, q->writ.buf, q->writ.size);
+        editor_append(BUF_LOG, output_data(e), q->writ.pos);
       else if (self->st.stdout.entry == e)
-        editor_append(BUF_OUT, q->writ.pos, q->writ.buf, q->writ.size);
+        editor_append(BUF_OUT, output_data(e), q->writ.pos);
       a.tag = A_DONE;
       channel_write_answer(c, &a);
       break;
@@ -769,6 +779,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       if (e == NULL || e->saved.level < FILE_READ) mabort();
       a.tag = A_SIZE;
       a.size.size = entry_data(e)->len;
+      fprintf(stderr, "SIZE = %d (seen = %d)\n", a.size.size, e->saved.seen);
       channel_write_answer(c, &a);
       break;
     }
@@ -932,7 +943,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, 
   }
 }
 
-static int entry_length(fileentry_t *entry)
+static int output_length(fileentry_t *entry)
 {
   if (!entry || !entry->saved.data)
     return 0;
@@ -945,7 +956,7 @@ static void rollback(fz_context *ctx, struct tex_engine *self, int trace)
   fprintf(
     stderr,
     "before rollback: %d bytes of output\n",
-    entry_length(self->st.document.entry)
+    output_length(self->st.document.entry)
   );
   if (self->fence_pos < 0)
   {
@@ -1011,8 +1022,8 @@ static void rollback(fz_context *ctx, struct tex_engine *self, int trace)
   }
   else
     synctex_rollback(ctx, self->stex, 0);
-  editor_truncate(BUF_OUT, entry_length(self->st.stdout.entry));
-  editor_truncate(BUF_LOG, entry_length(self->st.log.entry));
+  editor_truncate(BUF_OUT, output_data(self->st.stdout.entry));
+  editor_truncate(BUF_LOG, output_data(self->st.log.entry));
 }
 
 static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, int offset)

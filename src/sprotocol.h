@@ -33,7 +33,7 @@
 typedef struct channel_s channel_t;
 typedef int file_id;
 
-#define LOG 0
+#define LOG 1
 
 #define LEN(txt) (sizeof(txt)-1)
 #define STR(X) #X
