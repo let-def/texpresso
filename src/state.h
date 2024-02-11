@@ -48,6 +48,9 @@ typedef struct fileentry_s {
   struct stat fs_stat;
   fz_buffer *fs_data;
 
+  // Cached picture information
+  struct pic_density density;
+  
   // State of the file in the text editor (or NULL if unedited)
   fz_buffer *edit_data;
 

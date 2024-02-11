@@ -157,6 +157,8 @@ const char *query_to_string(enum query q)
     CASE(Q,BACK);
     CASE(Q,ACCS);
     CASE(Q,STAT);
+    CASE(Q,GPIC);
+    CASE(Q,SPIC);
   }
 }
 
@@ -172,6 +174,7 @@ const char *answer_to_string(enum answer q)
     CASE(A,ACCS);
     CASE(A,STAT);
     CASE(A,OPEN);
+    CASE(A,GPIC);
   }
 }
 
@@ -315,6 +318,25 @@ static void write_u32(channel_t *t, uint32_t u)
   write_bytes(t, &u, 4);
 }
 
+static double read_f64(channel_t *t)
+{
+  int avail = t->input.len - t->input.pos;
+
+  if (avail < 8)
+    crefill(t, 8 - avail);
+
+  double d;
+  memcpy(&d, t->input.buffer + t->input.pos, 8);
+  t->input.pos += 8;
+
+  return d;
+}
+
+static void write_f64(channel_t *t, double d)
+{
+  write_bytes(t, &d, 8);
+}
+
 void log_query(FILE *f, query_t *r)
 {
   fprintf(f, "%04dms: ", r->time);
@@ -369,6 +391,18 @@ void log_query(FILE *f, query_t *r)
     case Q_STAT:
       {
         fprintf(f, "stat(\"%s\")\n", r->stat.path);
+        break;
+      }
+    case Q_GPIC:
+      {
+        fprintf(f, "gpic(\"%s\")\n", r->gpic.path);
+        break;
+      }
+    case Q_SPIC:
+      {
+        fprintf(f, "spic(\"%s\", %d, %d, %.02f, %.02f)\n", 
+                r->spic.path, r->spic.density.w, r->spic.density.h,
+                r->spic.density.wd, r->spic.density.hd);
         break;
       }
     default:
@@ -476,6 +510,22 @@ bool channel_read_query(channel_t *t, query_t *r)
         r->stat.path = &t->buf[pos_path];
         break;
       }
+    case Q_GPIC:
+      {
+        int pos_path = read_zstr(t, &pos);
+        r->gpic.path = &t->buf[pos_path];
+        break;
+      }
+    case Q_SPIC:
+      {
+        int pos_path = read_zstr(t, &pos);
+        r->spic.path = &t->buf[pos_path];
+        r->spic.density.w = read_u32(t);
+        r->spic.density.h = read_u32(t);
+        r->spic.density.wd = read_f64(t);
+        r->spic.density.hd = read_f64(t);
+        break;
+      }
     default:
       mabort();
   }
@@ -554,6 +604,12 @@ void channel_write_answer(channel_t *t, answer_t *a)
     case A_OPEN:
       write_u32(t, a->open.size);
       write_bytes(t, t->buf, a->open.size);
+      break;
+    case A_GPIC:
+      write_u32(t, a->gpic.density.w);
+      write_u32(t, a->gpic.density.h);
+      write_f64(t, a->gpic.density.wd);
+      write_f64(t, a->gpic.density.hd);
       break;
     default:
       mabort();

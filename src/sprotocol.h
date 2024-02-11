@@ -60,6 +60,8 @@ enum query {
   Q_BACK = PACK('B','A','C','K'),
   Q_ACCS = PACK('A','C','C','S'),
   Q_STAT = PACK('S','T','A','T'),
+  Q_GPIC = PACK('G','P','I','C'),
+  Q_SPIC = PACK('S','P','I','C'),
 };
 
 enum accs_flag {
@@ -67,6 +69,11 @@ enum accs_flag {
   ACCS_W = 2,
   ACCS_X = 4,
   ACCS_F = 8
+};
+
+struct pic_density {
+  int w, h;
+  double wd, hd;
 };
 
 typedef struct {
@@ -107,8 +114,15 @@ typedef struct {
       int flags;
     } accs;
     struct {
-      char * path;
+      char *path;
     } stat;
+    struct {
+      char *path;
+    } gpic;
+    struct {
+      char *path;
+      struct pic_density density;
+    } spic;
   };
 } query_t;
 
@@ -123,6 +137,7 @@ enum answer {
   A_ACCS = PACK('A','C','C','S'),
   A_STAT = PACK('S','T','A','T'),
   A_OPEN = PACK('O','P','E','N'),
+  A_GPIC = PACK('G','P','I','C'),
 };
 
 enum accs_answer {
@@ -168,6 +183,9 @@ typedef struct {
       enum accs_answer flag;
       struct stat_answer stat;
     } stat;
+    struct {
+      struct pic_density density;
+    } gpic;
   };
 } answer_t;
 

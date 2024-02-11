@@ -894,6 +894,29 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       break;
     }
 
+    case Q_GPIC:
+    {
+      fileentry_t *e = filesystem_lookup(self->fs, q->gpic.path);
+      if (e && e->saved.level == FILE_READ && e->density.wd > 0.0)
+      {
+        a.gpic.density = e->density;
+        a.tag = A_GPIC;
+      }
+      else
+        a.tag = A_PASS;
+      channel_write_answer(c, &a);
+      break;
+    }
+    case Q_SPIC:
+    {
+      fileentry_t *e = filesystem_lookup(self->fs, q->spic.path);
+      if (e && e->saved.level == FILE_READ)
+          e->density = q->spic.density;
+      a.tag = A_DONE;
+      channel_write_answer(c, &a);
+      break;
+    }
+
     case Q_CHLD:
     case Q_BACK:
     default:
@@ -1177,6 +1200,8 @@ static int scan_entry(fz_context *ctx, struct tex_engine *self, fileentry_t *e)
   {
     return -1;
   }
+
+  e->density = (struct pic_density){0,};
 
   int olen = e->fs_data->len, nlen = buf->len;
   int len = olen < nlen ? olen : nlen;
