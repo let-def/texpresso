@@ -779,7 +779,8 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       if (e == NULL || e->saved.level < FILE_READ) mabort();
       a.tag = A_SIZE;
       a.size.size = entry_data(e)->len;
-      fprintf(stderr, "SIZE = %d (seen = %d)\n", a.size.size, e->saved.seen);
+      if (LOG)
+        fprintf(stderr, "SIZE = %d (seen = %d)\n", a.size.size, e->saved.seen);
       channel_write_answer(c, &a);
       break;
     }
