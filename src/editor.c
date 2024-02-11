@@ -381,12 +381,12 @@ void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos)
     {
       case EDITOR_SEXP:
         fprintf(stdout, "(append %s %d \"", editor_info_buffer(name), pos);
-        output_data_string(stdout, data + pos, (int)buf->len);
+        output_data_string(stdout, data + pos, (int)buf->len - pos);
         fprintf(stdout, "\")\n");
         break;
       case EDITOR_JSON:
         fprintf(stdout, "[\"append\", \"%s\", %d, \"", editor_info_buffer(name), pos);
-        output_data_string(stdout, data + pos, (int)buf->len);
+        output_data_string(stdout, data + pos, (int)buf->len - pos);
         fprintf(stdout, "\"]\n");
         break;
     }
