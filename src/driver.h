@@ -34,8 +34,9 @@ enum custom_events {
   SCAN_EVENT,
   RENDER_EVENT,
   RELOAD_EVENT,
-  EVENT_COUNT,
   STDIN_EVENT,
+
+  EVENT_COUNT,
 };
 
 struct initial_state
