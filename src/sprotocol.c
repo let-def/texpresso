@@ -318,23 +318,23 @@ static void write_u32(channel_t *t, uint32_t u)
   write_bytes(t, &u, 4);
 }
 
-static double read_f64(channel_t *t)
+static float read_f32(channel_t *t)
 {
   int avail = t->input.len - t->input.pos;
 
-  if (avail < 8)
-    crefill(t, 8 - avail);
+  if (avail < 4)
+    crefill(t, 4 - avail);
 
-  double d;
-  memcpy(&d, t->input.buffer + t->input.pos, 8);
-  t->input.pos += 8;
+  float f;
+  memcpy(&f, t->input.buffer + t->input.pos, 4);
+  t->input.pos += 4;
 
-  return d;
+  return f;
 }
 
-static void write_f64(channel_t *t, double d)
+static void write_f32(channel_t *t, float f)
 {
-  write_bytes(t, &d, 8);
+  write_bytes(t, &f, 4);
 }
 
 void log_query(FILE *f, query_t *r)
@@ -395,14 +395,16 @@ void log_query(FILE *f, query_t *r)
       }
     case Q_GPIC:
       {
-        fprintf(f, "gpic(\"%s\")\n", r->gpic.path);
+        fprintf(f, "gpic(\"%s\",%d,%d)\n", r->gpic.path, r->gpic.type, r->gpic.page);
         break;
       }
     case Q_SPIC:
       {
-        fprintf(f, "spic(\"%s\", %d, %d, %.02f, %.02f)\n", 
-                r->spic.path, r->spic.density.w, r->spic.density.h,
-                r->spic.density.wd, r->spic.density.hd);
+        fprintf(f, "spic(\"%s\", %d, %d, %.02f, %.02f, %.02f, %.02f)\n", 
+                r->spic.path, 
+                r->spic.cache.type, r->spic.cache.page,
+                r->spic.cache.bounds[0], r->spic.cache.bounds[1],
+                r->spic.cache.bounds[2], r->spic.cache.bounds[3]);
         break;
       }
     default:
@@ -514,16 +516,20 @@ bool channel_read_query(channel_t *t, query_t *r)
       {
         int pos_path = read_zstr(t, &pos);
         r->gpic.path = &t->buf[pos_path];
+        r->gpic.type = read_u32(t);
+        r->gpic.page = read_u32(t);
         break;
       }
     case Q_SPIC:
       {
         int pos_path = read_zstr(t, &pos);
         r->spic.path = &t->buf[pos_path];
-        r->spic.density.w = read_u32(t);
-        r->spic.density.h = read_u32(t);
-        r->spic.density.wd = read_f64(t);
-        r->spic.density.hd = read_f64(t);
+        r->spic.cache.type = read_u32(t);
+        r->spic.cache.page = read_u32(t);
+        r->spic.cache.bounds[0] = read_f32(t);
+        r->spic.cache.bounds[1] = read_f32(t);
+        r->spic.cache.bounds[2] = read_f32(t);
+        r->spic.cache.bounds[3] = read_f32(t);
         break;
       }
     default:
@@ -606,10 +612,10 @@ void channel_write_answer(channel_t *t, answer_t *a)
       write_bytes(t, t->buf, a->open.size);
       break;
     case A_GPIC:
-      write_u32(t, a->gpic.density.w);
-      write_u32(t, a->gpic.density.h);
-      write_f64(t, a->gpic.density.wd);
-      write_f64(t, a->gpic.density.hd);
+      write_f32(t, a->gpic.bounds[0]);
+      write_f32(t, a->gpic.bounds[1]);
+      write_f32(t, a->gpic.bounds[2]);
+      write_f32(t, a->gpic.bounds[3]);
       break;
     default:
       mabort();

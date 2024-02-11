@@ -168,6 +168,7 @@ fileentry_t *filesystem_lookup_or_create(fz_context *ctx, filesystem_t *fs, cons
   entry->rollback.cursor = -1;
   entry->rollback.invalidated = -1;
   entry->rollback.next = NULL;
+  entry->pic_cache.type = -1;
   cell->entry = entry;
 
   fs->count += 1;

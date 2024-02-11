@@ -897,9 +897,14 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
     case Q_GPIC:
     {
       fileentry_t *e = filesystem_lookup(self->fs, q->gpic.path);
-      if (e && e->saved.level == FILE_READ && e->density.wd > 0.0)
+      if (e && e->saved.level == FILE_READ && 
+          e->pic_cache.type == q->gpic.type &&
+          e->pic_cache.page == q->gpic.page)
       {
-        a.gpic.density = e->density;
+        a.gpic.bounds[0] = e->pic_cache.bounds[0];
+        a.gpic.bounds[1] = e->pic_cache.bounds[1];
+        a.gpic.bounds[2] = e->pic_cache.bounds[2];
+        a.gpic.bounds[3] = e->pic_cache.bounds[3];
         a.tag = A_GPIC;
       }
       else
@@ -911,7 +916,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
     {
       fileentry_t *e = filesystem_lookup(self->fs, q->spic.path);
       if (e && e->saved.level == FILE_READ)
-          e->density = q->spic.density;
+          e->pic_cache = q->spic.cache;
       a.tag = A_DONE;
       channel_write_answer(c, &a);
       break;
@@ -1201,7 +1206,7 @@ static int scan_entry(fz_context *ctx, struct tex_engine *self, fileentry_t *e)
     return -1;
   }
 
-  e->density = (struct pic_density){0,};
+  e->pic_cache.type = -1;
 
   int olen = e->fs_data->len, nlen = buf->len;
   int len = olen < nlen ? olen : nlen;

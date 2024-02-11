@@ -71,9 +71,9 @@ enum accs_flag {
   ACCS_F = 8
 };
 
-struct pic_density {
-  int w, h;
-  double wd, hd;
+struct pic_cache {
+  int type, page;
+  float bounds[4];
 };
 
 typedef struct {
@@ -118,10 +118,11 @@ typedef struct {
     } stat;
     struct {
       char *path;
+      int type, page;
     } gpic;
     struct {
       char *path;
-      struct pic_density density;
+      struct pic_cache cache;
     } spic;
   };
 } query_t;
@@ -184,7 +185,7 @@ typedef struct {
       struct stat_answer stat;
     } stat;
     struct {
-      struct pic_density density;
+      float bounds[4];
     } gpic;
   };
 } answer_t;
