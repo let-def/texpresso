@@ -282,7 +282,7 @@ bundle_serve_hooks_cat(fz_context *ctx, struct bundle_serve_env *env, const char
   if (success)
     result = fz_open_buffer(ctx, buffer);
   else
-    fprintf(stderr, "bundle_serve_hooks_cat: error loading %s: %*s\n",
+    fprintf(stderr, "bundle_serve_hooks_cat: error loading %s: %.*s\n",
             name, (int)size, buffer->data);
   fz_drop_buffer(ctx, buffer);
 
