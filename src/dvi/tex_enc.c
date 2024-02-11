@@ -40,7 +40,7 @@ tex_enc *tex_enc_load(fz_context *ctx, fz_stream *stream)
   fz_try(ctx)
   {
     buffer = fz_read_all(ctx, stream, 4096);
-    fz_trim_buffer(ctx, buffer);
+    fz_resize_buffer(ctx, buffer, buffer->len + 1);
     result = fz_malloc_struct(ctx, tex_enc);
     result->buffer = buffer;
 
@@ -56,7 +56,7 @@ tex_enc *tex_enc_load(fz_context *ctx, fz_stream *stream)
   while (*(ptr) && !is_nl(*(ptr)) && !(pred(*(ptr)))) (ptr)++
 
     char *ptr = (char *)buffer->data;
-    char *ending = ptr + buffer->len;
+    char *ending = ptr + buffer->len - 1;
     int entry = -1;
 
     while (*ptr)
@@ -120,7 +120,7 @@ tex_enc *tex_enc_load(fz_context *ctx, fz_stream *stream)
         }
       }
     }
-    *ending = '\x0';
+    *ending = 0;
 
     if (entry < 256)
       fprintf(stderr, "tex_enc_load: incomplete encoding, %d entries\n", entry);
