@@ -265,6 +265,13 @@ static void synctex_process_line(fz_context *ctx, synctex_t *stx, int offset, co
       break;
     }
 
+    case '/':
+    {
+      if (!(bol = string_parse_int(bol, &index))) break;
+      fprintf(stderr, "[synctex] Closed input: %d\n", index);
+      break;
+    }
+
     default:
       break;
   }
@@ -825,10 +832,10 @@ synctex_backscan_page(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int page,
     }
     // We have a candidate and future candidates cannot improve or we are past
     // the current page, consider it a match.
-    if (stx->candidate_page != -1 &&
-        ((r0.link.tag == tag && r0.link.line > stx->candidate_line) ||
-         (page >= stx->target_current_page)))
-      synctex_clear_search(stx);
+    // if (stx->candidate_page != -1 &&
+    //     ((r0.link.tag == tag && r0.link.line > stx->candidate_line) ||
+    //      (page >= stx->target_current_page)))
+    //   synctex_clear_search(stx);
   }
 }
 
