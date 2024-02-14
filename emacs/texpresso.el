@@ -384,11 +384,26 @@ it, even though the process was still sending its stderr to Emacs."
 
 (defun texpresso (&optional filename)
   "Start a new TeXpresso process using FILENAME as the master TeX file.
-When used interactively, asked for the file.
-If FILENAME is nil, use `(buffer-file-name)'."
-  (interactive "fRoot file: ")
+When called interactively with a prefix argument, ask for the file.
+If FILENAME is nil, use `TeX-master' from AUCTeX or `buffer-file-name'."
+  (interactive "P")
   (unless texpresso-mode
     (texpresso-mode 1))
+
+  (let ((tm-fn (when (boundp 'TeX-master)
+                 (if (stringp TeX-master)
+                     TeX-master
+                   (let ((bfn (buffer-file-name)))
+                     (if bfn (file-name-nondirectory bfn)))))))
+    (if (or (consp filename) (numberp filename)
+            (and (called-interactively-p) (null filename) (null tm-fn)))
+        ;; called interactively with a prefix or default unavailable
+        (setq filename (read-file-name "TeX root file: " nil tm-fn))
+      ;; called interactively without prefix or from lisp, fall back
+      (unless filename (setq filename tm-fn)))
+
+    (unless filename (error "TeXpresso: no valid TeX root file available.")))
+
   (condition-case err
       (texpresso--make-process (or texpresso-binary "texpresso")
                                (expand-file-name filename))
