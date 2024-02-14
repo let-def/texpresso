@@ -287,6 +287,7 @@ static bool read_query(struct tex_engine *self, channel_t *t, query_t *q)
 
 static void terminate_active_process(fz_context *ctx, struct tex_engine *self)
 {
+  channel_flush(self->c);
   kill_process_if_stuck(self);
 
   query_t q;
