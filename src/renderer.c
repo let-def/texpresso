@@ -756,7 +756,11 @@ void txp_renderer_render(fz_context *ctx, txp_renderer *self)
 
   // fprintf(stderr, "[txp_renderer] txp_renderer_render: intersect with screen\n");
 
-  if (!SDL_IntersectFRect(&page_rect, &screen_rect, &view_rect))
+  view_rect.x = fmaxf(page_rect.x, screen_rect.x);
+  view_rect.y = fmaxf(page_rect.y, screen_rect.y);
+  view_rect.w = fminf(page_rect.x + page_rect.w, screen_rect.x + screen_rect.w) - view_rect.x;
+  view_rect.h = fminf(page_rect.y + page_rect.h, screen_rect.y + screen_rect.h) - view_rect.y;
+  if (view_rect.w <= 0 || view_rect.h <= 0)
     return;
 
   // fprintf(stderr, "[txp_renderer] txp_renderer_render: update texture\n");
