@@ -34,7 +34,6 @@
 
 struct channel_s
 {
-  int fd;
   struct {
     char buffer[BUF_SIZE];
     int pos, len;
@@ -108,21 +107,21 @@ static void write_all(int fd, const char *buf, int size)
   }
 }
 
-static void cflush(channel_t *c)
+static void cflush(channel_t *c, int fd)
 {
   int pos = c->output.pos;
   if (pos == 0) return;
-  write_all(c->fd, c->output.buffer, pos);
+  write_all(fd, c->output.buffer, pos);
   c->output.pos = 0;
 }
 
-static void crefill(channel_t *c, int at_least)
+static void crefill(channel_t *c, int fd, int at_least)
 {
   int avail = (c->input.len - c->input.pos);
   memmove(c->input.buffer, c->input.buffer + c->input.pos, avail);
 
   c->input.pos = 0;
-  avail += buffered_read_at_least(c->fd, c->input.buffer + avail, at_least, BUF_SIZE - avail);
+  avail += buffered_read_at_least(fd, c->input.buffer + avail, at_least, BUF_SIZE - avail);
   c->input.len = avail;
 }
 
@@ -131,11 +130,11 @@ static void crefill(channel_t *c, int at_least)
 #define HND_SERVER "TEXPRESSOS01"
 #define HND_CLIENT "TEXPRESSOC01"
 
-bool channel_handshake(channel_t *c)
+bool channel_handshake(channel_t *c, int fd)
 {
   char answer[LEN(HND_CLIENT)];
-  write_all(c->fd, HND_SERVER, LEN(HND_SERVER));
-  read_all(c->fd, answer, LEN(HND_CLIENT));
+  write_all(fd, HND_SERVER, LEN(HND_SERVER));
+  read_all(fd, answer, LEN(HND_CLIENT));
   return (strncmp(HND_CLIENT, answer, LEN(HND_CLIENT)) == 0);
 }
 
@@ -153,8 +152,6 @@ const char *query_to_string(enum query q)
     CASE(Q,CLOS);
     CASE(Q,SIZE);
     CASE(Q,SEEN);
-    CASE(Q,CHLD);
-    CASE(Q,BACK);
     CASE(Q,ACCS);
     CASE(Q,STAT);
     CASE(Q,GPIC);
@@ -182,16 +179,14 @@ const char *ask_to_string(enum ask q)
 {
   switch (q)
   {
-    CASE(C,TERM);
     CASE(C,FLSH);
   }
 }
 
-channel_t *channel_new(int fd)
+channel_t *channel_new(void)
 {
   channel_t *c = calloc(sizeof(channel_t), 1);
   if (!c) mabort();
-  c->fd = fd;
   c->buf = malloc(256);
   if (!c->buf) mabort();
   c->buf_size = 256;
@@ -200,7 +195,6 @@ channel_t *channel_new(int fd)
 
 void channel_free(channel_t *c)
 {
-  close(c->fd);
   free(c->buf);
   free(c);
 }
@@ -217,27 +211,27 @@ static void resize_buf(channel_t *t)
   t->buf_size = new_size;
 }
 
-static int cgetc(channel_t *t)
+static int cgetc(channel_t *t, int fd)
 {
   if (t->input.pos == t->input.len)
-    crefill(t, 1);
+    crefill(t, fd, 1);
   return t->input.buffer[t->input.pos++];
 }
 
-static int read_zstr(channel_t *t, int *pos)
+static int read_zstr(channel_t *t, int fd, int *pos)
 {
   int c, p0 = *pos;
   do {
     if (*pos == t->buf_size)
       resize_buf(t);
-    c = cgetc(t);
+    c = cgetc(t, fd);
     t->buf[*pos] = c;
     *pos += 1;
   } while (c != 0);
   return p0;
 }
 
-static void read_bytes(channel_t *t, int pos, int size)
+static void read_bytes(channel_t *t, int fd, int pos, int size)
 {
   while (t->buf_size < pos + size)
     resize_buf(t);
@@ -255,10 +249,10 @@ static void read_bytes(channel_t *t, int pos, int size)
   pos += isize;
   size -= isize;
   t->input.pos = t->input.len = 0;
-  read_all(t->fd, &t->buf[pos], size);
+  read_all(fd, &t->buf[pos], size);
 }
 
-static void write_bytes(channel_t *t, void *buf, int size)
+static void write_bytes(channel_t *t, int fd, void *buf, int size)
 {
   if (t->output.pos + size <= BUF_SIZE)
   {
@@ -267,10 +261,10 @@ static void write_bytes(channel_t *t, void *buf, int size)
     return;
   }
 
-  cflush(t);
+  cflush(t, fd);
 
   if (size > BUF_SIZE)
-    write_all(t->fd, buf, size);
+    write_all(fd, buf, size);
   else
   {
     memcpy(t->output.buffer, buf, size);
@@ -278,13 +272,13 @@ static void write_bytes(channel_t *t, void *buf, int size)
   }
 }
 
-static bool try_read_u32(channel_t *t, uint32_t *tag)
+static bool try_read_u32(channel_t *t, int fd, uint32_t *tag)
 {
   int avail = t->input.len - t->input.pos;
 
   if (avail == 0)
   {
-    crefill(t, 0);
+    crefill(t, fd, 0);
     avail = t->input.len - t->input.pos;
   }
 
@@ -292,19 +286,19 @@ static bool try_read_u32(channel_t *t, uint32_t *tag)
     return 0;
 
   if (avail < 4)
-    crefill(t, 4 - avail);
+    crefill(t, fd, 4 - avail);
 
   memcpy(tag, t->input.buffer + t->input.pos, 4);
   t->input.pos += 4;
   return 1;
 }
 
-static uint32_t read_u32(channel_t *t)
+static uint32_t read_u32(channel_t *t, int fd)
 {
   int avail = t->input.len - t->input.pos;
 
   if (avail < 4)
-    crefill(t, 4 - avail);
+    crefill(t, fd, 4 - avail);
 
   uint32_t tag;
   memcpy(&tag, t->input.buffer + t->input.pos, 4);
@@ -313,17 +307,17 @@ static uint32_t read_u32(channel_t *t)
   return tag;
 }
 
-static void write_u32(channel_t *t, uint32_t u)
+static void write_u32(channel_t *t, int fd, uint32_t u)
 {
-  write_bytes(t, &u, 4);
+  write_bytes(t, fd, &u, 4);
 }
 
-static float read_f32(channel_t *t)
+static float read_f32(channel_t *t, int fd)
 {
   int avail = t->input.len - t->input.pos;
 
   if (avail < 4)
-    crefill(t, 4 - avail);
+    crefill(t, fd, 4 - avail);
 
   float f;
   memcpy(&f, t->input.buffer + t->input.pos, 4);
@@ -332,9 +326,9 @@ static float read_f32(channel_t *t)
   return f;
 }
 
-static void write_f32(channel_t *t, float f)
+static void write_f32(channel_t *t, int fd, float f)
 {
-  write_bytes(t, &f, 4);
+  write_bytes(t, fd, &f, 4);
 }
 
 void log_query(FILE *f, query_t *r)
@@ -373,16 +367,6 @@ void log_query(FILE *f, query_t *r)
         fprintf(f, "seen(%d, %d)\n", r->seen.fid, r->seen.pos);
         break;
       }
-    case Q_CHLD:
-      {
-        fprintf(f, "child(%d)\n", r->chld.pid);
-        break;
-      }
-    case Q_BACK:
-      {
-        fprintf(f, "back(%d, %d, %d)\n", r->back.pid, r->back.cid, r->back.exitcode);
-        break;
-      }
     case Q_ACCS:
       {
         fprintf(f, "access(\"%s\", %d)\n", r->accs.path, r->accs.flags);
@@ -412,7 +396,7 @@ void log_query(FILE *f, query_t *r)
   }
 }
 
-bool channel_has_pending_query(channel_t *t, int timeout)
+bool channel_has_pending_query(channel_t *t, int fd, int timeout)
 {
   if (t->input.pos != t->input.len) return 1;
 
@@ -420,7 +404,7 @@ bool channel_has_pending_query(channel_t *t, int timeout)
   int n;
   while(1)
   {
-    pfd.fd = t->fd;
+    pfd.fd = fd;
     pfd.events = POLLRDNORM;
     pfd.revents = 0;
     n = poll(&pfd, 1, timeout);
@@ -435,101 +419,89 @@ bool channel_has_pending_query(channel_t *t, int timeout)
   return 1;
 }
 
-bool channel_read_query(channel_t *t, query_t *r)
+bool channel_read_query(channel_t *t, int fd, query_t *r)
 {
   uint32_t tag;
 
-  if (!try_read_u32(t, &tag))
+  if (!try_read_u32(t, fd, &tag))
     return 0;
   r->tag = tag;
-  r->time = read_u32(t);
+  r->time = read_u32(t, fd);
   int pos = 0;
   switch (tag)
   {
     case Q_OPEN:
       {
-        r->open.fid = read_u32(t);
-        int pos_path = read_zstr(t, &pos);
-        int pos_mode = read_zstr(t, &pos);
+        r->open.fid = read_u32(t, fd);
+        int pos_path = read_zstr(t, fd, &pos);
+        int pos_mode = read_zstr(t, fd, &pos);
         r->open.path = &t->buf[pos_path];
         r->open.mode = &t->buf[pos_mode];
         break;
       }
     case Q_READ:
       {
-        r->read.fid = read_u32(t);
-        r->read.pos = read_u32(t);
-        r->read.size = read_u32(t);
+        r->read.fid = read_u32(t, fd);
+        r->read.pos = read_u32(t, fd);
+        r->read.size = read_u32(t, fd);
         break;
       }
     case Q_WRIT:
       {
-        r->writ.fid = read_u32(t);
-        r->writ.pos = read_u32(t);
-        r->writ.size = read_u32(t);
-        read_bytes(t, 0, r->writ.size);
+        r->writ.fid = read_u32(t, fd);
+        r->writ.pos = read_u32(t, fd);
+        r->writ.size = read_u32(t, fd);
+        read_bytes(t, fd, 0, r->writ.size);
         r->writ.buf = t->buf;
         break;
       }
     case Q_CLOS:
       {
-        r->clos.fid = read_u32(t);
+        r->clos.fid = read_u32(t, fd);
         break;
       }
     case Q_SIZE:
       {
-        r->size.fid = read_u32(t);
+        r->size.fid = read_u32(t, fd);
         break;
       }
     case Q_SEEN:
       {
-        r->seen.fid = read_u32(t);
-        r->seen.pos = read_u32(t);
-        break;
-      }
-    case Q_CHLD:
-      {
-        r->chld.pid = read_u32(t);
-        break;
-      }
-    case Q_BACK:
-      {
-        r->back.pid = read_u32(t);
-        r->back.cid = read_u32(t);
-        r->back.exitcode = read_u32(t);
+        r->seen.fid = read_u32(t, fd);
+        r->seen.pos = read_u32(t, fd);
         break;
       }
     case Q_ACCS:
       {
-        int pos_path = read_zstr(t, &pos);
+        int pos_path = read_zstr(t, fd, &pos);
         r->accs.path = &t->buf[pos_path];
-        r->accs.flags = read_u32(t);
+        r->accs.flags = read_u32(t, fd);
         break;
       }
     case Q_STAT:
       {
-        int pos_path = read_zstr(t, &pos);
+        int pos_path = read_zstr(t, fd, &pos);
         r->stat.path = &t->buf[pos_path];
         break;
       }
     case Q_GPIC:
       {
-        int pos_path = read_zstr(t, &pos);
+        int pos_path = read_zstr(t, fd, &pos);
         r->gpic.path = &t->buf[pos_path];
-        r->gpic.type = read_u32(t);
-        r->gpic.page = read_u32(t);
+        r->gpic.type = read_u32(t, fd);
+        r->gpic.page = read_u32(t, fd);
         break;
       }
     case Q_SPIC:
       {
-        int pos_path = read_zstr(t, &pos);
+        int pos_path = read_zstr(t, fd, &pos);
         r->spic.path = &t->buf[pos_path];
-        r->spic.cache.type = read_u32(t);
-        r->spic.cache.page = read_u32(t);
-        r->spic.cache.bounds[0] = read_f32(t);
-        r->spic.cache.bounds[1] = read_f32(t);
-        r->spic.cache.bounds[2] = read_f32(t);
-        r->spic.cache.bounds[3] = read_f32(t);
+        r->spic.cache.type = read_u32(t, fd);
+        r->spic.cache.page = read_u32(t, fd);
+        r->spic.cache.bounds[0] = read_f32(t, fd);
+        r->spic.cache.bounds[1] = read_f32(t, fd);
+        r->spic.cache.bounds[2] = read_f32(t, fd);
+        r->spic.cache.bounds[3] = read_f32(t, fd);
         break;
       }
     default:
@@ -543,24 +515,23 @@ bool channel_read_query(channel_t *t, query_t *r)
   return 1;
 }
 
-void channel_write_ask(channel_t *t, ask_t *a)
+void channel_write_ask(channel_t *t, int fd, ask_t *a)
 {
-  write_u32(t, a->tag);
+  write_u32(t, fd, a->tag);
   switch (a->tag)
   {
-    case C_TERM: write_u32(t, a->term.pid); break;
     case C_FLSH: break;
     default: mabort();
   }
 }
 
-static void write_time(channel_t *t, struct stat_time tm)
+static void write_time(channel_t *t, int fd, struct stat_time tm)
 {
-  write_u32(t, tm.sec);
-  write_u32(t, tm.nsec);
+  write_u32(t, fd, tm.sec);
+  write_u32(t, fd, tm.nsec);
 }
 
-void channel_write_answer(channel_t *t, answer_t *a)
+void channel_write_answer(channel_t *t, int fd, answer_t *a)
 {
   if (LOG)
   {
@@ -569,7 +540,7 @@ void channel_write_answer(channel_t *t, answer_t *a)
     else
       fprintf(stderr, "[info] -> %s\n", answer_to_string(a->tag));
   }
-  write_u32(t, a->tag);
+  write_u32(t, fd, a->tag);
   switch (a->tag)
   {
     case A_DONE:
@@ -579,55 +550,55 @@ void channel_write_answer(channel_t *t, answer_t *a)
     case A_FORK:
       break;
     case A_READ:
-      write_u32(t, a->read.size);
-      write_bytes(t, t->buf, a->read.size);
+      write_u32(t, fd, a->read.size);
+      write_bytes(t, fd, t->buf, a->read.size);
       break;
     case A_ACCS:
-      write_u32(t, a->accs.flag);
+      write_u32(t, fd, a->accs.flag);
       break;
     case A_STAT:
-      write_u32(t, a->stat.flag);
+      write_u32(t, fd, a->stat.flag);
       if (a->accs.flag == ACCS_OK)
       {
-        write_u32(t, a->stat.stat.dev);
-        write_u32(t, a->stat.stat.ino);
-        write_u32(t, a->stat.stat.mode);
-        write_u32(t, a->stat.stat.nlink);
-        write_u32(t, a->stat.stat.uid);
-        write_u32(t, a->stat.stat.gid);
-        write_u32(t, a->stat.stat.rdev);
-        write_u32(t, a->stat.stat.size);
-        write_u32(t, a->stat.stat.blksize);
-        write_u32(t, a->stat.stat.blocks);
-        write_time(t, a->stat.stat.atime);
-        write_time(t, a->stat.stat.ctime);
-        write_time(t, a->stat.stat.mtime);
+        write_u32(t, fd, a->stat.stat.dev);
+        write_u32(t, fd, a->stat.stat.ino);
+        write_u32(t, fd, a->stat.stat.mode);
+        write_u32(t, fd, a->stat.stat.nlink);
+        write_u32(t, fd, a->stat.stat.uid);
+        write_u32(t, fd, a->stat.stat.gid);
+        write_u32(t, fd, a->stat.stat.rdev);
+        write_u32(t, fd, a->stat.stat.size);
+        write_u32(t, fd, a->stat.stat.blksize);
+        write_u32(t, fd, a->stat.stat.blocks);
+        write_time(t, fd, a->stat.stat.atime);
+        write_time(t, fd, a->stat.stat.ctime);
+        write_time(t, fd, a->stat.stat.mtime);
       }
       break;
     case A_SIZE:
-      write_u32(t, a->size.size);
+      write_u32(t, fd, a->size.size);
       break;
     case A_OPEN:
-      write_u32(t, a->open.size);
-      write_bytes(t, t->buf, a->open.size);
+      write_u32(t, fd, a->open.size);
+      write_bytes(t, fd, t->buf, a->open.size);
       break;
     case A_GPIC:
-      write_f32(t, a->gpic.bounds[0]);
-      write_f32(t, a->gpic.bounds[1]);
-      write_f32(t, a->gpic.bounds[2]);
-      write_f32(t, a->gpic.bounds[3]);
+      write_f32(t, fd, a->gpic.bounds[0]);
+      write_f32(t, fd, a->gpic.bounds[1]);
+      write_f32(t, fd, a->gpic.bounds[2]);
+      write_f32(t, fd, a->gpic.bounds[3]);
       break;
     default:
       mabort();
   }
 }
 
-void channel_flush(channel_t *t)
+void channel_flush(channel_t *t, int fd)
 {
-  cflush(t);
+  cflush(t, fd);
 }
 
-void *channel_write_buffer(channel_t *t, size_t n)
+void *channel_get_buffer(channel_t *t, size_t n)
 {
   while (n > t->buf_size)
     resize_buf(t);
