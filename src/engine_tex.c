@@ -71,7 +71,7 @@ struct tex_engine
 
   pid_t pid, rootpid;
   channel_t *c;
-  int channel_fid;
+  int channel_fd;
 
   trace_entry_t *trace;
   int trace_len, trace_cap;
@@ -115,7 +115,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, 
 
 // Launching processes
 
-static pid_t exec_xelatex_generic(char **args, channel_t **c)
+static pid_t exec_xelatex_generic(char **args, int *fd)
 {
   int sockets[2];
   if (socketpair(PF_UNIX, SOCK_STREAM, 0, sockets) != 0)
@@ -161,11 +161,11 @@ static pid_t exec_xelatex_generic(char **args, channel_t **c)
   /* PARENT */
   if (close(sockets[1]) != 0)
     mabort();
-  *c = channel_new(sockets[0]);
+  *fd = sockets[0];
   return pid;
 }
 
-static pid_t exec_xelatex(char *tectonic_path, const char *filename, channel_t **c)
+static pid_t exec_xelatex(char *tectonic_path, const char *filename, int *fd)
 {
   char *args[] = {
     tectonic_path,
@@ -181,7 +181,7 @@ static pid_t exec_xelatex(char *tectonic_path, const char *filename, channel_t *
     NULL
   };
 
-  pid_t pid = exec_xelatex_generic(args, c);
+  pid_t pid = exec_xelatex_generic(args, fd);
   fprintf(stderr, "[process] launched pid %d (using %s)\n", pid, tectonic_path);
   return pid;
 }
@@ -193,10 +193,11 @@ static void prepare_process(struct tex_engine *self)
     if (self->c != NULL) mabort();
     if (self->rootpid != 0) mabort();
 
-    pid_t child = exec_xelatex(self->tectonic_path, self->name, &self->c);
+    pid_t child = exec_xelatex(self->tectonic_path, self->name, &self->channel_fd);
     self->rootpid = self->pid = child;
+    self->c = channel_new();
 
-    if (!channel_handshake(self->c))
+    if (!channel_handshake(self->c, self->channel_fd))
       mabort();
 
     self->status = DOC_RUNNING;
@@ -231,90 +232,16 @@ static void close_process(struct tex_engine *self)
   }
 }
 
-static void kill_process_if_stuck(struct tex_engine *self)
-{
-  // If there has been no query for some time, the process might be stuck on a
-  // looping macro. In this case we should kill the process asap.
-  if (!channel_has_pending_query(self->c, 0))
-  {
-    // FIXME: there is a race condition here, if a query arrives between
-    // checking and before killing.
-
-    // Solution: a future version of the protocol should use custom unix
-    // sockets for each child, it's too risky to multiplex stuff on this
-    // clunky platform.
-
-    // Workaround: we first stop the process, and waits a bit for another
-    // query to arrive.
-    // Waiting gives time for the signal to be delivered and ensures that no
-    // query arrived in between.
-    kill(self->pid, SIGSTOP);
-    if (channel_has_pending_query(self->c, 5))
-    {
-      // If a query arrived, resume process and keep working.
-      kill(self->pid, SIGCONT);
-    }
-    else
-    {
-      // No query arrived, kill!
-      fprintf(stderr, "kill(%d, SIGTERM)\n", self->pid);
-      kill(self->pid, SIGTERM);
-
-      // Under Linux, the process needs to be resumed for the signal to be
-      // delivered
-      kill(self->pid, SIGCONT);
-
-      // If we killed a child process, its parent will resume operations and
-      // write a "BACK" message.
-      // The root process has to be cleaned up explicitly.
-      if (self->pid == self->rootpid)
-        close_process(self);
-    }
-  }
-}
-
 static bool read_query(struct tex_engine *self, channel_t *t, query_t *q)
 {
   if (self->status != DOC_RUNNING) mabort();
-  bool result = channel_read_query(t, q);
+  bool result = channel_read_query(t, self->channel_fd, q);
   if (!result)
   {
     fprintf(stderr, "[process] process %d terminated\n", self->rootpid);
     close_process(self);
   }
   return result;
-}
-
-static void terminate_active_process(fz_context *ctx, struct tex_engine *self)
-{
-  channel_flush(self->c);
-  kill_process_if_stuck(self);
-
-  query_t q;
-
-  while (self->status == DOC_RUNNING && read_query(self, self->c, &q))
-  {
-    switch (q.tag)
-    {
-      case Q_SEEN:
-        /* A pending SEEN from the process being terminated */
-        continue;
-      case Q_BACK:
-        answer_query(ctx, self, self->c, &q);
-        break;
-      default:
-      {
-        fprintf(stderr, "process is back; current query:\n");
-        log_query(stderr, &q);
-        fprintf(stderr, "asking for termination\n");
-        ask_t a;
-        a.tag = C_TERM;
-        a.term.pid = self->pid;
-        channel_write_ask(self->c, &a);
-        channel_flush(self->c);
-      }
-    }
-  }
 }
 
 // Manage process stack
@@ -334,8 +261,8 @@ static void resume_process(struct tex_engine *self)
 {
   answer_t a;
   a.tag = A_DONE;
-  channel_write_answer(self->c, &a);
-  channel_flush(self->c);
+  channel_write_answer(self->c, self->channel_fd, &a);
+  channel_flush(self->c, self->channel_fd);
   self->status = DOC_RUNNING;
 }
 
@@ -512,7 +439,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
           if (q->open.mode[1] == '?' && !fs_path)
           {
             a.tag = A_PASS;
-            channel_write_answer(c, &a);
+            channel_write_answer(c, self->channel_fd, &a);
             break;
           }
         }
@@ -616,8 +543,8 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       int n = strlen(q->open.path);
       a.open.size = n;
       a.tag = A_OPEN;
-      memmove(channel_write_buffer(c, n), q->open.path, n);
-      channel_write_answer(c, &a);
+      memmove(channel_get_buffer(c, n), q->open.path, n);
+      channel_write_answer(c, self->channel_fd, &a);
       break;
     }
     case Q_READ:
@@ -656,8 +583,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
         a.tag = A_FORK;
       else
       {
-        memmove(channel_write_buffer(c, n),
-                data->data + q->read.pos, n);
+        memmove(channel_get_buffer(c, n), data->data + q->read.pos, n);
         a.tag = A_READ;
         a.read.size = n;
       }
@@ -668,7 +594,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
         else
           fprintf(stderr, "read = %d\n", (int)n);
       }
-      channel_write_answer(c, &a);
+      channel_write_answer(c, self->channel_fd, &a);
       break;
     }
     case Q_WRIT:
@@ -734,7 +660,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       else if (self->st.stdout.entry == e)
         editor_append(BUF_OUT, output_data(e), q->writ.pos);
       a.tag = A_DONE;
-      channel_write_answer(c, &a);
+      channel_write_answer(c, self->channel_fd, &a);
       break;
     }
     case Q_CLOS:
@@ -770,7 +696,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       }
 
       a.tag = A_DONE;
-      channel_write_answer(c, &a);
+      channel_write_answer(c, self->channel_fd, &a);
       break;
     }
     case Q_SIZE:
@@ -782,7 +708,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       a.size.size = entry_data(e)->len;
       if (LOG)
         fprintf(stderr, "SIZE = %d (seen = %d)\n", a.size.size, e->saved.seen);
-      channel_write_answer(c, &a);
+      channel_write_answer(c, self->channel_fd, &a);
       break;
     }
     case Q_SEEN:
@@ -853,7 +779,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       }
       a.tag = A_ACCS;
       a.accs.flag = f;
-      channel_write_answer(c, &a);
+      channel_write_answer(c, self->channel_fd, &a);
       break;
     }
     case Q_STAT:
@@ -892,7 +818,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
             "ACCS_PASS"
             );
       a.stat.flag = f;
-      channel_write_answer(c, &a);
+      channel_write_answer(c, self->channel_fd, &a);
       break;
     }
 
@@ -911,7 +837,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       }
       else
         a.tag = A_PASS;
-      channel_write_answer(c, &a);
+      channel_write_answer(c, self->channel_fd, &a);
       break;
     }
     case Q_SPIC:
@@ -920,57 +846,14 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       if (e && e->saved.level == FILE_READ)
           e->pic_cache = q->spic.cache;
       a.tag = A_DONE;
-      channel_write_answer(c, &a);
+      channel_write_answer(c, self->channel_fd, &a);
       break;
     }
 
-    case Q_CHLD:
-    case Q_BACK:
     default:
       mabort();
   }
   return 1;
-}
-
-static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, query_t *q)
-{
-  //if (q->tag == Q_READ || q->tag == Q_OPEN || q->tag == Q_CLOS ||
-  //    q->tag == Q_CHLD || q->tag == Q_BACK)
-  //if (q->tag == Q_OPEN || q->tag == Q_READ || q->tag == Q_CLOS || q->tag == Q_WRIT)
-  //  log_query(stderr, q);
-  switch (q->tag)
-  {
-    case Q_CHLD:
-    {
-      if (self->fence_pos < 0)
-        mabort();
-      fprintf(stderr, "[process] entered child %d\n", q->chld.pid);
-      process_t *process = &self->processes[self->process_pos];
-      process->pid = self->pid;
-      process->snap = log_snapshot(ctx, self->log);
-      process->trace_len = self->trace_len;
-      self->pid = q->chld.pid;
-      self->process_pos += 1;
-      self->fence_pos -= 1;
-      answer_t a;
-      a.tag = A_DONE;
-      channel_write_answer(c, &a);
-      return 1;
-    }
-
-    case Q_BACK:
-    {
-      fprintf(stderr, "[process] process %d back from child %d\n", q->back.pid, q->back.cid);
-      if (self->process_pos <= 0) mabort();
-      if (q->back.cid != self->pid) mabort();
-      if (q->back.pid != self->processes[self->process_pos-1].pid) mabort();
-      self->status = DOC_BACK;
-      return 0;
-    }
-
-    default:
-      return answer_standard_query(ctx, self, c, q);
-  }
 }
 
 static int output_length(fileentry_t *entry)
@@ -1460,5 +1343,6 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   self->rollback.trace = NOT_IN_TRANSACTION;
   self->rollback.offset = -1;
 
+  signal(SIGCHLD, SIG_IGN);
   return (txp_engine*)self;
 }

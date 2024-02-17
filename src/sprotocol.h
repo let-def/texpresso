@@ -56,8 +56,6 @@ enum query {
   Q_CLOS = PACK('C','L','O','S'),
   Q_SIZE = PACK('S','I','Z','E'),
   Q_SEEN = PACK('S','E','E','N'),
-  Q_CHLD = PACK('C','H','L','D'),
-  Q_BACK = PACK('B','A','C','K'),
   Q_ACCS = PACK('A','C','C','S'),
   Q_STAT = PACK('S','T','A','T'),
   Q_GPIC = PACK('G','P','I','C'),
@@ -193,7 +191,6 @@ typedef struct {
 /* "ASK" :P */
 
 enum ask {
-  C_TERM = PACK('T','E','R','M'),
   C_FLSH = PACK('F','L','S','H'),
 };
 
@@ -214,16 +211,16 @@ typedef struct {
 
 /* Functions */
 
-channel_t *channel_new(int fd);
+channel_t *channel_new(void);
 void channel_free(channel_t *c);
 
-bool channel_handshake(channel_t *c);
-bool channel_has_pending_query(channel_t *t, int timeout);
-bool channel_read_query(channel_t *t, query_t *r);
-void channel_write_ask(channel_t *t, ask_t *a);
-void channel_write_answer(channel_t *t, answer_t *a);
-void *channel_write_buffer(channel_t *t, size_t n);
-void channel_flush(channel_t *t);
+bool channel_handshake(channel_t *c, int fd);
+bool channel_has_pending_query(channel_t *t, int fd, int timeout);
+bool channel_read_query(channel_t *t, int fd, query_t *r);
+void channel_write_ask(channel_t *t, int fd, ask_t *a);
+void channel_write_answer(channel_t *t, int fd, answer_t *a);
+void *channel_get_buffer(channel_t *t, size_t n);
+void channel_flush(channel_t *t, int fd);
 
 void log_query(FILE *f, query_t *q);
 #endif /*!SPROTOCOL_H*/
