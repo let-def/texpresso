@@ -24,7 +24,7 @@
 
 #include <unistd.h>
 #include <signal.h>
-#include <mupdf/fitz/document.h>
+#include <mupdf/fitz.h>
 #include "logo.h"
 #include "driver.h"
 
