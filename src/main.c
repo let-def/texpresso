@@ -210,7 +210,12 @@ static fz_point get_scale_factor(SDL_Window *window)
 {
   int ww, wh, pw, ph;
   SDL_GetWindowSize(window, &ww, &wh);
+
+#if SDL_VERSION_ATLEAST(2, 26, 0)
   SDL_GetWindowSizeInPixels(window, &pw, &ph);
+#else
+  SDL_GetRendererOutputSize(SDL_GetRenderer(window), &pw, &ph);
+#endif
 
   return fz_make_point(ww != 0 ? (float)pw / ww : 1,
                        wh != 0 ? (float)ph / wh : 1);
