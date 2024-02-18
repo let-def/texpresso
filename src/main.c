@@ -655,13 +655,14 @@ static void interpret_change(struct persistent_state *ps,
   if ((page_count == ui->page - 2 || page_count == ui->page - 1) &&
       send(get_status, ui->eng) == DOC_RUNNING &&
       delayed_changes.count < BUFFERED_OPS &&
-      cursor + plen + 1 + length + line_based <= BUFFERED_CHARS)
+      cursor + plen + 1 + length <= BUFFERED_CHARS)
   {
     char *op_path = delayed_changes.buffer + cursor;
     memcpy(op_path, path, plen + 1);
     cursor += plen + 1;
     char *op_data = delayed_changes.buffer + cursor;
     memcpy(op_data, data, length);
+    cursor += length;
     delayed_changes.cursor = cursor;
 
     delayed_changes.op[delayed_changes.count] = (struct delayed_op){
