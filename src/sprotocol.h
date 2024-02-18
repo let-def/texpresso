@@ -220,6 +220,7 @@ void channel_write_ask(channel_t *t, int fd, ask_t *a);
 void channel_write_answer(channel_t *t, int fd, answer_t *a);
 void *channel_get_buffer(channel_t *t, size_t n);
 void channel_flush(channel_t *t, int fd);
+void channel_reset(channel_t *t);
 
 void log_query(FILE *f, query_t *q);
 #endif /*!SPROTOCOL_H*/

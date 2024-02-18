@@ -659,6 +659,12 @@ void channel_flush(channel_t *t, int fd)
   cflush(t, fd);
 }
 
+void channel_reset(channel_t *t)
+{
+  t->input.pos = t->input.len = 0;
+  t->output.pos = 0;
+}
+
 void *channel_get_buffer(channel_t *t, size_t n)
 {
   while (n > t->buf_size)
