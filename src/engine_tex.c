@@ -207,9 +207,8 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
 
 // Terminating processes
 
-static void close_process(struct tex_engine *self)
+static void close_process(process_t *p)
 {
-  process_t *p = get_process(self);
   if (p->fd != -1)
   {
     kill(p->pid, SIGTERM);
@@ -220,7 +219,7 @@ static void close_process(struct tex_engine *self)
 
 static void pop_process(fz_context *ctx, struct tex_engine *self)
 {
-  close_process(self);
+  close_process(get_process(self));
   channel_reset(self->c);
   self->process_count -= 1;
   if (self->process_count > 0)
@@ -229,13 +228,47 @@ static void pop_process(fz_context *ctx, struct tex_engine *self)
 
 static bool read_query(struct tex_engine *self, channel_t *t, query_t *q)
 {
-  bool result = channel_read_query(t, get_process(self)->fd, q);
+  process_t *p = get_process(self);
+  bool result = channel_read_query(t, p->fd, q);
   if (!result)
   {
     fprintf(stderr, "[process] terminating process\n");
-    close_process(self);
+    close_process(p);
   }
   return result;
+}
+
+static void decimate_processes(struct tex_engine *self)
+{
+  fprintf(stderr, "before process decimation:\n");
+  for  (int i = 0; i < self->process_count; ++i)
+  {
+    process_t *p = &self->processes[i];
+    fprintf(stderr, "- position %d, time %dms\n", p->trace_len,
+            p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time);
+  }
+
+  int i = 0, bound = (self->process_count - 8) / 2;
+  while (i < bound)
+  {
+    close_process(&self->processes[2*i]);
+    self->processes[i] = self->processes[2*i+1];
+    i++;
+  }
+  for (int j = bound * 2; j < self->process_count; ++j)
+  {
+    self->processes[i] = self->processes[j];
+    i++;
+  }
+  self->process_count = i;
+
+  fprintf(stderr, "after process decimation:\n");
+  for  (int i = 0; i < self->process_count; ++i)
+  {
+    process_t *p = &self->processes[i];
+    fprintf(stderr, "- position %d, time %dms\n", p->trace_len,
+            p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time);
+  }
 }
 
 // Engine class implementation
@@ -310,6 +343,16 @@ static void check_fid(file_id fid)
 static void record_trace(struct tex_engine *self, fileentry_t *entry, int seen, int time)
 {
   process_t *p = get_process(self);
+
+  if (p->trace_len > 0 && self->trace[p->trace_len-1].entry == entry &&
+      (self->process_count <= 1 ||
+      self->processes[self->process_count - 2].trace_len != p->trace_len))
+  {
+    self->trace[p->trace_len-1].seen_after = seen;
+    self->trace[p->trace_len-1].time = time;
+    return;
+  }
+
   if (p->trace_len == self->trace_cap)
   {
     int new_cap = self->trace_cap == 0 ? 8 : self->trace_cap * 2;
@@ -540,6 +583,12 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       {
         a.tag = A_FORK;
         self->fence_pos -= 1;
+      }
+      else if (self->fence_pos == -1 && q->time > 
+          500 + (self->process_count <= 1 ? 0
+                  : self->trace[self->processes[self->process_count - 2].trace_len - 1].time))
+      {
+        a.tag = A_FORK;
       }
       else
       {
@@ -812,10 +861,13 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
 
     case Q_CHLD:
     {
-      self->process_count += 1;
+      if (self->process_count == 32)
+      {
+        decimate_processes(self);
+        p = get_process(self);
+      }
       channel_reset(self->c);
-      if (self->process_count > 32)
-        mabort();
+      self->process_count += 1;
       process_t *p2 = get_process(self);
       p->snap = log_snapshot(ctx, self->log);
       p2->fd = q->chld.fd;
@@ -923,7 +975,6 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
   int process = self->process_count - 1;
   int delta = 50;
   int time = self->trace[trace].time - 10;
-  delta *= 1.25;
 
   fprintf(stderr,
           "[fence] placing fence %d at trace position %d, file %s, offset %d\n",
@@ -931,20 +982,18 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
           self->fences[self->fence_pos].position);
 
   int target_process = self->process_count - 1;
-  while (target_process >= 0 && self->processes[target_process].trace_len >= trace)
+  while (target_process >= 0 && self->processes[target_process].trace_len > trace)
     target_process -= 1;
-
-  while (trace >= 0 && self->fence_pos < 15 && self->processes[process].trace_len > trace && process >= target_process)
+  int target_trace = target_process >= 0 ? self->processes[target_process].trace_len : -1;
+  while (trace > target_trace && self->fence_pos < 15)
   {
-    while (process >= 0 && self->processes[process].trace_len > trace && process >= target_process)
-      process -= 1;
     if (self->trace[trace].time <= time)
     {
       self->fence_pos += 1;
       self->fences[self->fence_pos].entry = self->trace[trace].entry;
       self->fences[self->fence_pos].position = self->trace[trace].seen_before;
       time -= delta;
-      delta *= 1.25;
+      delta *= 2;
       fprintf(stderr, "[fence] placing fence %d at trace position %d, file %s, offset %d\n",
               self->fence_pos, trace,
               self->fences[self->fence_pos].entry->path,
@@ -952,9 +1001,6 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
     }
     trace -= 1;
   }
-
-  if (target_process >= 0 && trace < self->processes[target_process].trace_len)
-    trace = self->processes[target_process].trace_len;
 
   return trace;
 }
@@ -992,13 +1038,13 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
   if (engine_get_status(_self) == DOC_RUNNING)
   {
     query_t q;
-    process_t *p = get_process(self);
-    if (!channel_has_pending_query(self->c, p->fd, 10))
+    int fd = get_process(self)->fd;
+    if (!channel_has_pending_query(self->c, fd, 10))
       return 1;
     if (!read_query(self, self->c, &q))
       return 0;
     int result = answer_query(ctx, self, &q);
-    channel_flush(self->c, p->fd);
+    channel_flush(self->c, fd);
     if (result == -1)
     {
       pop_process(ctx, self);
