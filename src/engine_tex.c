@@ -221,6 +221,7 @@ static void close_process(struct tex_engine *self)
 static void pop_process(fz_context *ctx, struct tex_engine *self)
 {
   close_process(self);
+  channel_reset(self->c);
   self->process_count -= 1;
   if (self->process_count > 0)
     log_rollback(ctx, self->log, get_process(self)->snap);
@@ -812,6 +813,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
     case Q_CHLD:
     {
       self->process_count += 1;
+      channel_reset(self->c);
       if (self->process_count > 32)
         mabort();
       process_t *p2 = get_process(self);
