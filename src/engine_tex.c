@@ -925,25 +925,18 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
   int time = self->trace[trace].time - 10;
   delta *= 1.25;
 
-  int remaining_fences = 0;
-  for (int time1 = time, delta1 = delta; time1 > 0;)
-  {
-    remaining_fences += 1;
-    time1 -= delta1;
-    delta1 *= 1.25;
-  }
-
   fprintf(stderr,
           "[fence] placing fence %d at trace position %d, file %s, offset %d\n",
           self->fence_pos, trace, self->fences[self->fence_pos].entry->path,
           self->fences[self->fence_pos].position);
 
-  if (trace >= 0 && process >= (2 * (1 + remaining_fences)))
-    process = remaining_fences * 2 / 3;
+  int target_process = self->process_count - 1;
+  while (target_process >= 0 && self->processes[target_process].trace_len >= trace)
+    target_process -= 1;
 
-  while (trace >= 0 && self->fence_pos < 15 && self->processes[process].trace_len > trace)
+  while (trace >= 0 && self->fence_pos < 15 && self->processes[process].trace_len > trace && process >= target_process)
   {
-    while (process >= 0 && self->processes[process].trace_len > trace)
+    while (process >= 0 && self->processes[process].trace_len > trace && process >= target_process)
       process -= 1;
     if (self->trace[trace].time <= time)
     {
@@ -952,7 +945,6 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
       self->fences[self->fence_pos].position = self->trace[trace].seen_before;
       time -= delta;
       delta *= 1.25;
-      remaining_fences -= 1;
       fprintf(stderr, "[fence] placing fence %d at trace position %d, file %s, offset %d\n",
               self->fence_pos, trace,
               self->fences[self->fence_pos].entry->path,
@@ -960,6 +952,9 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
     }
     trace -= 1;
   }
+
+  if (target_process >= 0 && trace < self->processes[target_process].trace_len)
+    trace = self->processes[target_process].trace_len;
 
   return trace;
 }
