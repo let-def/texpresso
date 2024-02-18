@@ -174,6 +174,8 @@ bool channel_handshake(channel_t *c, int fd)
   char answer[LEN(HND_CLIENT)];
   write_all(fd, HND_SERVER, LEN(HND_SERVER));
   read_all(c, fd, answer, LEN(HND_CLIENT));
+  c->input.len = c->input.pos = 0;
+  c->output.pos = 0;
   return (strncmp(HND_CLIENT, answer, LEN(HND_CLIENT)) == 0);
 }
 

@@ -982,12 +982,12 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
     if (!read_query(self, self->c, &q))
       return 0;
     int result = answer_query(ctx, self, &q);
+    channel_flush(self->c, p->fd);
     if (result == -1)
     {
-      // need backtrack
+      pop_process(ctx, self);
       return 1;
     }
-    channel_flush(self->c, p->fd);
     return result;
   }
   return 0;
