@@ -841,7 +841,8 @@ static void rollback(fz_context *ctx, struct tex_engine *self, int trace)
 {
   fprintf(
     stderr,
-    "before rollback: %d bytes of output\n",
+    "rolling back to position %d\nbefore rollback: %d bytes of output\n",
+    trace,
     output_length(self->st.document.entry)
   );
   if (self->fence_pos < 0)
@@ -849,6 +850,24 @@ static void rollback(fz_context *ctx, struct tex_engine *self, int trace)
     fprintf(stderr, "No fences, assuming process finished\n");
     if (self->process_count > 0)
       mabort();
+  }
+
+  fprintf(stderr, "Last trace entries:\n");
+  for (int i = get_process(self)->trace_len - 1, j = 10; i > 0 && j > 0; i--, j--)
+  {
+    fprintf(stderr, "- %d->%d, %s, %dms\n",
+            self->trace[i].seen_before,
+            self->trace[i].seen_after,
+            self->trace[i].entry->path,
+            self->trace[i].time);
+  }
+
+  fprintf(stderr, "Snapshots:\n");
+  for  (int i = 0; i < self->process_count; ++i)
+  {
+    process_t *p = &self->processes[i];
+    fprintf(stderr, "- position %d, time %dms\n", p->trace_len,
+            p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time);
   }
 
   while (self->process_count > 0 && get_process(self)->trace_len > trace)
