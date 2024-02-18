@@ -115,7 +115,7 @@ static char *last_index(char *path, char needle)
 TXP_ENGINE_DEF_CLASS;
 #define SELF struct tex_engine *self = (struct tex_engine*)_self
 
-static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, query_t *q);
+static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q);
 
 // Launching processes
 
@@ -191,10 +191,11 @@ static pid_t exec_xelatex(char *tectonic_path, const char *filename, int *fd)
   return pid;
 }
 
-static void prepare_process(struct tex_engine *self)
+static void prepare_process(fz_context *ctx, struct tex_engine *self)
 {
   if (self->process_count == 0)
   {
+    log_rollback(ctx, self->log, self->restart);
     self->process_count = 1;
     process_t *p = get_process(self);
     p->pid = exec_xelatex(self->tectonic_path, self->name, &p->fd);
@@ -217,16 +218,17 @@ static void close_process(struct tex_engine *self)
   }
 }
 
-static void pop_process(struct tex_engine *self)
+static void pop_process(fz_context *ctx, struct tex_engine *self)
 {
   close_process(self);
   self->process_count -= 1;
+  if (self->process_count > 0)
+    log_rollback(ctx, self->log, get_process(self)->snap);
 }
 
 static bool read_query(struct tex_engine *self, channel_t *t, query_t *q)
 {
-  process_t *p = get_process(self);
-  bool result = channel_read_query(t, p->fd, q);
+  bool result = channel_read_query(t, get_process(self)->fd, q);
   if (!result)
   {
     fprintf(stderr, "[process] terminating process\n");
@@ -241,7 +243,7 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
 {
   SELF;
   while (self->process_count > 0)
-    pop_process(self);
+    pop_process(ctx, self);
   incdvi_free(ctx, self->dvi);
   synctex_free(ctx, self->stex);
   fz_free(ctx, self->name);
@@ -366,7 +368,7 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
   return fs_path;
 }
 
-static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, query_t *q)
+static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
 {
   process_t *p = get_process(self);
   answer_t a;
@@ -393,7 +395,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, 
           if (q->open.mode[1] == '?' && !fs_path)
           {
             a.tag = A_PASS;
-            channel_write_answer(c, p->fd, &a);
+            channel_write_answer(self->c, p->fd, &a);
             break;
           }
         }
@@ -497,8 +499,8 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, 
       int n = strlen(q->open.path);
       a.open.size = n;
       a.tag = A_OPEN;
-      memmove(channel_get_buffer(c, n), q->open.path, n);
-      channel_write_answer(c, p->fd, &a);
+      memmove(channel_get_buffer(self->c, n), q->open.path, n);
+      channel_write_answer(self->c, p->fd, &a);
       break;
     }
     case Q_READ:
@@ -534,10 +536,13 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, 
         fork = (n == 0);
       }
       if (fork)
+      {
         a.tag = A_FORK;
+        self->fence_pos -= 1;
+      }
       else
       {
-        memmove(channel_get_buffer(c, n), data->data + q->read.pos, n);
+        memmove(channel_get_buffer(self->c, n), data->data + q->read.pos, n);
         a.tag = A_READ;
         a.read.size = n;
       }
@@ -548,7 +553,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, 
         else
           fprintf(stderr, "read = %d\n", (int)n);
       }
-      channel_write_answer(c, p->fd, &a);
+      channel_write_answer(self->c, p->fd, &a);
       break;
     }
     case Q_WRIT:
@@ -614,7 +619,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, 
       else if (self->st.stdout.entry == e)
         editor_append(BUF_OUT, output_data(e), q->writ.pos);
       a.tag = A_DONE;
-      channel_write_answer(c, p->fd, &a);
+      channel_write_answer(self->c, p->fd, &a);
       break;
     }
     case Q_CLOS:
@@ -650,7 +655,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, 
       }
 
       a.tag = A_DONE;
-      channel_write_answer(c, p->fd, &a);
+      channel_write_answer(self->c, p->fd, &a);
       break;
     }
     case Q_SIZE:
@@ -662,7 +667,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, 
       a.size.size = entry_data(e)->len;
       if (LOG)
         fprintf(stderr, "SIZE = %d (seen = %d)\n", a.size.size, e->saved.seen);
-      channel_write_answer(c, p->fd, &a);
+      channel_write_answer(self->c, p->fd, &a);
       break;
     }
     case Q_SEEN:
@@ -733,7 +738,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, 
       }
       a.tag = A_ACCS;
       a.accs.flag = f;
-      channel_write_answer(c, p->fd, &a);
+      channel_write_answer(self->c, p->fd, &a);
       break;
     }
     case Q_STAT:
@@ -772,7 +777,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, 
             "ACCS_PASS"
             );
       a.stat.flag = f;
-      channel_write_answer(c, p->fd, &a);
+      channel_write_answer(self->c, p->fd, &a);
       break;
     }
 
@@ -791,7 +796,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, 
       }
       else
         a.tag = A_PASS;
-      channel_write_answer(c, p->fd, &a);
+      channel_write_answer(self->c, p->fd, &a);
       break;
     }
     case Q_SPIC:
@@ -800,12 +805,24 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, 
       if (e && e->saved.level == FILE_READ)
           e->pic_cache = q->spic.cache;
       a.tag = A_DONE;
-      channel_write_answer(c, p->fd, &a);
+      channel_write_answer(self->c, p->fd, &a);
       break;
     }
 
-    default:
-      mabort();
+    case Q_CHLD:
+    {
+      self->process_count += 1;
+      if (self->process_count > 32)
+        mabort();
+      process_t *p2 = get_process(self);
+      p->snap = log_snapshot(ctx, self->log);
+      p2->fd = q->chld.fd;
+      p2->pid = q->chld.pid;
+      p2->trace_len = p->trace_len;
+      a.tag = A_DONE;
+      channel_write_answer(self->c, p->fd, &a);
+      break;
+    }
   }
   return 1;
 }
@@ -832,19 +849,11 @@ static void rollback(fz_context *ctx, struct tex_engine *self, int trace)
       mabort();
   }
 
+  while (self->process_count > 0 && get_process(self)->trace_len > trace)
+    pop_process(ctx, self);
+
   if (self->process_count == 0)
-  {
     log_rollback(ctx, self->log, self->restart);
-  }
-  else
-  {
-    while (self->process_count > 0 && get_process(self)->trace_len >= trace)
-      pop_process(self);
-    if (self->process_count == 0)
-      log_rollback(ctx, self->log, self->restart);
-    else
-      log_rollback(ctx, self->log, get_process(self)->snap);
-  }
 
   fprintf(stderr, "after rollback: %d bytes of output\n",
     self->st.document.entry
@@ -962,17 +971,17 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
 {
   SELF;
   if (restart_if_needed)
-    prepare_process(self);
+    prepare_process(ctx, self);
 
   if (engine_get_status(_self) == DOC_RUNNING)
   {
-    process_t *p = get_process(self);
     query_t q;
+    process_t *p = get_process(self);
     if (!channel_has_pending_query(self->c, p->fd, 10))
       return 1;
     if (!read_query(self, self->c, &q))
       return 0;
-    int result = answer_query(ctx, self, self->c, &q);
+    int result = answer_query(ctx, self, &q);
     if (result == -1)
     {
       // need backtrack
