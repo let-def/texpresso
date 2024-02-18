@@ -43,24 +43,62 @@ struct channel_s
     char buffer[BUF_SIZE];
     int pos;
   } output;
+  int passed_fd;
   char *buf;
   int buf_size;
 };
 
-static int buffered_read_at_least(int fd, char *buf, int atleast, int size)
+static ssize_t read_(channel_t *t, int fd, void *data, size_t len)
+{
+  char msg_control[CMSG_SPACE(1 * sizeof(int))] = {0,};
+  int32_t pid;
+  struct iovec iov = { .iov_base = data, .iov_len = len };
+  struct msghdr msg = {
+    .msg_iov = &iov, .msg_iovlen = 1,
+    .msg_controllen = sizeof(msg_control),
+  };
+  msg.msg_control = &msg_control;
+
+  ssize_t recvd;
+  do { recvd = recvmsg(fd, &msg, 0); } 
+  while (recvd == -1 && errno == EINTR);
+
+  if (recvd == -1)
+  {
+    perror("recvmsg");
+    mabort();
+  }
+
+  struct cmsghdr *cm = CMSG_FIRSTHDR(&msg);
+
+  if (cm != NULL)
+  {
+    int *fds0 = (int*)CMSG_DATA(cm);
+    int nfds = (cm->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+
+    if (nfds != 1)
+      abort();
+
+    if (t->passed_fd != -1)
+      abort();
+      //close(t->passed_fd);
+    t->passed_fd = fds0[0];
+  }
+
+  return recvd;
+}
+
+static int buffered_read_at_least(channel_t *t, int fd, char *buf, int atleast, int size)
 {
   int n;
   char *org = buf, *ok = buf + atleast;
   if (size < atleast) abort();
+
   while (1)
   {
-    n = read(fd, buf, size);
+    n = read_(t, fd, buf, size);
     if (n == -1)
-    {
-      if (errno == EINTR)
-        continue;
       pabort();
-    }
 
     buf += n;
     size -= n;
@@ -70,11 +108,11 @@ static int buffered_read_at_least(int fd, char *buf, int atleast, int size)
   return (buf - org);
 }
 
-static void read_all(int fd, char *buf, int size)
+static void read_all(channel_t *t, int fd, char *buf, int size)
 {
   while (size > 0)
   {
-    int n = read(fd, buf, size);
+    int n = read_(t, fd, buf, size);
     if (n == -1)
     {
       if (errno == EINTR)
@@ -122,7 +160,7 @@ static void crefill(channel_t *c, int fd, int at_least)
   memmove(c->input.buffer, c->input.buffer + c->input.pos, avail);
 
   c->input.pos = 0;
-  avail += buffered_read_at_least(fd, c->input.buffer + avail, at_least, BUF_SIZE - avail);
+  avail += buffered_read_at_least(c, fd, c->input.buffer + avail, at_least, BUF_SIZE - avail);
   c->input.len = avail;
 }
 
@@ -135,7 +173,7 @@ bool channel_handshake(channel_t *c, int fd)
 {
   char answer[LEN(HND_CLIENT)];
   write_all(fd, HND_SERVER, LEN(HND_SERVER));
-  read_all(fd, answer, LEN(HND_CLIENT));
+  read_all(c, fd, answer, LEN(HND_CLIENT));
   return (strncmp(HND_CLIENT, answer, LEN(HND_CLIENT)) == 0);
 }
 
@@ -192,6 +230,7 @@ channel_t *channel_new(void)
   c->buf = malloc(256);
   if (!c->buf) mabort();
   c->buf_size = 256;
+  c->passed_fd = -1;
   return c;
 }
 
@@ -251,7 +290,7 @@ static void read_bytes(channel_t *t, int fd, int pos, int size)
   pos += isize;
   size -= isize;
   t->input.pos = t->input.len = 0;
-  read_all(fd, &t->buf[pos], size);
+  read_all(t, fd, &t->buf[pos], size);
 }
 
 static void write_bytes(channel_t *t, int fd, void *buf, int size)
@@ -340,53 +379,53 @@ void log_query(FILE *f, query_t *r)
   {
     case Q_OPEN:
       {
-        fprintf(f, "open(%d, \"%s\", \"%s\")\n", r->open.fid, r->open.path, r->open.mode);
+        fprintf(f, "OPEN(%d, \"%s\", \"%s\")\n", r->open.fid, r->open.path, r->open.mode);
         break;
       }
     case Q_READ:
       {
-        fprintf(f, "read(%d, %d, %d)\n", r->read.fid, r->read.pos, r->read.size);
+        fprintf(f, "READ(%d, %d, %d)\n", r->read.fid, r->read.pos, r->read.size);
         break;
       }
     case Q_WRIT:
       {
-        fprintf(f, "write(%d, %d, %d)\n",
+        fprintf(f, "WRIT(%d, %d, %d)\n",
             r->writ.fid, r->writ.pos, r->writ.size);
         break;
       }
     case Q_CLOS:
       {
-        fprintf(f, "close(%d)\n", r->clos.fid);
+        fprintf(f, "CLOS(%d)\n", r->clos.fid);
         break;
       }
     case Q_SIZE:
       {
-        fprintf(f, "size(%d)\n", r->size.fid);
+        fprintf(f, "SIZE(%d)\n", r->size.fid);
         break;
       }
     case Q_SEEN:
       {
-        fprintf(f, "seen(%d, %d)\n", r->seen.fid, r->seen.pos);
+        fprintf(f, "SEEN(%d, %d)\n", r->seen.fid, r->seen.pos);
         break;
       }
     case Q_ACCS:
       {
-        fprintf(f, "access(\"%s\", %d)\n", r->accs.path, r->accs.flags);
+        fprintf(f, "ACCS(\"%s\", %d)\n", r->accs.path, r->accs.flags);
         break;
       }
     case Q_STAT:
       {
-        fprintf(f, "stat(\"%s\")\n", r->stat.path);
+        fprintf(f, "STAT(\"%s\")\n", r->stat.path);
         break;
       }
     case Q_GPIC:
       {
-        fprintf(f, "gpic(\"%s\",%d,%d)\n", r->gpic.path, r->gpic.type, r->gpic.page);
+        fprintf(f, "GPIC(\"%s\",%d,%d)\n", r->gpic.path, r->gpic.type, r->gpic.page);
         break;
       }
     case Q_SPIC:
       {
-        fprintf(f, "spic(\"%s\", %d, %d, %.02f, %.02f, %.02f, %.02f)\n", 
+        fprintf(f, "SPIC(\"%s\", %d, %d, %.02f, %.02f, %.02f, %.02f)\n", 
                 r->spic.path, 
                 r->spic.cache.type, r->spic.cache.page,
                 r->spic.cache.bounds[0], r->spic.cache.bounds[1],
@@ -395,7 +434,7 @@ void log_query(FILE *f, query_t *r)
       }
     case Q_CHLD:
       {
-        fprintf(f, "chld(pid:%d, fd:%d)\n", r->chld.pid, r->chld.fd);
+        fprintf(f, "CHLD(pid:%d, fd:%d)\n", r->chld.pid, r->chld.fd);
         break;
       }
     default:
@@ -424,52 +463,6 @@ bool channel_has_pending_query(channel_t *t, int fd, int timeout)
   if (n == 0)
     return 0;
   return 1;
-}
-
-static void recv_chld(channel_t *t, int fd, int *ppid, int *pfd)
-{
-  char msg_control[CMSG_SPACE(1 * sizeof(int))] = {0,};
-  int32_t pid;
-  struct iovec iov = { .iov_base = &pid, .iov_len = 4 };
-  struct msghdr msg = {
-    .msg_iov = &iov, .msg_iovlen = 1,
-    .msg_controllen = sizeof(msg_control),
-  };
-  msg.msg_control = &msg_control;
-
-  ssize_t recvd;
-  do { recvd = recvmsg(fd, &msg, 0); } 
-  while (recvd == -1 && errno == EINTR);
-
-  if (recvd == -1 || recvd != 4)
-  {
-    perror("recvmsg");
-    mabort();
-  }
-
-  *ppid = pid;
-
-  struct cmsghdr *cm = CMSG_FIRSTHDR(&msg);
-
-  if (cm == NULL)
-  {
-    fprintf(stderr, "received pid: %d, but not fd\n", pid);
-    fprintf(stderr, "buffered: %d bytes\n", t->input.len - t->input.pos);
-    mabort();
-  }
-
-  int *fds0 = (int*)CMSG_DATA(cm);
-  int nfds = (cm->cmsg_len - CMSG_LEN(0)) / sizeof(int);
-
-  if (nfds != 1 || recvd != 4)
-  {
-    int i;
-    for (i = 0; i < nfds; ++i)
-      close(fds0[i]);
-    mabort();
-  }
-
-  pfd[0] = fds0[0];
 }
 
 bool channel_read_query(channel_t *t, int fd, query_t *r)
@@ -559,15 +552,23 @@ bool channel_read_query(channel_t *t, int fd, query_t *r)
       }
     case Q_CHLD:
       {
-        recv_chld(t, fd, &r->chld.pid, &r->chld.fd);
+        r->chld.pid = read_u32(t, fd);
+        if (t->passed_fd == -1)
+          abort();
+        r->chld.fd = t->passed_fd;
+        t->passed_fd = -1;
         break;
       }
     default:
+    {
+      fprintf(stderr, "unexpected tag: %c%c%c%c\n",
+              tag & 0xFF, (tag >> 8) & 0xFF, (tag >> 16) & 0xFF, (tag >> 24) & 0xFF);
       mabort();
+    }
   }
   if (LOG)
   {
-    fprintf(stderr, "[info] ");
+    fprintf(stderr, "[info] <- ");
     log_query(stderr, r);
   }
   return 1;
