@@ -136,7 +136,7 @@ static void write_all(int fd, const char *buf, int size)
     {
       if (errno == EINTR)
         continue;
-      pabort();
+      perror("sprotocol.c write_all");
     }
     if (n == 0)
       abort();
