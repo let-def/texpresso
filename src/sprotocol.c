@@ -28,6 +28,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <poll.h>
+#include <sys/socket.h>
 
 #define PACK(a,b,c,d) ((d << 24) | (c << 16) | (b << 8) | a)
 #define BUF_SIZE 4096
@@ -156,6 +157,7 @@ const char *query_to_string(enum query q)
     CASE(Q,STAT);
     CASE(Q,GPIC);
     CASE(Q,SPIC);
+    CASE(Q,CHLD);
   }
 }
 
@@ -391,6 +393,11 @@ void log_query(FILE *f, query_t *r)
                 r->spic.cache.bounds[2], r->spic.cache.bounds[3]);
         break;
       }
+    case Q_CHLD:
+      {
+        fprintf(f, "chld(pid:%d, fd:%d)\n", r->chld.pid, r->chld.fd);
+        break;
+      }
     default:
       mabort();
   }
@@ -417,6 +424,52 @@ bool channel_has_pending_query(channel_t *t, int fd, int timeout)
   if (n == 0)
     return 0;
   return 1;
+}
+
+static void recv_chld(channel_t *t, int fd, int *ppid, int *pfd)
+{
+  char msg_control[CMSG_SPACE(1 * sizeof(int))] = {0,};
+  int32_t pid;
+  struct iovec iov = { .iov_base = &pid, .iov_len = 4 };
+  struct msghdr msg = {
+    .msg_iov = &iov, .msg_iovlen = 1,
+    .msg_controllen = sizeof(msg_control),
+  };
+  msg.msg_control = &msg_control;
+
+  ssize_t recvd;
+  do { recvd = recvmsg(fd, &msg, 0); } 
+  while (recvd == -1 && errno == EINTR);
+
+  if (recvd == -1 || recvd != 4)
+  {
+    perror("recvmsg");
+    mabort();
+  }
+
+  *ppid = pid;
+
+  struct cmsghdr *cm = CMSG_FIRSTHDR(&msg);
+
+  if (cm == NULL)
+  {
+    fprintf(stderr, "received pid: %d, but not fd\n", pid);
+    fprintf(stderr, "buffered: %d bytes\n", t->input.len - t->input.pos);
+    mabort();
+  }
+
+  int *fds0 = (int*)CMSG_DATA(cm);
+  int nfds = (cm->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+
+  if (nfds != 1 || recvd != 4)
+  {
+    int i;
+    for (i = 0; i < nfds; ++i)
+      close(fds0[i]);
+    mabort();
+  }
+
+  pfd[0] = fds0[0];
 }
 
 bool channel_read_query(channel_t *t, int fd, query_t *r)
@@ -502,6 +555,11 @@ bool channel_read_query(channel_t *t, int fd, query_t *r)
         r->spic.cache.bounds[1] = read_f32(t, fd);
         r->spic.cache.bounds[2] = read_f32(t, fd);
         r->spic.cache.bounds[3] = read_f32(t, fd);
+        break;
+      }
+    case Q_CHLD:
+      {
+        recv_chld(t, fd, &r->chld.pid, &r->chld.fd);
         break;
       }
     default:

@@ -33,7 +33,7 @@
 typedef struct channel_s channel_t;
 typedef int file_id;
 
-#define LOG 0
+#define LOG 1
 
 #define LEN(txt) (sizeof(txt)-1)
 #define STR(X) #X
@@ -60,6 +60,7 @@ enum query {
   Q_STAT = PACK('S','T','A','T'),
   Q_GPIC = PACK('G','P','I','C'),
   Q_SPIC = PACK('S','P','I','C'),
+  Q_CHLD = PACK('C','H','L','D'),
 };
 
 enum accs_flag {
@@ -102,11 +103,9 @@ typedef struct {
       int pos;
     } seen;
     struct {
+      int fd;
       int pid;
     } chld;
-    struct {
-      int pid, cid, exitcode;
-    } back;
     struct {
       char *path;
       int flags;

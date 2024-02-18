@@ -52,7 +52,6 @@ txp_engine *txp_create_dvi_engine(fz_context *ctx,
 
 typedef enum {
   DOC_RUNNING,
-  DOC_BACK,
   DOC_TERMINATED
 } txp_engine_status;
 

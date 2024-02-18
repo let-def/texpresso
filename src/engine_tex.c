@@ -52,7 +52,7 @@ typedef struct
 
 typedef struct
 {
-  int pid;
+  int pid, fd;
   int trace_len;
   mark_t snap;
 } process_t;
@@ -61,7 +61,6 @@ struct tex_engine
 {
   struct txp_engine_class *_class;
 
-  txp_engine_status status;
   char *name;
   char *tectonic_path;
   char *inclusion_path;
@@ -69,18 +68,16 @@ struct tex_engine
   state_t st;
   log_t *log;
 
-  pid_t pid, rootpid;
   channel_t *c;
-  int channel_fd;
+  process_t processes[32];
+  int process_count;
 
   trace_entry_t *trace;
-  int trace_len, trace_cap;
+  int trace_cap;
   fence_t fences[16];
   int fence_pos;
   mark_t restart;
 
-  process_t processes[32];
-  int process_pos;
   incdvi_t *dvi;
   synctex_t *stex;
 
@@ -91,6 +88,13 @@ struct tex_engine
     int flush;
   } rollback;
 };
+
+static process_t *get_process(struct tex_engine *t)
+{
+  if (t->process_count == 0)
+    mabort();
+  return &t->processes[t->process_count-1];
+}
 
 // Useful routines
 
@@ -125,7 +129,7 @@ static pid_t exec_xelatex_generic(char **args, int *fd)
   }
 
   char buf[30];
-  sprintf(buf, "%d", sockets[1]);
+  snprintf(buf, 30, "%d", sockets[1]);
   setenv("TEXPRESSO_FD", buf, 1);
 
 #ifdef __APPLE__
@@ -133,6 +137,12 @@ static pid_t exec_xelatex_generic(char **args, int *fd)
 #else
   pid_t pid = vfork();
 #endif
+
+  if (pid == -1)
+  {
+    perror("exec_xelatex vfork");
+    mabort();
+  }
 
   if (pid == 0)
   {
@@ -151,11 +161,6 @@ static pid_t exec_xelatex_generic(char **args, int *fd)
     // close(fd);
     execvp(args[0], args);
     _exit(2);
-  }
-  else if (pid == -1)
-  {
-    perror("exec_xelatex vfork");
-    mabort();
   }
 
   /* PARENT */
@@ -188,24 +193,14 @@ static pid_t exec_xelatex(char *tectonic_path, const char *filename, int *fd)
 
 static void prepare_process(struct tex_engine *self)
 {
-  if (self->status == DOC_TERMINATED)
+  if (self->process_count == 0)
   {
-    if (self->c != NULL) mabort();
-    if (self->rootpid != 0) mabort();
-
-    pid_t child = exec_xelatex(self->tectonic_path, self->name, &self->channel_fd);
-    self->rootpid = self->pid = child;
-    self->c = channel_new();
-
-    if (!channel_handshake(self->c, self->channel_fd))
+    self->process_count = 1;
+    process_t *p = get_process(self);
+    p->pid = exec_xelatex(self->tectonic_path, self->name, &p->fd);
+    p->trace_len = 0;
+    if (!channel_handshake(self->c, p->fd))
       mabort();
-
-    self->status = DOC_RUNNING;
-  }
-  else
-  {
-    if (self->c == NULL) mabort();
-    if (self->rootpid == 0) mabort();
   }
 }
 
@@ -213,74 +208,31 @@ static void prepare_process(struct tex_engine *self)
 
 static void close_process(struct tex_engine *self)
 {
-  if (self->status != DOC_TERMINATED)
+  process_t *p = get_process(self);
+  if (p->fd != -1)
   {
-    if (self->c == NULL) mabort();
-    channel_free(self->c);
-    self->c = NULL;
+    kill(p->pid, SIGTERM);
+    close(p->fd);
+    p->fd = -1;
+  }
+}
 
-    if (self->rootpid == 0) mabort();
-    int status = 0;
-    waitpid(self->rootpid, &status, 0);
-    self->rootpid = self->pid = 0;
-    self->status = DOC_TERMINATED;
-  }
-  else
-  {
-    if (self->c != NULL) mabort();
-    if (self->rootpid != 0) mabort();
-  }
+static void pop_process(struct tex_engine *self)
+{
+  close_process(self);
+  self->process_count -= 1;
 }
 
 static bool read_query(struct tex_engine *self, channel_t *t, query_t *q)
 {
-  if (self->status != DOC_RUNNING) mabort();
-  bool result = channel_read_query(t, self->channel_fd, q);
+  process_t *p = get_process(self);
+  bool result = channel_read_query(t, p->fd, q);
   if (!result)
   {
-    fprintf(stderr, "[process] process %d terminated\n", self->rootpid);
+    fprintf(stderr, "[process] terminating process\n");
     close_process(self);
   }
   return result;
-}
-
-// Manage process stack
-
-static void pop_process(fz_context *ctx, struct tex_engine *self)
-{
-  if (self->process_pos <= 0) mabort();
-  self->process_pos -= 1;
-  process_t *process = &self->processes[self->process_pos];
-  self->pid = process->pid;
-  self->trace_len = process->trace_len;
-  self->status = DOC_RUNNING;
-  log_rollback(ctx, self->log, process->snap);
-}
-
-static void resume_process(struct tex_engine *self)
-{
-  answer_t a;
-  a.tag = A_DONE;
-  channel_write_answer(self->c, self->channel_fd, &a);
-  channel_flush(self->c, self->channel_fd);
-  self->status = DOC_RUNNING;
-}
-
-static void resume_after_termination(fz_context *ctx, struct tex_engine *self)
-{
-  if (self->status == DOC_BACK)
-  {
-    pop_process(ctx, self);
-    resume_process(self);
-  }
-  else if (self->status == DOC_TERMINATED)
-  {
-    log_rollback(ctx, self->log, self->restart);
-    self->trace_len = 0;
-    prepare_process(self);
-  }
-  else
-    mabort();
 }
 
 // Engine class implementation
@@ -288,7 +240,8 @@ static void resume_after_termination(fz_context *ctx, struct tex_engine *self)
 static void engine_destroy(txp_engine *_self, fz_context *ctx)
 {
   SELF;
-  close_process(self);
+  while (self->process_count > 0)
+    pop_process(self);
   incdvi_free(ctx, self->dvi);
   synctex_free(ctx, self->stex);
   fz_free(ctx, self->name);
@@ -353,7 +306,8 @@ static void check_fid(file_id fid)
 
 static void record_trace(struct tex_engine *self, fileentry_t *entry, int seen, int time)
 {
-  if (self->trace_len == self->trace_cap)
+  process_t *p = get_process(self);
+  if (p->trace_len == self->trace_cap)
   {
     int new_cap = self->trace_cap == 0 ? 8 : self->trace_cap * 2;
     fprintf(stderr, "[info] trace has %d entries, growing to %d\n", self->trace_cap, new_cap);
@@ -368,13 +322,13 @@ static void record_trace(struct tex_engine *self, fileentry_t *entry, int seen, 
     self->trace_cap = new_cap;
   }
 
-  self->trace[self->trace_len] = (trace_entry_t){
+  self->trace[p->trace_len] = (trace_entry_t){
     .entry = entry,
     .seen_before = entry->saved.seen,
     .seen_after = seen,
     .time = time,
   };
-  self->trace_len += 1;
+  p->trace_len += 1;
 }
 
 static fz_buffer *entry_data(fileentry_t *e)
@@ -412,9 +366,9 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
   return fs_path;
 }
 
-// TODO CLEANUP
-static int answer_standard_query(fz_context *ctx, struct tex_engine *self, channel_t *c, query_t *q)
+static int answer_query(fz_context *ctx, struct tex_engine *self, channel_t *c, query_t *q)
 {
+  process_t *p = get_process(self);
   answer_t a;
   switch (q->tag)
   {
@@ -439,7 +393,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
           if (q->open.mode[1] == '?' && !fs_path)
           {
             a.tag = A_PASS;
-            channel_write_answer(c, self->channel_fd, &a);
+            channel_write_answer(c, p->fd, &a);
             break;
           }
         }
@@ -544,7 +498,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       a.open.size = n;
       a.tag = A_OPEN;
       memmove(channel_get_buffer(c, n), q->open.path, n);
-      channel_write_answer(c, self->channel_fd, &a);
+      channel_write_answer(c, p->fd, &a);
       break;
     }
     case Q_READ:
@@ -594,7 +548,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
         else
           fprintf(stderr, "read = %d\n", (int)n);
       }
-      channel_write_answer(c, self->channel_fd, &a);
+      channel_write_answer(c, p->fd, &a);
       break;
     }
     case Q_WRIT:
@@ -660,7 +614,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       else if (self->st.stdout.entry == e)
         editor_append(BUF_OUT, output_data(e), q->writ.pos);
       a.tag = A_DONE;
-      channel_write_answer(c, self->channel_fd, &a);
+      channel_write_answer(c, p->fd, &a);
       break;
     }
     case Q_CLOS:
@@ -696,7 +650,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       }
 
       a.tag = A_DONE;
-      channel_write_answer(c, self->channel_fd, &a);
+      channel_write_answer(c, p->fd, &a);
       break;
     }
     case Q_SIZE:
@@ -708,7 +662,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       a.size.size = entry_data(e)->len;
       if (LOG)
         fprintf(stderr, "SIZE = %d (seen = %d)\n", a.size.size, e->saved.seen);
-      channel_write_answer(c, self->channel_fd, &a);
+      channel_write_answer(c, p->fd, &a);
       break;
     }
     case Q_SEEN:
@@ -779,7 +733,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       }
       a.tag = A_ACCS;
       a.accs.flag = f;
-      channel_write_answer(c, self->channel_fd, &a);
+      channel_write_answer(c, p->fd, &a);
       break;
     }
     case Q_STAT:
@@ -818,7 +772,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
             "ACCS_PASS"
             );
       a.stat.flag = f;
-      channel_write_answer(c, self->channel_fd, &a);
+      channel_write_answer(c, p->fd, &a);
       break;
     }
 
@@ -837,7 +791,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       }
       else
         a.tag = A_PASS;
-      channel_write_answer(c, self->channel_fd, &a);
+      channel_write_answer(c, p->fd, &a);
       break;
     }
     case Q_SPIC:
@@ -846,7 +800,7 @@ static int answer_standard_query(fz_context *ctx, struct tex_engine *self, chann
       if (e && e->saved.level == FILE_READ)
           e->pic_cache = q->spic.cache;
       a.tag = A_DONE;
-      channel_write_answer(c, self->channel_fd, &a);
+      channel_write_answer(c, p->fd, &a);
       break;
     }
 
@@ -874,46 +828,24 @@ static void rollback(fz_context *ctx, struct tex_engine *self, int trace)
   if (self->fence_pos < 0)
   {
     fprintf(stderr, "No fences, assuming process finished\n");
-    if (self->status != DOC_TERMINATED)
+    if (self->process_count > 0)
       mabort();
   }
 
-  if (self->status == DOC_RUNNING)
-    terminate_active_process(ctx, self);
-
-  if (self->status == DOC_BACK)
-  {
-    pop_process(ctx, self);
-    while (self->process_pos > 0 && self->trace_len >= trace)
-    {
-      answer_t a;
-      a.tag = A_PASS;
-      channel_write_answer(self->c, &a);
-      channel_flush(self->c);
-
-      query_t q;
-      if (!read_query(self, self->c, &q)) mabort();
-      if (q.tag != Q_BACK) mabort();
-      if (answer_query(ctx, self, self->c, &q) > 0) mabort();
-      pop_process(ctx, self);
-    }
-    if (self->trace_len > trace)
-    {
-      fprintf(stderr, "closing: process trace: %d, resumption trace: %d\n", self->trace_len, trace);
-      close_process(self);
-      log_rollback(ctx, self->log, self->restart);
-      self->trace_len = 0;
-    }
-    else
-      resume_process(self);
-  }
-  else if (self->status == DOC_TERMINATED)
+  if (self->process_count == 0)
   {
     log_rollback(ctx, self->log, self->restart);
-    self->trace_len = 0;
   }
   else
-    mabort();
+  {
+    while (self->process_count > 0 && get_process(self)->trace_len >= trace)
+      pop_process(self);
+    if (self->process_count == 0)
+      log_rollback(ctx, self->log, self->restart);
+    else
+      log_rollback(ctx, self->log, get_process(self)->snap);
+  }
+
   fprintf(stderr, "after rollback: %d bytes of output\n",
     self->st.document.entry
     ? (int)self->st.document.entry->saved.data->len
@@ -946,7 +878,7 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
   if (trace < 0)
     return trace;
 
-  if (self->trace_len <= trace)
+  if (get_process(self)->trace_len <= trace)
     mabort();
 
   self->fence_pos = 0;
@@ -958,7 +890,7 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
   self->fences[0].entry = self->trace[trace].entry;
   self->fences[0].position = offset;
 
-  int process = self->process_pos;
+  int process = self->process_count - 1;
   int delta = 50;
   int time = self->trace[trace].time - 10;
   delta *= 1.25;
@@ -1031,24 +963,22 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
   SELF;
   if (restart_if_needed)
     prepare_process(self);
-  if (self->status == DOC_RUNNING)
+
+  if (engine_get_status(_self) == DOC_RUNNING)
   {
+    process_t *p = get_process(self);
     query_t q;
-    if (!channel_has_pending_query(self->c, 10))
+    if (!channel_has_pending_query(self->c, p->fd, 10))
       return 1;
-    int result = read_query(self, self->c, &q);
-    if (result)
+    if (!read_query(self, self->c, &q))
+      return 0;
+    int result = answer_query(ctx, self, self->c, &q);
+    if (result == -1)
     {
-      result = answer_query(ctx, self, self->c, &q);
-      if (result == -1)
-      {
-        // need backtrack
-        terminate_active_process(ctx, self);
-        resume_after_termination(ctx, self);
-        return 1;
-      }
-      channel_flush(self->c);
+      // need backtrack
+      return 1;
     }
+    channel_flush(self->c, p->fd);
     return result;
   }
   return 0;
@@ -1131,7 +1061,7 @@ static void rollback_begin(fz_context *ctx, struct tex_engine *self)
   if (self->rollback.changed != NULL)
     abort();
 
-  self->rollback.trace = self->trace_len - 1;
+  self->rollback.trace = get_process(self)->trace_len - 1;
   self->rollback.flush = 0;
 }
 
@@ -1148,25 +1078,27 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
   // Check if nothing changed
   if (self->rollback.changed == NULL)
   {
+    process_t *p = get_process(self);
     // Invariant: if nothing changed, the entire trace should be valid
-    if (trace != self->trace_len - 1)
+    if (trace != p->trace_len - 1)
       abort();
     self->rollback.trace = NOT_IN_TRANSACTION;
     self->rollback.offset = -1;
 
-    if (need_flush && self->status == DOC_RUNNING)
+    if (need_flush)
     {
       ask_t a;
       a.tag = C_FLSH;
-      channel_write_ask(self->c, &a);
-      channel_flush(self->c);
+      channel_write_ask(self->c, p->fd, &a);
+      channel_flush(self->c, p->fd);
     }
 
     return false;
   }
 
   fprintf(stderr, "[change] rewinded trace from %d to %d entries\n",
-          self->trace_len, trace + 1);
+          get_process(self)->trace_len, trace + 1);
+
   if (0)
     for (int i = trace; i >= 0; i--)
     {
@@ -1289,7 +1221,9 @@ static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
 static txp_engine_status engine_get_status(txp_engine *_self)
 {
   SELF;
-  return self->status;
+  if (self->process_count == 0)
+    return DOC_TERMINATED;
+  return get_process(self)->fd > -1 ? DOC_RUNNING : DOC_TERMINATED;
 }
 
 static float engine_scale_factor(txp_engine *_self)
@@ -1327,14 +1261,12 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   state_init(&self->st);
   self->fs = filesystem_new(ctx);
   self->log = log_new(ctx);
-  self->pid = 0;
-  self->rootpid = 0;
   self->trace = NULL;
-  self->trace_len = 0;
   self->trace_cap = 0;
   self->fence_pos = -1;
   self->restart = log_snapshot(ctx, self->log);
-  self->status = DOC_TERMINATED;
+  self->c = channel_new();
+  self->process_count = 0;
 
   self->dvi = incdvi_new(ctx, tectonic_path, tex_dir);
 
