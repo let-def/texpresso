@@ -416,6 +416,40 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
   return fs_path;
 }
 
+static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
+{
+  // Fences are pending: don't snapshot now
+  if (self->fence_pos != -1)
+    return 0;
+
+  int process = self->process_count - 1;
+
+  int last_time;
+
+  if (process > 0) 
+  {
+    // There is already some snapshot, stop if no new event has been traced
+    if (self->processes[process].trace_len == self->processes[process-1].trace_len)
+      return 0;
+      
+    last_time = self->trace[self->processes[process-1].trace_len - 1].time;
+
+    // TODO Alternative
+    // Checking that some new event happened avoid entering an infinite fork
+    // loop when last event is old, but nothing new is registered, therefore
+    // causing an infinite loop.
+    // A better solution might be to record a fork as an event.
+    // This could be done for instance in READ, when trying to fork again.
+  }
+  else
+  {
+    // No snapshot, measure time since root process started
+    last_time = 0;
+  }
+
+  return time > 500 + last_time;
+}
+
 static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
 {
   process_t *p = get_process(self);
@@ -588,9 +622,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
         a.tag = A_FORK;
         self->fence_pos -= 1;
       }
-      else if (self->fence_pos == -1 && q->time > 
-          500 + (self->process_count <= 1 ? 0
-                  : self->trace[self->processes[self->process_count - 2].trace_len - 1].time))
+      else if (need_snapshot(ctx, self, q->time))
       {
         a.tag = A_FORK;
       }
