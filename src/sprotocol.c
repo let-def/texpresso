@@ -65,6 +65,8 @@ static ssize_t read_(channel_t *t, int fd, void *data, size_t len)
 
   if (recvd == -1)
   {
+    if (errno == ECONNRESET)
+      return 0;
     perror("recvmsg");
     mabort();
   }
@@ -99,6 +101,8 @@ static int buffered_read_at_least(channel_t *t, int fd, char *buf, int atleast, 
     n = read_(t, fd, buf, size);
     if (n == -1)
       pabort();
+    else if (n == 0)
+      return 0;
 
     buf += n;
     size -= n;
@@ -108,7 +112,7 @@ static int buffered_read_at_least(channel_t *t, int fd, char *buf, int atleast, 
   return (buf - org);
 }
 
-static void read_all(channel_t *t, int fd, char *buf, int size)
+static bool read_all(channel_t *t, int fd, char *buf, int size)
 {
   while (size > 0)
   {
@@ -120,11 +124,12 @@ static void read_all(channel_t *t, int fd, char *buf, int size)
       pabort();
     }
     if (n == 0)
-      abort();
+      return 0;
 
     buf += n;
     size -= n;
   }
+  return 1;
 }
 
 static void write_all(int fd, const char *buf, int size)
@@ -154,14 +159,18 @@ static void cflush(channel_t *c, int fd)
   c->output.pos = 0;
 }
 
-static void crefill(channel_t *c, int fd, int at_least)
+static bool crefill(channel_t *c, int fd, int at_least)
 {
   int avail = (c->input.len - c->input.pos);
   memmove(c->input.buffer, c->input.buffer + c->input.pos, avail);
 
   c->input.pos = 0;
-  avail += buffered_read_at_least(c, fd, c->input.buffer + avail, at_least, BUF_SIZE - avail);
+  int avail_ = buffered_read_at_least(c, fd, c->input.buffer + avail, at_least, BUF_SIZE - avail);
+  if (avail_ == 0)
+    return 0;
+  avail += avail_;
   c->input.len = avail;
+  return 1;
 }
 
 /* HANDSHAKE */
@@ -173,7 +182,8 @@ bool channel_handshake(channel_t *c, int fd)
 {
   char answer[LEN(HND_CLIENT)];
   write_all(fd, HND_SERVER, LEN(HND_SERVER));
-  read_all(c, fd, answer, LEN(HND_CLIENT));
+  if (!read_all(c, fd, answer, LEN(HND_CLIENT)))
+    return 0;
   c->input.len = c->input.pos = 0;
   c->output.pos = 0;
   return (strncmp(HND_CLIENT, answer, LEN(HND_CLIENT)) == 0);
@@ -257,7 +267,8 @@ static void resize_buf(channel_t *t)
 static int cgetc(channel_t *t, int fd)
 {
   if (t->input.pos == t->input.len)
-    crefill(t, fd, 1);
+    if (!crefill(t, fd, 1))
+      return 0;
   return t->input.buffer[t->input.pos++];
 }
 
@@ -274,7 +285,7 @@ static int read_zstr(channel_t *t, int fd, int *pos)
   return p0;
 }
 
-static void read_bytes(channel_t *t, int fd, int pos, int size)
+static bool read_bytes(channel_t *t, int fd, int pos, int size)
 {
   while (t->buf_size < pos + size)
     resize_buf(t);
@@ -284,7 +295,7 @@ static void read_bytes(channel_t *t, int fd, int pos, int size)
   {
     memcpy(&t->buf[pos], t->input.buffer + ipos, size);
     t->input.pos += size;
-    return;
+    return 1;
   }
 
   int isize = ilen - ipos;
@@ -292,7 +303,7 @@ static void read_bytes(channel_t *t, int fd, int pos, int size)
   pos += isize;
   size -= isize;
   t->input.pos = t->input.len = 0;
-  read_all(t, fd, &t->buf[pos], size);
+  return read_all(t, fd, &t->buf[pos], size);
 }
 
 static void write_bytes(channel_t *t, int fd, void *buf, int size)
@@ -321,7 +332,8 @@ static bool try_read_u32(channel_t *t, int fd, uint32_t *tag)
 
   if (avail == 0)
   {
-    crefill(t, fd, 0);
+    if (!crefill(t, fd, 0))
+      return 0;
     avail = t->input.len - t->input.pos;
   }
 
@@ -329,7 +341,8 @@ static bool try_read_u32(channel_t *t, int fd, uint32_t *tag)
     return 0;
 
   if (avail < 4)
-    crefill(t, fd, 4 - avail);
+    if (!crefill(t, fd, 4 - avail))
+      return 0;
 
   memcpy(tag, t->input.buffer + t->input.pos, 4);
   t->input.pos += 4;
@@ -341,7 +354,8 @@ static uint32_t read_u32(channel_t *t, int fd)
   int avail = t->input.len - t->input.pos;
 
   if (avail < 4)
-    crefill(t, fd, 4 - avail);
+    if (!crefill(t, fd, 4 - avail))
+      return 0;
 
   uint32_t tag;
   memcpy(&tag, t->input.buffer + t->input.pos, 4);
@@ -360,7 +374,8 @@ static float read_f32(channel_t *t, int fd)
   int avail = t->input.len - t->input.pos;
 
   if (avail < 4)
-    crefill(t, fd, 4 - avail);
+    if (!crefill(t, fd, 4 - avail))
+      return 0;
 
   float f;
   memcpy(&f, t->input.buffer + t->input.pos, 4);
@@ -499,7 +514,8 @@ bool channel_read_query(channel_t *t, int fd, query_t *r)
         r->writ.fid = read_u32(t, fd);
         r->writ.pos = read_u32(t, fd);
         r->writ.size = read_u32(t, fd);
-        read_bytes(t, fd, 0, r->writ.size);
+        if (!read_bytes(t, fd, 0, r->writ.size))
+          return 0;
         r->writ.buf = t->buf;
         break;
       }
