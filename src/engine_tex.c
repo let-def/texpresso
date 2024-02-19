@@ -244,8 +244,10 @@ static void decimate_processes(struct tex_engine *self)
   for  (int i = 0; i < self->process_count; ++i)
   {
     process_t *p = &self->processes[i];
-    fprintf(stderr, "- position %d, time %dms\n", p->trace_len,
-            p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time);
+    fprintf(stderr, "- position %d, time %dms [pid %d]\n",
+            p->trace_len,
+            p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time,
+            p->pid);
   }
 
   int i = 0, bound = (self->process_count - 8) / 2;
@@ -266,8 +268,10 @@ static void decimate_processes(struct tex_engine *self)
   for  (int i = 0; i < self->process_count; ++i)
   {
     process_t *p = &self->processes[i];
-    fprintf(stderr, "- position %d, time %dms\n", p->trace_len,
-            p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time);
+    fprintf(stderr, "- position %d, time %dms [pid %d]\n",
+            p->trace_len,
+            p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time,
+            p->pid);
   }
 }
 
