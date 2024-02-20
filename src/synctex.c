@@ -841,7 +841,7 @@ synctex_backscan_page(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int page,
 
 int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int *page, int *x, int *y)
 {
-  if (!stx->target_path[0])
+  if (!stx || !stx->target_path[0])
     return 0;
 
   if (!synctex_find_input(ctx, stx, buf))
