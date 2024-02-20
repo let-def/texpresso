@@ -1093,7 +1093,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
 
 static int scan_entry(fz_context *ctx, struct tex_engine *self, fileentry_t *e)
 {
-  if (e->saved.level != FILE_READ || e->edit_data)
+  if (e->saved.level < FILE_READ || e->fs_stat.st_ino == 0 || e->edit_data)
     return -1;
 
   struct stat st;
