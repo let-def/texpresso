@@ -231,7 +231,8 @@ returned."
     (when (and (not buffer) force)
       (setq buffer (get-buffer-create fullname))
       (with-current-buffer buffer
-        (setq buffer-read-only t)
+        (setq buffer-read-only t
+              buffer-undo-list t)
         (when (eq name 'out)
           (compilation-mode)
           (texpresso--display-output buffer))))
@@ -348,6 +349,7 @@ remainder."
   (when (process-live-p texpresso--process)
     (kill-process texpresso--process))
   (let ((texpresso-stderr (get-buffer-create "*texpresso-stderr*")))
+    (with-current-buffer texpresso-stderr (setq buffer-undo-list t))
     (dolist (buffer (list (texpresso--get-output-buffer 'out 'force)
                           (texpresso--get-output-buffer 'log)))
       (let ((inhibit-read-only t))
