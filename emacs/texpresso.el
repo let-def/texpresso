@@ -391,10 +391,7 @@ If FILENAME is nil, use `TeX-master' from AUCTeX or `buffer-file-name'."
     (texpresso-mode 1))
 
   (let ((tm-fn (when (boundp 'TeX-master)
-                 (if (stringp TeX-master)
-                     TeX-master
-                   (let ((bfn (buffer-file-name)))
-                     (if bfn (file-name-nondirectory bfn)))))))
+                 (TeX-master-file t))))
     (if (or (consp filename) (numberp filename)
             (and (called-interactively-p) (null filename) (null tm-fn)))
         ;; called interactively with a prefix or default unavailable
