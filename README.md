@@ -1,6 +1,6 @@
 # TeXpresso: live rendering and error reporting for LaTeX
 
-_Note: this is an experimental tool._
+_Note: TeXpresso is still in an early development phase._
 
 **Important: this repository uses submodules. Clone using `git clone --recurse-submodules`.**
 
@@ -14,7 +14,7 @@ It is made of two components:
 - this repository which implements the `texpresso` binary
 - the [tectonic/](tectonic/) git-submodule which implements a patched version of [Tectonic](https://github.com/tectonic-typesetting/tectonic) that produces the `texpresso-tonic` helper binary
 
-At the moment, it requires a functional installation of [Tectonic](https://github.com/tectonic-typesetting/tectonic). Install it first and make it compile simple TeX file to generate initial LaTeX format. For instance, run "tectonic test/simple.tex" at the root of this repository.
+TeXpressos uses the same data store as [Tectonic](https://github.com/tectonic-typesetting/tectonic) and both should cohabit sanely. (Data are stored in `tectonic -X show user-cache-dir` / `texpresso-tonic -X show user-cache-dir`).
 
 # Building
 
@@ -32,7 +32,7 @@ Under macOS, `brew` is also used to find local files.
 If it succeeds, `make texpresso` produces `build/texpresso`.
 
 Other targets are:
-- `config` to generate configuration in `Makefile.config` (automatically called during building)
+- `config` to generate configuration in `Makefile.config` (automatically called during first build)
 - `dev` produces `build/texpresso-dev` which supports hot-reloading to ease development
 - `debug` produces debugging tools in `build/`
 - `clean` to remove intermediate build files
@@ -80,6 +80,10 @@ To work correctly, `texpresso` needs `texpresso-tonic` helper; when copying them
 `M-x texpresso-display-output` will open a small window listing TeX warnings and errors on the current page.
 Use `M-x texpresso-next-page` and `M-x texpresso-previous-page` to move between pages without leaving Emacs.
 
+# Neovim mode
+
+A Neovim mode is provided in separate repository [texpresso.vim](https://github.com/let-def/texpresso.vim). It is not yet compatible with vanilla Vim, patches are welcome :bow:.​
+
 # Navigating TeXpresso window
 
 Keyboard controls: 
@@ -88,8 +92,8 @@ Keyboard controls:
 - `c` ("crop"): crop borders
 - `q` ("quit"): quit
 - `i` ("invert"): dark mode
-- `I` : use Emacs theme
-- `t` ("top"): toggle stay-on-top (above Emacs window)
+- `I` : toggle theming
+- `t` ("top"): toggle stay-on-top (keeping TeXpresso above the editor window)
 - `b` ("border"): toggle window borders
 - `F5`: start fullscreen presentation (leave with `ESC`)
 
