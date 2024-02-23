@@ -500,12 +500,20 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
           if (!fs_path)
             fs_path = lookup_path(self, q->open.path, fs_path_buffer, NULL);
           if (!fs_path)
-            mabort("path: %s\nmode:%s\n", q->open.path, q->open.mode);
-          if (fs_path == q->open.path)
-            fs_path = e->path;
-          e->fs_data = fz_read_file(ctx, fs_path);
-          e->saved.level = FILE_READ;
-          stat(fs_path, &e->fs_stat);
+          {
+            if (!e->edit_data)
+              mabort("path: %s\nmode:%s\n", q->open.path, q->open.mode);
+            e->saved.level = FILE_READ;
+            memset(&e->fs_stat, 0, sizeof(e->fs_stat));
+          }
+          else
+          {
+            if (fs_path == q->open.path)
+              fs_path = e->path;
+            e->fs_data = fz_read_file(ctx, fs_path);
+            e->saved.level = FILE_READ;
+            stat(fs_path, &e->fs_stat);
+          }
         }
       }
       else
@@ -925,7 +933,7 @@ static int output_length(fileentry_t *entry)
     return entry->saved.data->len;
 }
 
-static void rollback(fz_context *ctx, struct tex_engine *self, int trace)
+static void rollback_processes(fz_context *ctx, struct tex_engine *self, int trace)
 {
   fprintf(
     stderr,
@@ -936,12 +944,14 @@ static void rollback(fz_context *ctx, struct tex_engine *self, int trace)
   if (self->fence_pos < 0)
   {
     fprintf(stderr, "No fences, assuming process finished\n");
-    if (self->process_count > 0)
-      mabort();
+    // if (self->process_count > 0)
+    //   mabort();
   }
 
   fprintf(stderr, "Last trace entries:\n");
-  for (int i = get_process(self)->trace_len - 1, j = 10; i > 0 && j > 0; i--, j--)
+  for (int i = get_process(self)->trace_len - 1, j = 10;
+       i > 0 && j > 0;
+       i--, j--)
   {
     fprintf(stderr, "- %d->%d, %s, %dms\n",
             self->trace[i].seen_before,
@@ -1261,9 +1271,9 @@ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileen
     if (te->entry->rollback.cursor == -1)
     {
       if (te->entry->rollback.next != NULL)
-        abort();
+        mabort();
       if (te->entry->saved.seen != te->seen_after)
-        abort();
+        mabort();
       te->entry->rollback.next = self->rollback.changed;
       self->rollback.changed = te->entry;
     }
@@ -1320,7 +1330,7 @@ static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
 
   if (trace >= 0)
     trace = compute_fences(ctx, self, trace, offset);
-  rollback(ctx, self, trace);
+  rollback_processes(ctx, self, trace);
 
   return true;
 }
