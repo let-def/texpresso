@@ -205,8 +205,6 @@ const char *query_to_string(enum query q)
     CASE(Q,CLOS);
     CASE(Q,SIZE);
     CASE(Q,SEEN);
-    CASE(Q,ACCS);
-    CASE(Q,STAT);
     CASE(Q,GPIC);
     CASE(Q,SPIC);
     CASE(Q,CHLD);
@@ -222,8 +220,6 @@ const char *answer_to_string(enum answer q)
     CASE(A,SIZE);
     CASE(A,READ);
     CASE(A,FORK);
-    CASE(A,ACCS);
-    CASE(A,STAT);
     CASE(A,OPEN);
     CASE(A,GPIC);
   }
@@ -427,16 +423,6 @@ void log_query(FILE *f, query_t *r)
         fprintf(f, "SEEN(%d, %d)\n", r->seen.fid, r->seen.pos);
         break;
       }
-    case Q_ACCS:
-      {
-        fprintf(f, "ACCS(\"%s\", %d)\n", r->accs.path, r->accs.flags);
-        break;
-      }
-    case Q_STAT:
-      {
-        fprintf(f, "STAT(\"%s\")\n", r->stat.path);
-        break;
-      }
     case Q_GPIC:
       {
         fprintf(f, "GPIC(\"%s\",%d,%d)\n", r->gpic.path, r->gpic.type, r->gpic.page);
@@ -537,19 +523,6 @@ bool channel_read_query(channel_t *t, int fd, query_t *r)
         r->seen.pos = read_u32(t, fd);
         break;
       }
-    case Q_ACCS:
-      {
-        int pos_path = read_zstr(t, fd, &pos);
-        r->accs.path = &t->buf[pos_path];
-        r->accs.flags = read_u32(t, fd);
-        break;
-      }
-    case Q_STAT:
-      {
-        int pos_path = read_zstr(t, fd, &pos);
-        r->stat.path = &t->buf[pos_path];
-        break;
-      }
     case Q_GPIC:
       {
         int pos_path = read_zstr(t, fd, &pos);
@@ -631,28 +604,6 @@ void channel_write_answer(channel_t *t, int fd, answer_t *a)
     case A_READ:
       write_u32(t, fd, a->read.size);
       write_bytes(t, fd, t->buf, a->read.size);
-      break;
-    case A_ACCS:
-      write_u32(t, fd, a->accs.flag);
-      break;
-    case A_STAT:
-      write_u32(t, fd, a->stat.flag);
-      if (a->accs.flag == ACCS_OK)
-      {
-        write_u32(t, fd, a->stat.stat.dev);
-        write_u32(t, fd, a->stat.stat.ino);
-        write_u32(t, fd, a->stat.stat.mode);
-        write_u32(t, fd, a->stat.stat.nlink);
-        write_u32(t, fd, a->stat.stat.uid);
-        write_u32(t, fd, a->stat.stat.gid);
-        write_u32(t, fd, a->stat.stat.rdev);
-        write_u32(t, fd, a->stat.stat.size);
-        write_u32(t, fd, a->stat.stat.blksize);
-        write_u32(t, fd, a->stat.stat.blocks);
-        write_time(t, fd, a->stat.stat.atime);
-        write_time(t, fd, a->stat.stat.ctime);
-        write_time(t, fd, a->stat.stat.mtime);
-      }
       break;
     case A_SIZE:
       write_u32(t, fd, a->size.size);

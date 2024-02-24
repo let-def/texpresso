@@ -33,8 +33,6 @@
 
 enum accesslevel {
   FILE_NONE,
-  FILE_ACCESS,
-  FILE_STAT,
   FILE_READ,
   FILE_WRITE
 };
@@ -58,7 +56,7 @@ typedef struct fileentry_s {
   struct {
     fz_buffer *data;
     enum accesslevel level;
-    int access_flags, access_result, seen;
+    int seen;
     mark_t snap;
   } saved;
 
