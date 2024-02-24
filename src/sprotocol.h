@@ -56,18 +56,9 @@ enum query {
   Q_CLOS = PACK('C','L','O','S'),
   Q_SIZE = PACK('S','I','Z','E'),
   Q_SEEN = PACK('S','E','E','N'),
-  Q_ACCS = PACK('A','C','C','S'),
-  Q_STAT = PACK('S','T','A','T'),
   Q_GPIC = PACK('G','P','I','C'),
   Q_SPIC = PACK('S','P','I','C'),
   Q_CHLD = PACK('C','H','L','D'),
-};
-
-enum accs_flag {
-  ACCS_R = 1,
-  ACCS_W = 2,
-  ACCS_X = 4,
-  ACCS_F = 8
 };
 
 struct pic_cache {
@@ -108,13 +99,6 @@ typedef struct {
     } chld;
     struct {
       char *path;
-      int flags;
-    } accs;
-    struct {
-      char *path;
-    } stat;
-    struct {
-      char *path;
       int type, page;
     } gpic;
     struct {
@@ -132,8 +116,6 @@ enum answer {
   A_SIZE = PACK('S','I','Z','E'),
   A_READ = PACK('R','E','A','D'),
   A_FORK = PACK('F','O','R','K'),
-  A_ACCS = PACK('A','C','C','S'),
-  A_STAT = PACK('S','T','A','T'),
   A_OPEN = PACK('O','P','E','N'),
   A_GPIC = PACK('G','P','I','C'),
 };
@@ -174,13 +156,6 @@ typedef struct {
     struct {
       int size;
     } open;
-    struct {
-      enum accs_answer flag;
-    } accs;
-    struct {
-      enum accs_answer flag;
-      struct stat_answer stat;
-    } stat;
     struct {
       float bounds[4];
     } gpic;

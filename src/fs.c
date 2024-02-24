@@ -164,6 +164,7 @@ fileentry_t *filesystem_lookup_or_create(fz_context *ctx, filesystem_t *fs, cons
 
   entry = fz_malloc_struct(ctx, fileentry_t);
   entry->path = fz_strdup(ctx, path);
+  entry->saved.level = FILE_NONE;
   entry->saved.seen = 0;
   entry->rollback.cursor = -1;
   entry->rollback.invalidated = -1;
