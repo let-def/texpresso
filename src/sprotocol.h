@@ -43,7 +43,7 @@ typedef int file_id;
   do { perror(__FILE__ ":" SSTR(__LINE__)); myabort(); } while(0)
 
 #define mabort(...) \
-  do { fprintf(stderr, "Aborting from " __FILE__ ":" SSTR(__LINE__) "\n" __VA_ARGS__); abort(); } while(0)
+  do { fprintf(stderr, "Aborting from " __FILE__ ":" SSTR(__LINE__) "\n" __VA_ARGS__); print_backtrace(); abort(); } while(0)
 
 #define PACK(a,b,c,d) ((d << 24) | (c << 16) | (b << 8) | a)
 
