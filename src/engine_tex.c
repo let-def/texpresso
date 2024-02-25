@@ -941,6 +941,15 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int tra
   editor_truncate(BUF_LOG, output_data(self->st.log.entry));
 }
 
+static bool possible_fence(trace_entry_t *te)
+{
+  if (te->seen == INT_MAX)
+    return 0;
+  if (te->entry->saved.level > FILE_READ)
+    return 0;
+  return 1;
+}
+
 static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, int offset)
 {
   self->fence_pos = -1;
@@ -977,8 +986,7 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
   int target_trace = target_process >= 0 ? self->processes[target_process].trace_len : -1;
   while (trace > target_trace && self->fence_pos < 15)
   {
-    if (self->trace[trace].time <= time &&
-        self->trace[trace].seen != INT_MAX)
+    if (self->trace[trace].time <= time && possible_fence(&self->trace[trace]))
     {
       self->fence_pos += 1;
       self->fences[self->fence_pos].entry = self->trace[trace].entry;
