@@ -29,7 +29,7 @@
 
 #define BT_BUF_SIZE 100
 
-static void print_backtrace(void)
+void print_backtrace(void)
 {
   int nptrs;
   void *buffer[BT_BUF_SIZE];

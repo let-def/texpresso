@@ -47,7 +47,7 @@ typedef struct
 typedef struct
 {
   fileentry_t *entry;
-  int seen_before, seen_after, time;
+  int previous, seen, time;
 } trace_entry_t;
 
 typedef struct
@@ -82,12 +82,23 @@ struct tex_engine
   synctex_t *stex;
 
   struct {
-    fileentry_t *changed;
-    int trace;
-    int offset; // Last valid offset in trace entry
-    int flush;
+    int trace, offset;
   } rollback;
 };
+
+// Backtrackable process state & VFS representation 
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
 
 static process_t *get_process(struct tex_engine *t)
 {
@@ -115,7 +126,7 @@ static char *last_index(char *path, char needle)
 TXP_ENGINE_DEF_CLASS;
 #define SELF struct tex_engine *self = (struct tex_engine*)_self
 
-static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q);
+static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q);
 
 // Launching processes
 
@@ -151,14 +162,6 @@ static pid_t exec_xelatex_generic(char **args, int *fd)
       mabort();
     // Redirect stdout to stderr
     dup2(STDERR_FILENO, STDOUT_FILENO);
-    /* Redirect stdout and stderr to null, output will be handled by intexcept */
-    // int fd;
-    // fd = open("/dev/null", O_WRONLY);
-    // dup2(fd, STDOUT_FILENO);
-    // close(fd);
-    // fd = open("/dev/null", O_WRONLY);
-    // dup2(fd, STDERR_FILENO);
-    // close(fd);
     execvp(args[0], args);
     _exit(2);
   }
@@ -344,7 +347,7 @@ static void check_fid(file_id fid)
     mabort();
 }
 
-static void record_trace(struct tex_engine *self, fileentry_t *entry, int seen, int time)
+static void record_seen(struct tex_engine *self, fileentry_t *entry, int seen, int time)
 {
   process_t *p = get_process(self);
 
@@ -352,8 +355,8 @@ static void record_trace(struct tex_engine *self, fileentry_t *entry, int seen, 
       (self->process_count <= 1 ||
       self->processes[self->process_count - 2].trace_len != p->trace_len))
   {
-    self->trace[p->trace_len-1].seen_after = seen;
     self->trace[p->trace_len-1].time = time;
+    entry->seen = seen;
     return;
   }
 
@@ -374,10 +377,12 @@ static void record_trace(struct tex_engine *self, fileentry_t *entry, int seen, 
 
   self->trace[p->trace_len] = (trace_entry_t){
     .entry = entry,
-    .seen_before = entry->saved.seen,
-    .seen_after = seen,
+    .seen = entry->seen,
+    .previous = entry->trace,
     .time = time,
   };
+  entry->trace = p->trace_len;
+  entry->seen = seen;
   p->trace_len += 1;
 }
 
@@ -450,7 +455,7 @@ static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
   return time > 500 + last_time;
 }
 
-static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
 {
   process_t *p = get_process(self);
   answer_t a;
@@ -473,9 +478,11 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
         if (!e || !entry_data(e))
         {
           fs_path = lookup_path(self, q->open.path, fs_path_buffer, NULL);
-
-          if (q->open.mode[1] == '?' && !fs_path)
+          if (!fs_path)
           {
+            // e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
+            // log_fileentry(ctx, self->log, e);
+            // record_seen(self, e, 0, q->time);
             a.tag = A_PASS;
             channel_write_answer(self->c, p->fd, &a);
             break;
@@ -489,6 +496,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       log_filecell(ctx, self->log, cell);
       log_fileentry(ctx, self->log, e);
       cell->entry = e;
+      record_seen(self, e, 0, q->time);
 
       enum accesslevel level =
         (q->open.mode[0] == 'w') ? FILE_WRITE : FILE_READ;
@@ -600,11 +608,11 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       if (e == NULL) mabort();
       if (e->saved.level < FILE_READ) mabort();
       fz_buffer *data = entry_data(e);
-      if (e->rollback.invalidated > -1)
+      if (e->debug_rollback_invalidation > -1)
       {
-        if (q->read.pos > e->rollback.invalidated)
+        if (q->read.pos > e->debug_rollback_invalidation)
           mabort();
-        e->rollback.invalidated = -1;
+        e->debug_rollback_invalidation = -1;
       }
       if (q->read.pos > data->len)
       {
@@ -760,7 +768,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       a.tag = A_SIZE;
       a.size.size = entry_data(e)->len;
       if (LOG)
-        fprintf(stderr, "SIZE = %d (seen = %d)\n", a.size.size, e->saved.seen);
+        fprintf(stderr, "SIZE = %d (seen = %d)\n", a.size.size, e->seen);
       channel_write_answer(self->c, p->fd, &a);
       break;
     }
@@ -770,7 +778,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       fileentry_t *e = self->st.table[q->seen.fid].entry;
       if (e == NULL) mabort();
       if (LOG)
-        fprintf(stderr, "[info] file %s seen: %d -> %d\n", e->path, e->saved.seen, q->seen.pos);
+        fprintf(stderr, "[info] file %s seen: %d -> %d\n", e->path, e->seen, q->seen.pos);
       if (e->saved.level < FILE_READ) mabort();
       if (self->fence_pos >= 0 &&
           self->fences[self->fence_pos].entry == e &&
@@ -780,14 +788,15 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
                 "Seen position invalid wrt fence:\n"
                 "  file %s, seen: %d -> %d\n"
                 "  fence #%d position: %d\n",
-                e->path, e->saved.seen, q->seen.pos,
+                e->path, e->seen, q->seen.pos,
                 self->fence_pos,
                 self->fences[self->fence_pos].position);
         mabort();
       }
-      if (e->rollback.invalidated != -1 && q->seen.pos >= e->rollback.invalidated)
-          return -1;
-      if (q->seen.pos <= e->saved.seen)
+      if (e->debug_rollback_invalidation != -1 &&
+          q->seen.pos >= e->debug_rollback_invalidation)
+        mabort();
+      if (q->seen.pos <= e->seen)
       {
         // if the same file is reopened, the "new seen position" can be lower
         // if (q->seen.pos < e->seen)
@@ -796,8 +805,7 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       else
       {
         log_fileentry(ctx, self->log, e);
-        record_trace(self, e, q->seen.pos, q->time);
-        e->saved.seen = q->seen.pos;
+        record_seen(self, e, q->seen.pos, q->time);
       }
       break;
     }
@@ -848,7 +856,6 @@ static int answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       break;
     }
   }
-  return 1;
 }
 
 static int output_length(fileentry_t *entry)
@@ -857,6 +864,12 @@ static int output_length(fileentry_t *entry)
     return 0;
   else
     return entry->saved.data->len;
+}
+
+static void revert_trace(trace_entry_t *te)
+{
+  te->entry->seen = te->seen;
+  te->entry->trace = te->previous;
 }
 
 static void rollback_processes(fz_context *ctx, struct tex_engine *self, int trace)
@@ -875,15 +888,13 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int tra
   }
 
   fprintf(stderr, "Last trace entries:\n");
-  for (int i = get_process(self)->trace_len - 1, j = 10;
-       i > 0 && j > 0;
-       i--, j--)
+  for (int i = get_process(self)->trace_len - 1, j = fz_maxi(i - 10, 0); i > j; i--)
   {
-    fprintf(stderr, "- %d->%d, %s, %dms\n",
-            self->trace[i].seen_before,
-            self->trace[i].seen_after,
+    fprintf(stderr, "- %s@%d, %dms [previous=%d]\n",
             self->trace[i].entry->path,
-            self->trace[i].time);
+            self->trace[i].seen,
+            self->trace[i].time,
+            self->trace[i].previous);
   }
 
   fprintf(stderr, "Snapshots:\n");
@@ -900,11 +911,18 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int tra
   if (self->process_count == 0)
     log_rollback(ctx, self->log, self->restart);
 
+  for (int trace_len = 
+         self->process_count == 0 ? 0 : get_process(self)->trace_len;
+       trace >= trace_len;
+       trace--)
+    revert_trace(&self->trace[trace]);
+
   fprintf(stderr, "after rollback: %d bytes of output\n",
     self->st.document.entry
     ? (int)self->st.document.entry->saved.data->len
     : 0
   );
+
   if (self->st.document.entry)
   {
     fprintf(stderr, "[info] before rollback: %d pages\n", incdvi_page_count(self->dvi));
@@ -938,8 +956,8 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
   self->fence_pos = 0;
 
   offset = (offset - 64) & ~(64 - 1);
-  if (offset < self->trace[trace].seen_before)
-    offset = self->trace[trace].seen_before;
+  if (offset < self->trace[trace].seen)
+    offset = self->trace[trace].seen;
 
   self->fences[0].entry = self->trace[trace].entry;
   self->fences[0].position = offset;
@@ -963,7 +981,7 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
     {
       self->fence_pos += 1;
       self->fences[self->fence_pos].entry = self->trace[trace].entry;
-      self->fences[self->fence_pos].position = self->trace[trace].seen_before;
+      self->fences[self->fence_pos].position = self->trace[trace].seen;
       time -= delta;
       delta *= 2;
       fprintf(stderr, "[fence] placing fence %d at trace position %d, file %s, offset %d\n",
@@ -1011,19 +1029,21 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
   {
     query_t q;
     int fd = get_process(self)->fd;
+    if (fd == -1)
+      return 0;
     if (!channel_has_pending_query(self->c, fd, 10))
       return 1;
     if (!read_query(self, self->c, &q))
-      return 0;
-    int result = answer_query(ctx, self, &q);
-    channel_flush(self->c, fd);
-    if (result == -1)
     {
-      pop_process(ctx, self);
-      return 1;
+      close(fd);
+      get_process(self)->fd = -1;
+      return 0;
     }
-    return result;
+    answer_query(ctx, self, &q);
+    channel_flush(self->c, fd);
+    return 1;
   }
+
   return 0;
 }
 
@@ -1100,55 +1120,36 @@ static void rollback_begin(fz_context *ctx, struct tex_engine *self)
   if (self->rollback.trace != NOT_IN_TRANSACTION)
     abort();
 
-  // Invariant: nothing changed outside of a transaction
-  if (self->rollback.changed != NULL)
-    abort();
-
   self->rollback.trace = get_process(self)->trace_len - 1;
-  self->rollback.flush = 0;
+  self->rollback.offset = -1;
 }
 
 static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, int *offsetp)
 {
   int trace = self->rollback.trace;
-  int need_flush = self->rollback.flush;
-  self->rollback.flush = 0;
 
   // Assert we are in a transaction
   if (trace == NOT_IN_TRANSACTION)
     abort();
 
-  // Check if nothing changed
-  if (self->rollback.changed == NULL)
-  {
-    process_t *p = get_process(self);
-    // Invariant: if nothing changed, the entire trace should be valid
-    if (trace != p->trace_len - 1)
-      abort();
-    self->rollback.trace = NOT_IN_TRANSACTION;
-    self->rollback.offset = -1;
+  process_t *p = get_process(self);
 
-    if (need_flush)
+  // Check if nothing changed
+  if (trace == p->trace_len - 1)
+  {
+    self->rollback.trace = NOT_IN_TRANSACTION;
+    if (p->fd > -1)
     {
       ask_t a;
       a.tag = C_FLSH;
       channel_write_ask(self->c, p->fd, &a);
       channel_flush(self->c, p->fd);
     }
-
     return false;
   }
 
   fprintf(stderr, "[change] rewinded trace from %d to %d entries\n",
           get_process(self)->trace_len, trace + 1);
-
-  if (0)
-    for (int i = trace; i >= 0; i--)
-    {
-      fprintf(stderr, "%s %s @ %d -> %d, %d ms\n", i == trace ? "=>" : "  ",
-              self->trace[i].entry->path, self->trace[i].seen_before,
-              self->trace[i].seen_after, self->trace[i].time);
-    }
 
   if (tracep)
     *tracep = trace;
@@ -1157,18 +1158,6 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
 
   self->rollback.trace = NOT_IN_TRANSACTION;
   self->rollback.offset = -1;
-
-  fileentry_t *changed = self->rollback.changed;
-  self->rollback.changed = NULL;
-
-  while (changed)
-  {
-    fileentry_t *next = changed->rollback.next;
-    changed->rollback.next = NULL;
-    changed->rollback.cursor = -1;
-    changed->rollback.invalidated = -1;
-    changed = next;
-  }
 
   return true;
 }
@@ -1179,42 +1168,16 @@ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileen
 
   // Assert we are in a transaction
   if (trace == NOT_IN_TRANSACTION)
-    abort();
+    mabort();
 
-  if ((e->rollback.cursor == -1) ? (e->saved.seen < changed)
-                                 : (e->rollback.cursor < changed))
+  while (e->seen >= changed && trace > e->trace)
   {
-    self->rollback.flush = 1;
-    if (e->rollback.invalidated == -1 ||
-        e->rollback.invalidated > changed)
-      e->rollback.invalidated = changed;
-    return;
+    revert_trace(&self->trace[trace]);
+    trace--;
   }
 
-  while (trace >= 0)
-  {
-    trace_entry_t *te = &self->trace[trace];
-    if (te->entry->rollback.cursor == -1)
-    {
-      if (te->entry->rollback.next != NULL)
-        mabort();
-      if (te->entry->saved.seen != te->seen_after)
-        mabort();
-      te->entry->rollback.next = self->rollback.changed;
-      self->rollback.changed = te->entry;
-    }
-    te->entry->rollback.cursor = te->seen_before;
-    if (te->entry == e && te->seen_before <= changed)
-    {
-      self->rollback.trace = trace;
-      self->rollback.offset = changed;
-      return;
-    }
-    trace -= 1;
-  }
-
-  self->rollback.trace = -1;
-  self->rollback.offset = -1;
+  self->rollback.trace = trace;
+  self->rollback.offset = changed;
 }
 
 static void engine_notify_file_changes(txp_engine *_self,
@@ -1243,7 +1206,6 @@ static void engine_detect_changes(txp_engine *_self, fz_context *ctx)
     if (changed > -1)
       rollback_add_change(ctx, self, e, changed);
   }
-
 }
 
 static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
@@ -1314,9 +1276,7 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   self->dvi = incdvi_new(ctx, tectonic_path, tex_dir);
 
   self->stex = synctex_new(ctx);
-  self->rollback.changed = NULL;
   self->rollback.trace = NOT_IN_TRANSACTION;
-  self->rollback.offset = -1;
 
   signal(SIGCHLD, SIG_IGN);
   return (txp_engine*)self;

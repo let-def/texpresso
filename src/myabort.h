@@ -30,6 +30,8 @@
 __attribute__ ((noreturn))
 void myabort_(const char *file, int line, const char *msg, uint32_t answer);
 
+void print_backtrace(void);
+
 #define myabort() myabort_(__FILE__, __LINE__, "", 42424242)
 #define myabort2(msg) myabort_(__FILE__, __LINE__, msg, 42424242)
 #define myabort3(msg, code) myabort_(__FILE__, __LINE__, msg, code)
