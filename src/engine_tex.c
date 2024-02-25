@@ -977,7 +977,8 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
   int target_trace = target_process >= 0 ? self->processes[target_process].trace_len : -1;
   while (trace > target_trace && self->fence_pos < 15)
   {
-    if (self->trace[trace].time <= time)
+    if (self->trace[trace].time <= time &&
+        self->trace[trace].seen != INT_MAX)
     {
       self->fence_pos += 1;
       self->fences[self->fence_pos].entry = self->trace[trace].entry;
