@@ -634,7 +634,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
         if (n < 0)
           abort();
         n = self->fences[self->fence_pos].position - q->read.pos;
-        fork = (n == 0);
+        // Weird that n can be negative at this point?!
+        fork = (n <= 0);
       }
       if (fork)
       {
