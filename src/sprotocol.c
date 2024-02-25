@@ -142,6 +142,7 @@ static void write_all(int fd, const char *buf, int size)
       if (errno == EINTR)
         continue;
       perror("sprotocol.c write_all");
+      print_backtrace();
       if (errno == ECONNRESET)
         return;
     }
