@@ -82,7 +82,7 @@ struct tex_engine
   synctex_t *stex;
 
   struct {
-    int trace_len, offset;
+    int trace_len, offset, flush;
   } rollback;
 };
 
@@ -1124,11 +1124,13 @@ static void rollback_begin(fz_context *ctx, struct tex_engine *self)
 
   self->rollback.trace_len = get_process(self)->trace_len;
   self->rollback.offset = -1;
+  self->rollback.flush = 0;
 }
 
 static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, int *offsetp)
 {
   int trace_len = self->rollback.trace_len;
+  self->rollback.trace_len = NOT_IN_TRANSACTION;
 
   // Assert we are in a transaction
   if (trace_len == NOT_IN_TRANSACTION)
@@ -1139,16 +1141,14 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
   // Check if nothing changed
   if (trace_len == p->trace_len)
   {
-    self->rollback.trace_len = NOT_IN_TRANSACTION;
-    if (p->fd > -1 && self->rollback.offset > -1)
+    if (p->fd > -1 && self->rollback.flush)
     {
       ask_t a;
       a.tag = C_FLSH;
       channel_write_ask(self->c, p->fd, &a);
       channel_flush(self->c, p->fd);
     }
-    if (self->rollback.offset == -1)
-      return false;
+    return false;
   }
 
   fprintf(stderr, "[change] rewinded trace from %d to %d entries\n",
@@ -1158,9 +1158,6 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
     *tracep = trace_len;
   if (offsetp)
     *offsetp = self->rollback.offset;
-
-  self->rollback.trace_len = NOT_IN_TRANSACTION;
-  self->rollback.offset = -1;
 
   return true;
 }
@@ -1173,8 +1170,11 @@ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileen
   if (trace_len == NOT_IN_TRANSACTION)
     mabort();
 
-  if (e->seen == -1)
+  if (e->seen < changed)
+  {
+    self->rollback.flush = 1;
     return;
+  }
 
   while (e->seen >= changed)
   {
@@ -1183,7 +1183,18 @@ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileen
   }
 
   if (self->trace[trace_len].entry != e)
+  {
+    fprintf(stderr, "Rollback position: %d. Entries: %d. Seen: %d. Changed: %d. Last trace entries:\n", trace_len, get_process(self)->trace_len, e->seen, changed);
+    for (int i = get_process(self)->trace_len - 1, j = fz_maxi(i - 10, 0); i > j; i--)
+    {
+      fprintf(stderr, "- %s@%d, %dms\n",
+              self->trace[i].entry->path,
+              self->trace[i].seen,
+              self->trace[i].time);
+    }
     mabort();
+  }
+
   self->rollback.trace_len = trace_len;
   self->rollback.offset = changed;
 }
