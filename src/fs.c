@@ -166,7 +166,6 @@ fileentry_t *filesystem_lookup_or_create(fz_context *ctx, filesystem_t *fs, cons
   entry->path = fz_strdup(ctx, path);
   entry->saved.level = FILE_NONE;
   entry->seen = -1;
-  entry->trace = -1;
   entry->pic_cache.type = -1;
   entry->fs_stat.st_ino = 0;
   cell->entry = entry;

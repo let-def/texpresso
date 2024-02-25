@@ -47,7 +47,7 @@ typedef struct
 typedef struct
 {
   fileentry_t *entry;
-  int previous, seen, time;
+  int seen, time;
 } trace_entry_t;
 
 typedef struct
@@ -82,7 +82,7 @@ struct tex_engine
   synctex_t *stex;
 
   struct {
-    int trace, offset;
+    int trace_len, offset;
   } rollback;
 };
 
@@ -222,11 +222,16 @@ static void close_process(process_t *p)
 
 static void pop_process(fz_context *ctx, struct tex_engine *self)
 {
+  process_t *p = get_process(self);
+  for (int i = p->trace_len, j = self->process_count == 1 ? 0 : self->processes[self->process_count - 1].trace_len; 
+  i > j; i--)
+    self->trace[i].entry = NULL;
   close_process(get_process(self));
   channel_reset(self->c);
   self->process_count -= 1;
-  if (self->process_count > 0)
-    log_rollback(ctx, self->log, get_process(self)->snap);
+  mark_t mark =
+    self->process_count > 0 ? get_process(self)->snap : self->restart;
+  log_rollback(ctx, self->log, mark);
 }
 
 static bool read_query(struct tex_engine *self, channel_t *t, query_t *q)
@@ -378,10 +383,8 @@ static void record_seen(struct tex_engine *self, fileentry_t *entry, int seen, i
   self->trace[p->trace_len] = (trace_entry_t){
     .entry = entry,
     .seen = entry->seen,
-    .previous = entry->trace,
     .time = time,
   };
-  entry->trace = p->trace_len;
   entry->seen = seen;
   p->trace_len += 1;
 }
@@ -480,9 +483,9 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
           fs_path = lookup_path(self, q->open.path, fs_path_buffer, NULL);
           if (!fs_path)
           {
-            // e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
-            // log_fileentry(ctx, self->log, e);
-            // record_seen(self, e, 0, q->time);
+            e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
+            log_fileentry(ctx, self->log, e);
+            record_seen(self, e, INT_MAX, q->time);
             a.tag = A_PASS;
             channel_write_answer(self->c, p->fd, &a);
             break;
@@ -869,7 +872,6 @@ static int output_length(fileentry_t *entry)
 static void revert_trace(trace_entry_t *te)
 {
   te->entry->seen = te->seen;
-  te->entry->trace = te->previous;
 }
 
 static void rollback_processes(fz_context *ctx, struct tex_engine *self, int trace)
@@ -890,11 +892,10 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int tra
   fprintf(stderr, "Last trace entries:\n");
   for (int i = get_process(self)->trace_len - 1, j = fz_maxi(i - 10, 0); i > j; i--)
   {
-    fprintf(stderr, "- %s@%d, %dms [previous=%d]\n",
+    fprintf(stderr, "- %s@%d, %dms\n",
             self->trace[i].entry->path,
             self->trace[i].seen,
-            self->trace[i].time,
-            self->trace[i].previous);
+            self->trace[i].time);
   }
 
   fprintf(stderr, "Snapshots:\n");
@@ -907,9 +908,6 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int tra
 
   while (self->process_count > 0 && get_process(self)->trace_len > trace)
     pop_process(ctx, self);
-
-  if (self->process_count == 0)
-    log_rollback(ctx, self->log, self->restart);
 
   for (int trace_len = 
          self->process_count == 0 ? 0 : get_process(self)->trace_len;
@@ -947,7 +945,7 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
 {
   self->fence_pos = -1;
 
-  if (trace < 0)
+  if (trace <= 0)
     return trace;
 
   if (get_process(self)->trace_len <= trace)
@@ -958,6 +956,8 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
   offset = (offset - 64) & ~(64 - 1);
   if (offset < self->trace[trace].seen)
     offset = self->trace[trace].seen;
+  if (offset == -1)
+    offset = 0;
 
   self->fences[0].entry = self->trace[trace].entry;
   self->fences[0].position = offset;
@@ -982,6 +982,8 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
       self->fence_pos += 1;
       self->fences[self->fence_pos].entry = self->trace[trace].entry;
       self->fences[self->fence_pos].position = self->trace[trace].seen;
+      if (self->fences[self->fence_pos].position == -1)
+        self->fences[self->fence_pos].position = 0;
       time -= delta;
       delta *= 2;
       fprintf(stderr, "[fence] placing fence %d at trace position %d, file %s, offset %d\n",
@@ -1117,46 +1119,47 @@ static int scan_entry(fz_context *ctx, struct tex_engine *self, fileentry_t *e)
 static void rollback_begin(fz_context *ctx, struct tex_engine *self)
 {
   // Check if already in a transaction
-  if (self->rollback.trace != NOT_IN_TRANSACTION)
+  if (self->rollback.trace_len != NOT_IN_TRANSACTION)
     abort();
 
-  self->rollback.trace = get_process(self)->trace_len - 1;
+  self->rollback.trace_len = get_process(self)->trace_len;
   self->rollback.offset = -1;
 }
 
 static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, int *offsetp)
 {
-  int trace = self->rollback.trace;
+  int trace_len = self->rollback.trace_len;
 
   // Assert we are in a transaction
-  if (trace == NOT_IN_TRANSACTION)
+  if (trace_len == NOT_IN_TRANSACTION)
     abort();
 
   process_t *p = get_process(self);
 
   // Check if nothing changed
-  if (trace == p->trace_len - 1)
+  if (trace_len == p->trace_len)
   {
-    self->rollback.trace = NOT_IN_TRANSACTION;
-    if (p->fd > -1)
+    self->rollback.trace_len = NOT_IN_TRANSACTION;
+    if (p->fd > -1 && self->rollback.offset > -1)
     {
       ask_t a;
       a.tag = C_FLSH;
       channel_write_ask(self->c, p->fd, &a);
       channel_flush(self->c, p->fd);
     }
-    return false;
+    if (self->rollback.offset == -1)
+      return false;
   }
 
   fprintf(stderr, "[change] rewinded trace from %d to %d entries\n",
-          get_process(self)->trace_len, trace + 1);
+          get_process(self)->trace_len, trace_len);
 
   if (tracep)
-    *tracep = trace;
+    *tracep = trace_len;
   if (offsetp)
     *offsetp = self->rollback.offset;
 
-  self->rollback.trace = NOT_IN_TRANSACTION;
+  self->rollback.trace_len = NOT_IN_TRANSACTION;
   self->rollback.offset = -1;
 
   return true;
@@ -1164,19 +1167,24 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
 
 static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileentry_t *e, int changed)
 {
-  int trace = self->rollback.trace;
+  int trace_len = self->rollback.trace_len;
 
   // Assert we are in a transaction
-  if (trace == NOT_IN_TRANSACTION)
+  if (trace_len == NOT_IN_TRANSACTION)
     mabort();
 
-  while (e->seen >= changed && trace > e->trace)
+  if (e->seen == -1)
+    return;
+
+  while (e->seen >= changed)
   {
-    revert_trace(&self->trace[trace]);
-    trace--;
+    trace_len--;
+    revert_trace(&self->trace[trace_len]);
   }
 
-  self->rollback.trace = trace;
+  if (self->trace[trace_len].entry != e)
+    mabort();
+  self->rollback.trace_len = trace_len;
   self->rollback.offset = changed;
 }
 
@@ -1276,7 +1284,7 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   self->dvi = incdvi_new(ctx, tectonic_path, tex_dir);
 
   self->stex = synctex_new(ctx);
-  self->rollback.trace = NOT_IN_TRANSACTION;
+  self->rollback.trace_len = NOT_IN_TRANSACTION;
 
   signal(SIGCHLD, SIG_IGN);
   return (txp_engine*)self;

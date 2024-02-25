@@ -60,7 +60,6 @@ typedef struct fileentry_s {
   } saved;
 
   int seen;
-  int trace;
   int debug_rollback_invalidation;
 } fileentry_t;
 
