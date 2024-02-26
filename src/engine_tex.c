@@ -635,7 +635,9 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
           abort();
         n = self->fences[self->fence_pos].position - q->read.pos;
         // Weird that n can be negative at this point?!
-        fork = (n <= 0);
+        fork = (n == 0);
+        if (n < 0)
+          abort();
       }
       if (fork)
       {
@@ -1175,6 +1177,7 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
 static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileentry_t *e, int changed)
 {
   int trace_len = self->rollback.trace_len;
+  if (changed > 0) changed--;
 
   // Assert we are in a transaction
   if (trace_len == NOT_IN_TRANSACTION)
