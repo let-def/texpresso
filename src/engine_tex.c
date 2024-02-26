@@ -909,13 +909,13 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int tra
             p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time);
   }
 
-  while (self->process_count > 0 && get_process(self)->trace_len > trace)
+  while (self->process_count > 0 && get_process(self)->trace_len >= trace)
     pop_process(ctx, self);
 
   for (int trace_len = 
-         self->process_count == 0 ? 0 : get_process(self)->trace_len;
-       trace >= trace_len;
-       trace--)
+    self->process_count == 0 ? 0 : get_process(self)->trace_len;
+    trace >= trace_len;
+    trace--)
     revert_trace(&self->trace[trace]);
 
   fprintf(stderr, "after rollback: %d bytes of output\n",
@@ -1177,7 +1177,7 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
 static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileentry_t *e, int changed)
 {
   int trace_len = self->rollback.trace_len;
-  if (changed > 0) changed--;
+  // if (changed > 0) changed--;
 
   // Assert we are in a transaction
   if (trace_len == NOT_IN_TRANSACTION)
