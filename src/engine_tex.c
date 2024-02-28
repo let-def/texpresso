@@ -622,7 +622,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
         fprintf(stderr, "read:%d\ndata->len:%d\n", q->read.pos, (int)data->len);
         mabort();
       }
-      size_t n = q->read.size;
+      ssize_t n = q->read.size;
       if (n > data->len - q->read.pos)
         n = data->len - q->read.pos;
 
