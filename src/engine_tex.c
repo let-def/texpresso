@@ -906,7 +906,7 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
             p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time);
   }
 
-  while (self->process_count > 0 && get_process(self)->trace_len >= trace)
+  while (self->process_count > 0 && get_process(self)->trace_len > trace)
     pop_process(ctx, self);
 
   int trace_len = self->process_count == 0 ? 0 : get_process(self)->trace_len;
