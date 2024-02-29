@@ -877,7 +877,7 @@ static void revert_trace(trace_entry_t *te)
   te->entry->seen = te->seen;
 }
 
-static void rollback_processes(fz_context *ctx, struct tex_engine *self, int trace)
+static void rollback_processes(fz_context *ctx, struct tex_engine *self, int reverted, int trace)
 {
   fprintf(
     stderr,
@@ -912,11 +912,12 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int tra
   while (self->process_count > 0 && get_process(self)->trace_len >= trace)
     pop_process(ctx, self);
 
-  for (int trace_len = 
-    self->process_count == 0 ? 0 : get_process(self)->trace_len;
-    trace >= trace_len;
-    trace--)
+  int trace_len = self->process_count == 0 ? 0 : get_process(self)->trace_len;
+  while (reverted >= trace_len)
+  {
+    reverted--;
     revert_trace(&self->trace[trace]);
+  }
 
   fprintf(stderr, "after rollback: %d bytes of output\n",
     self->st.document.entry
@@ -1243,14 +1244,13 @@ static void engine_detect_changes(txp_engine *_self, fz_context *ctx)
 static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
 {
   SELF;
-  int trace, offset;
+  int reverted, trace, offset;
 
-  if (!rollback_end(ctx, self, &trace, &offset))
+  if (!rollback_end(ctx, self, &reverted, &offset))
     return false;
 
-  if (trace >= 0)
-    trace = compute_fences(ctx, self, trace, offset);
-  rollback_processes(ctx, self, trace);
+  trace = reverted >= 0 ? compute_fences(ctx, self, trace, offset) : 0;
+  rollback_processes(ctx, self, reverted, trace);
 
   return true;
 }
