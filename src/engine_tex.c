@@ -223,9 +223,6 @@ static void close_process(process_t *p)
 static void pop_process(fz_context *ctx, struct tex_engine *self)
 {
   process_t *p = get_process(self);
-  for (int i = p->trace_len, j = self->process_count == 1 ? 0 : self->processes[self->process_count - 1].trace_len; 
-  i > j; i--)
-    self->trace[i].entry = NULL;
   close_process(get_process(self));
   channel_reset(self->c);
   self->process_count -= 1;
