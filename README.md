@@ -4,11 +4,7 @@ _Note: TeXpresso is still in an early development phase._
 
 **Important: this repository uses submodules. Clone using `git clone --recurse-submodules`.**
 
-TeXpresso has been tested on Linux and macOS and should work with both AMD64 and Apple Silicon architectures.
-Here is a sample recording of me editing and browsing @fabiensanglard [Game Engine Black Book: Doom](https://github.com/fabiensanglard/gebbdoom) in TeXpresso (using my emacs theme):
-
-https://user-images.githubusercontent.com/1048096/235424858-a5a2900b-fb48-40b7-a167-d0b71af39034.mp4
-
+TeXpresso has been tested on Linux and macOS and should work with both AMD64 and Apple Silicon architectures. See the [screencasts](#Screencasts) at the end of this file.
 
 It is made of two components:
 - this repository which implements the `texpresso` binary
@@ -103,3 +99,34 @@ Mouse controls:
 - control+click: pan page
 - wheel: scroll page
 - control+wheel: zoom
+
+## Screencasts
+
+**Neovim integration.**
+Launching TeXpresso in vim:
+
+https://github.com/let-def/texpresso.vim/assets/1048096/b6a1966a-52ca-4e2e-bf33-e83b6af851d8
+
+Live update during edition:
+
+https://github.com/let-def/texpresso.vim/assets/1048096/cfdff380-992f-4732-a1fa-f05584930610
+
+Using Quickfix window to fix errors and warnings interactively:
+
+https://github.com/let-def/texpresso.vim/assets/1048096/e07221a9-85b1-44f3-a904-b4f7d6bcdb9b
+
+Synchronization from Document to Editor (SyncTeX backward):
+
+https://github.com/let-def/texpresso.vim/assets/1048096/f69b1508-a069-4003-9578-662d9e790ff9
+
+Synchronization from Editor to Document (SyncTeX forward):
+
+https://github.com/let-def/texpresso.vim/assets/1048096/78560d20-391e-490e-ad76-c8cce1004ce5
+
+Theming, Light/Dark modes: 😎
+
+https://github.com/let-def/texpresso.vim/assets/1048096/a072181b-82d3-42df-9683-7285ed1b32fc
+
+**Emacs integration.** Here is a sample recording of me editing and browsing @fabiensanglard [Game Engine Black Book: Doom](https://github.com/fabiensanglard/gebbdoom) in TeXpresso (using my emacs theme):
+
+https://user-images.githubusercontent.com/1048096/235424858-a5a2900b-fb48-40b7-a167-d0b71af39034.mp4
