@@ -36,7 +36,7 @@ Makefile.config: Makefile
 	echo >$@ "CFLAGS=-O2 -ggdb -I. -fPIC"
 	echo >>$@ 'CC=gcc $$(CFLAGS)'
 	echo >>$@ 'LDCC=g++ $$(CFLAGS)'
-	echo >>$@ "LIBS=-lmupdf -lm `./mupdf-config.sh` -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2 -lleptonica -ltesseract"
+	echo >>$@ "LIBS=-lmupdf -lm `CC=gcc ./mupdf-config.sh` -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2"
 	echo >>$@ "TECTONIC_ENV="
 endif
 
@@ -46,10 +46,9 @@ BREW_ICU4C=$(shell brew --prefix icu4c)
 Makefile.config: Makefile
 	echo >$@ "CFLAGS=-O2 -ggdb -I. -fPIC -I$(BREW)/include"
 	echo >>$@ 'CC=gcc $$(CFLAGS)'
-	echo >>$@ 'LDCC=gcc $$(CFLAGS)'
-	echo >>$@ "LIBS=-L$(BREW)/lib -lmupdf -lm -lmupdf-third -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2"
+	echo >>$@ 'LDCC=g++ $$(CFLAGS)'
+	echo >>$@ "LIBS=-L$(BREW)/lib -lmupdf -lm `CC=gcc ./mupdf-config.sh -L$(BREW)/lib` -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2"
 	echo >>$@ "TECTONIC_ENV=PKG_CONFIG_PATH=$(BREW_ICU4C)/lib/pkgconfig"
-
 endif
 
 texpresso-tonic:
