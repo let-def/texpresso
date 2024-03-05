@@ -22,7 +22,7 @@ Otherwise, read below.
 
 ## Build TeXpresso
 
-First make sure the dependencies are available: `pkg-config`, `re2c`, `SDL2`, `mupdf` (and its own dependencies: `libjpeg`, `libpng`, `freetype2`, `gumbo`, ...).
+First make sure the dependencies are available: `pkg-config`, `re2c`, `SDL2`, `mupdf` (and its own dependencies: `libjpeg`, `libpng`, `freetype2`, `gumbo`, `jbig2dec`... and possibly `leptonica` and `tesseract` depending on the mupdf version).
 Under macOS, `brew` is also used to find local files.
 
 If it succeeds, `make texpresso` produces `build/texpresso`.
@@ -34,7 +34,7 @@ Other targets are:
 - `clean` to remove intermediate build files
 - `distclean` to remove all build files (`build/` and `Makefile.config`)
 
-If build fails, try tweaking the configuration flags in `Makefile.config`.
+If the build fails, try tweaking the configuration flags in `Makefile.config`.
 
 ## Build TeXpresso-tonic (Tectonic)
 
