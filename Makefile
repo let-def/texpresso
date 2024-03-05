@@ -44,7 +44,7 @@ ifeq ($(UNAME), Darwin)
 BREW=$(shell brew --prefix)
 BREW_ICU4C=$(shell brew --prefix icu4c)
 Makefile.config: Makefile
-	echo >$@ "CFLAGS=-O2 -ggdb -I. -fPIC"
+	echo >$@ "CFLAGS=-O2 -ggdb -I. -fPIC -I$(BREW)/include"
 	echo >>$@ 'CC=gcc $$(CFLAGS)'
 	echo >>$@ 'LDCC=gcc $$(CFLAGS)'
 	echo >>$@ "LIBS=-L$(BREW)/lib -lmupdf -lm -lmupdf-third -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2"
