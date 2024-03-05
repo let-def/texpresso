@@ -10,21 +10,21 @@ all: $(TARGETS)
 
 texpresso: $(BUILD)/texpresso
 $(BUILD)/texpresso: $(DIR)/driver.o $(DIR)/main.o $(DIR)/logo.o $(DIR_OBJECTS) $(DIR)/libmydvi.a
-	$(CC) -o $@ $^ $(LIBS)
+	$(LDCC) -o $@ $^ $(LIBS)
 
 texpresso-dev: $(BUILD)/texpresso-dev
 $(BUILD)/texpresso-dev: $(DIR)/driver.o $(DIR)/loader.o $(DIR)/logo.o | $(BUILD)/texpresso-dev.so
-	$(CC) -o $@ $^ $(LIBS)
+	$(LDCC) -o $@ $^ $(LIBS)
 
 texpresso-dev.so: $(BUILD)/texpresso-dev.so
 $(BUILD)/texpresso-dev.so: $(DIR)/main.o $(DIR_OBJECTS) $(DIR)/libmydvi.a
 	$(MAKE) -C dvi
-	$(CC) -ldl -shared -o $@ $^ $(LIBS)
+	$(LDCC) -ldl -shared -o $@ $^ $(LIBS)
 	killall -SIGUSR1 texpresso-dev || true
 
 texpresso-debug-proxy: $(BUILD)/texpresso-debug-proxy
 $(BUILD)/texpresso-debug-proxy: proxy.c
-	$(CC) -o $@ $^
+	$(LDCC) -o $@ $^
 
 texpresso-debug: $(BUILD)/texpresso-debug
 $(BUILD)/texpresso-debug: ../scripts/texpresso-debug

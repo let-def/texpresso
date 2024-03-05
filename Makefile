@@ -27,10 +27,16 @@ config: Makefile.config build/objects
 build/objects:
 	mkdir -p build/objects
 
+# LDCC: some Linux distribution build mupdf with C++ dependencies,
+# Fedora needs -lleptonica and -ltesseract; so we use a C++ compiler
+# for the linking step.
+
 ifeq ($(UNAME), Linux)
 Makefile.config: Makefile
-	echo >$@ "CC=gcc -O2 -ggdb -I. -fPIC"
-	echo >>$@ "LIBS=-lmupdf -lm `./mupdf-config.sh` -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2"
+	echo >$@ "CFLAGS=-O2 -ggdb -I. -fPIC"
+	echo >>$@ 'CC=gcc $$(CFLAGS)'
+	echo >>$@ 'LDCC=g++ $$(CFLAGS)'
+	echo >>$@ "LIBS=-lmupdf -lm `./mupdf-config.sh` -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2 -lleptonica -ltesseract"
 	echo >>$@ "TECTONIC_ENV="
 endif
 
@@ -38,7 +44,9 @@ ifeq ($(UNAME), Darwin)
 BREW=$(shell brew --prefix)
 BREW_ICU4C=$(shell brew --prefix icu4c)
 Makefile.config: Makefile
-	echo >$@ "CC=gcc -O2 -ggdb -I. -fPIC -I$(BREW)/include"
+	echo >$@ "CFLAGS=-O2 -ggdb -I. -fPIC"
+	echo >>$@ 'CC=gcc $$(CFLAGS)'
+	echo >>$@ 'LDCC=gcc $$(CFLAGS)'
 	echo >>$@ "LIBS=-L$(BREW)/lib -lmupdf -lm -lmupdf-third -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2"
 	echo >>$@ "TECTONIC_ENV=PKG_CONFIG_PATH=$(BREW_ICU4C)/lib/pkgconfig"
 
