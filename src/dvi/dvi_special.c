@@ -40,7 +40,7 @@ typedef const char *cursor_t;
 
 re2c:yyfill:enable = 0;
 re2c:eof = -1;
-re2c:api = custom;
+re2c:flags:input = custom;
 re2c:api:style = free-form;
 re2c:define:YYCURSOR    = cur;
 re2c:define:YYCTYPE     = int;
