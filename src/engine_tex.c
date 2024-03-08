@@ -944,7 +944,7 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
 
 static bool possible_fence(trace_entry_t *te)
 {
-  if (te->seen == INT_MAX)
+  if (te->seen == INT_MAX || te->seen == -1)
     return 0;
   if (te->entry->saved.level > FILE_READ)
     return 0;
