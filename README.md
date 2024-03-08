@@ -16,9 +16,16 @@ TeXpressos uses the same data store as [Tectonic](https://github.com/tectonic-ty
 
 If all dependencies are installed and out-of-the-box configuration works, `make all` should be sufficient to build both `texpresso` and `texpresso-tonic` in `build/` directory.
 
-For Arch Linux users, [a PKGBUILD is available in the AUR](https://aur.archlinux.org/packages/texpresso-git) that builds from the latest Git HEAD on installation.
+## Supported systems
 
-Otherwise, read below.
+TeXpresso is in an early stage of development and its configuration logic is a rough hand-made script.
+So far it has only been tested the following systems, where we expect it to work:
+
+- OSX
+- Fedora 39
+- Arch Linux: [a PKGBUILD is available in the AUR](https://aur.archlinux.org/packages/texpresso-git) that builds from the latest Git HEAD on installation.
+
+On other systems you may observe build failures that require modifying the Makefile. Let us know if it works on a system not listed above, or if you can tweak the configuration/build code to support your system without breaking others.
 
 ## Build TeXpresso
 
