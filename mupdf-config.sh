@@ -13,14 +13,14 @@ END
 
 link_if_possible()
 {
-  if $CC "$1" $FLAGS -o build/mupdf_test build/mupdf_test.c > /dev/null; then
-    printf " %s"  "$1"
-  fi
+  for i in "$@"; do
+    if $CC "$i" $FLAGS -o build/mupdf_test build/mupdf_test.c > /dev/null; then
+      printf " %s"  "$i"
+    fi
+  done
 }
 
-link_if_possible -lmupdf-third
-link_if_possible -lleptonica
-link_if_possible -ltesseract
+link_if_possible -lmupdf-third -lleptonica -ltesseract -lmujs
 
 rm -f build/mupdf_test*
 
