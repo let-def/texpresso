@@ -37,11 +37,11 @@ On other systems you may observe build failures that require modifying the Makef
 
 Install all needed dependencies with:
 ```sh
-apt install base-devel libsdl2-dev re2c libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev cargo libssl-dev libfontconfig-dev
+apt install build-essential libsdl2-dev re2c libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev cargo libssl-dev libfontconfig-dev
 ```
 
 Details:
-- `base-devel` install the compiler (GCC) and basic build tools (GNU Make)
+- `build-essential` install the compiler (GCC) and basic build tools (GNU Make)
 - `libsdl2-dev`: SDL2 library
 - `re2c`: re2c preprocessor, necessary for generating lexing code
 - `libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev`: libmupdf and its dependencies
@@ -52,7 +52,7 @@ Details:
 Dependencies are listed in the PKGBUILD, but if you need to install them manually:
 
 ```sh
-pacman -S base-devl fontconfig freetype2 gcc-libs glibc graphite gumbo-parser harfbuzz icu jbig2dec libjpeg-turbo libmupdf libpng openjpeg2 openssl sdl2 zlib cargo git libmupdf re2c
+pacman -S base-devel fontconfig freetype2 gcc-libs glibc graphite gumbo-parser harfbuzz icu jbig2dec libjpeg-turbo libmupdf libpng openjpeg2 openssl sdl2 zlib cargo git libmupdf re2c
 ```
 
 ## Build TeXpresso
