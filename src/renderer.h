@@ -27,9 +27,7 @@
 
 #include <stdbool.h>
 #include <SDL2/SDL.h>
-#include <mupdf/fitz/context.h>
-#include <mupdf/fitz/display-list.h>
-#include <mupdf/fitz/structured-text.h>
+#include <mupdf/fitz.h>
 
 typedef struct txp_renderer_s txp_renderer;
 

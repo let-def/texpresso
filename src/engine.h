@@ -25,7 +25,6 @@
 #ifndef GENERIC_ENGINE_H_
 #define GENERIC_ENGINE_H_
 
-#include <mupdf/fitz/display-list.h>
 #include "state.h"
 #include "incdvi.h"
 #include "synctex.h"

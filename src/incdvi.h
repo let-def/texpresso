@@ -25,8 +25,7 @@
 #ifndef INCDVI_H
 #define INCDVI_H
 
-#include <mupdf/fitz/buffer.h>
-#include <mupdf/fitz/device.h>
+#include <mupdf/fitz.h>
 #include <stdbool.h>
 
 typedef struct incdvi_s incdvi_t;

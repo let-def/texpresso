@@ -22,7 +22,7 @@
  * IN THE SOFTWARE.
  */
 
-#include <mupdf/pdf/object.h>
+#include <mupdf/pdf.h>
 #include <string.h>
 #include "fz_util.h"
 #include "mydvi.h"
