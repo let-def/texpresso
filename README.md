@@ -6,7 +6,7 @@ _Note: TeXpresso is still in an early development phase._
 
 ## About
 
-TeXpresso provides an "live rendering" experience when editing LaTeX documents in a supported editor: change something in the .tex file, the render window will update almost immediately with your change. Write something invalid, you get an error message immediately.
+TeXpresso provides a "live rendering" experience when editing LaTeX documents in a supported editor: change something in the .tex file, the render window will update almost immediately with your change. Write something invalid, you get an error message immediately.
 
 This can radically improve the LaTeX editing experience compared to the usual rebuild-and-wait-for-viewer-to-update experience, especially for large documents.
 
@@ -34,7 +34,7 @@ The TeXpresso system is built of the following parts:
 
    The driver is where the "live" magic lives. It is the `texpresso` binary, whose sources are in this repository.
 
-The driver sends information between the editor and the renderer in both directions. In particular it is possible to ask the editor to jump to a specific place in the LaTeX document by clicking on the viewer window, or conversely to refresh the viewer window to display the document at the editor position.
+The driver sends information between the editor and the renderer in both directions. In particular, it is possible to ask the editor to jump to a specific place in the LaTeX document by clicking on the viewer window or, conversely, to refresh the viewer window to display the document at the editor position.
 
 ## Viewer controls
 
@@ -75,7 +75,7 @@ Use `M-x texpresso-next-page` and `M-x texpresso-previous-page` to move between 
 
 ### Neovim
 
-A Neovim mode is provided in separate repository [texpresso.vim](https://github.com/let-def/texpresso.vim). It is not yet compatible with vanilla Vim, patches are welcome :bow:.
+A Neovim mode is provided in a separate repository [texpresso.vim](https://github.com/let-def/texpresso.vim). It is not yet compatible with vanilla Vim, patches are welcome :bow:.
 
 ## Screencasts
 
