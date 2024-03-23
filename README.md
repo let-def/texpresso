@@ -4,152 +4,41 @@ _Note: TeXpresso is still in an early development phase._
 
 **Important: this repository uses submodules. Clone using `git clone --recurse-submodules`.**
 
-TeXpresso has been tested on Linux and macOS and should work with both AMD64 and Apple Silicon architectures. See the [screencasts](#Screencasts) at the end of this file.
+## About
 
-It is made of two components:
-- this repository which implements the `texpresso` binary
-- the [tectonic/](tectonic/) git-submodule which implements a patched version of [Tectonic](https://github.com/tectonic-typesetting/tectonic) that produces the `texpresso-tonic` helper binary
+TeXpresso provides an "live rendering" experience when editing LaTeX documents in a supported editor: change something in the .tex file, the render window will update almost immediately with your change. Write something invalid, you get an error message immediately.
 
-TeXpressos uses the same data store as [Tectonic](https://github.com/tectonic-typesetting/tectonic) and both should cohabit sanely. (Data are stored in `tectonic -X show user-cache-dir` / `texpresso-tonic -X show user-cache-dir`).
+This can radically improve the LaTeX editing experience compared to the usual rebuild-and-wait-for-viewer-to-update experience, especially for large documents.
 
-# Building
+See the [screencasts](#Screencasts) at the end of this file for a visual demo of TeXpresso capabilities.
 
-If all dependencies are installed and out-of-the-box configuration works, `make all` should be sufficient to build both `texpresso` and `texpresso-tonic` in `build/` directory.
+### Install
 
-## Supported systems
+TeXpresso has been tested on Linux and macOS and should work with both AMD64 and Apple Silicon architectures. See [INSTALL.md](./INSTALL.md) for dependency and build instructions.
 
-TeXpresso is in an early stage of development and its configuration logic is a rough hand-made script.
-So far it has only been tested the following systems, where we expect it to work:
+### Design
 
-- OSX
-- Fedora 39
-- Arch Linux: [a PKGBUILD is available in the AUR](https://aur.archlinux.org/packages/texpresso-git) that builds from the latest Git HEAD on installation.
-- Debian 12
-- Ubuntu 22.04
+The TeXpresso system is built of the following parts:
 
-On other systems you may observe build failures that require modifying the Makefile. Let us know if it works on a system not listed above, or if you can tweak the configuration/build code to support your system without breaking others.
+1. A TeX engine that renders LaTeX documents into PDF;
+   we use a modified version of the [Tectonic](https://tectonic-typesetting.github.io/en-US/) engine, modified to interact with the TeXpresso driver.
 
-**Rerun `make config` when you change the build environment**, otherwise freshly installed libraries might not be considered by the build system.
+   This is in the [tectonic/](tectonic/) git-submodule, and it produces the `texpresso-tonic` helper binary
 
-### Ubuntu
+2. A PDF renderer that renders PDF documents into images.
+   We use [MuPDF](https://mupdf.com/).
 
-(Tested with Ubuntu 22.04 ARM64)
+3. A viewer that shows the rendered images and allows simple user commands (see [Viewer controls](#Viewer_controls) below), built with [libSDL](https://www.libsdl.org/).
 
-Install all needed dependencies with:
-```sh
-apt install build-essential libsdl2-dev re2c libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev cargo libssl-dev libfontconfig-dev
-```
+4. A driver program that talks to the editor to be notified of changes to the LaTeX document, maintains an incremental view of the document and the rendering process (supporting incrementality, rollback, error recovery, etc.), talks to the LaTeX engine to re-render the modified portions of the document, and synchronizes with the viewer.
 
-Details:
-- `build-essential` install the compiler (GCC) and basic build tools (GNU Make)
-- `libsdl2-dev`: SDL2 library
-- `re2c`: re2c preprocessor, necessary for generating lexing code
-- `libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev`: libmupdf and its dependencies
-- `cargo libssl-dev libfontconfig-dev`: rust package manager, and dependencies needed by texpresso-tonic rust code
+   The driver is where the "live" magic lives. It is the `texpresso` binary, whose sources are in this repository.
 
-### Debian 12
+The driver sends information between the editor and the renderer in both directions. In particular it is possible to ask the editor to jump to a specific place in the LaTeX document by clicking on the viewer window, or conversely to refresh the viewer window to display the document at the editor position.
 
-Debian 12 is quite similar to Ubuntu with the added difficulty that the rust version is too old for TeXpresso to build out of the box.
+## Viewer controls
 
-You can install the other dependencies:
-
-```sh
-sudo apt install build-essential libsdl2-dev re2c libmupdf-dev libfreetype-dev libjpeg-dev libjbig2dec0-dev libharfbuzz-dev libopenjp2-7-dev libgumbo-dev libmujs-dev libssl-dev libfontconfig-dev
-```
-
-A workaround for rust is to install [rustup](https://rustup.rs). Make sure that curl is installed and setup rustup:
-
-```sh
-sudo apt install curl
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-After rustup is installed, source the environment before building. E.g:
-```sh
-source $HOME/.cargo/env
-```
-
-### Arch Linux (and Manjaro)
-
-Dependencies are listed in the PKGBUILD, but if you need to install them manually:
-
-```sh
-pacman -S base-devel fontconfig freetype2 gcc-libs glibc graphite gumbo-parser harfbuzz icu jbig2dec libjpeg-turbo libmupdf libpng openjpeg2 openssl sdl2 zlib cargo git libmupdf re2c
-```
-
-### Fedora
-
-(Tested on Fedora 38 ARM64)
-
-Install all dependencies:
-
-```sh
-sudo dnf install make gcc mupdf-devel SDL2-devel re2c g++ freetype2-devel libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel gumbo-parser-devel tesseract-devel leptonica-devel cargo openssl-devel fontconfig-devel
-```
-
-## Build TeXpresso
-
-First make sure the dependencies are available: `pkg-config`, `re2c`, `SDL2`, `mupdf` (and its own dependencies: `libjpeg`, `libpng`, `freetype2`, `gumbo`, `jbig2dec`... and possibly `leptonica`, `tesseract` and `mujs` depending on the mupdf version).
-Under macOS, `brew` is also used to find local files.
-
-If it succeeds, `make texpresso` produces `build/texpresso`.
-
-Other targets are:
-- `config` to generate configuration in `Makefile.config` (automatically called during first build)
-- `dev` produces `build/texpresso-dev` which supports hot-reloading to ease development
-- `debug` produces debugging tools in `build/`
-- `clean` to remove intermediate build files
-- `distclean` to remove all build files (`build/` and `Makefile.config`)
-
-If the build fails, try tweaking the configuration flags in `Makefile.config`.
-
-## Build TeXpresso-tonic (Tectonic)
-
-First you need an environment that is able to build Tectonic: a functional rust
-and cargo installation, etc. Check tectonic documentation.
-
-Then make sure that the git submodule has been initialized (in the `tectonic` directory):
-
-```sh
-git submodule update --init
-```
-
-Then `make texpresso-tonic` should work.
-
-## Testing TeXpresso
-
-If both commands built successfully, you can try TeXpresso using:
-
-```sh
-build/texpresso test/simple.tex
-```
-
-This is just a minimal test to make sure that TeXpresso is installed correctly.
-If TeXpresso window does not display the document, please report an issue.
-Recommended use is with Emacs, see below. Vim support will come later.
-
-# Emacs mode
-
-TeXpresso comes with an Emacs mode. The source can be found in
-[emacs/texpresso.el](emacs/texpresso.el).  Load this file in Emacs (using `M-X load-file`; it is also compatible with `require`).
-
-Start TeXpresso with `M-x texpresso`. The prompt will let you select the master/root TeX file.
-It will try to start `texpresso` command. If it is not possible, it will open
-`(customize-variable 'texpresso-binary)` to let you set the path to texpresso
-binary.
-
-To work correctly, `texpresso` needs `texpresso-tonic` helper; when copying them, make sure they are both in the same directory.
-
-`M-x texpresso-display-output` will open a small window listing TeX warnings and errors on the current page.
-Use `M-x texpresso-next-page` and `M-x texpresso-previous-page` to move between pages without leaving Emacs.
-
-# Neovim mode
-
-A Neovim mode is provided in separate repository [texpresso.vim](https://github.com/let-def/texpresso.vim). It is not yet compatible with vanilla Vim, patches are welcome :bow:.​
-
-# Navigating TeXpresso window
-
-Keyboard controls: 
+Keyboard controls:
 - `←`, `→`: change page
 - `p` (for "page"): switch between "fit-to-page" and "fit-to-width" zoom modes
 - `c` ("crop"): crop borders
@@ -166,6 +55,27 @@ Mouse controls:
 - control+click: pan page
 - wheel: scroll page
 - control+wheel: zoom
+
+## Supported editors
+
+### Emacs
+
+TeXpresso comes with an Emacs mode. The source can be found in
+[emacs/texpresso.el](emacs/texpresso.el).  Load this file in Emacs (using `M-X load-file`; it is also compatible with `require`).
+
+Start TeXpresso with `M-x texpresso`. The prompt will let you select the master/root TeX file.
+It will try to start the `texpresso` command. If it is not possible, it will open
+`(customize-variable 'texpresso-binary)` to let you set the path to texpresso
+binary.
+
+To work correctly, `texpresso` needs `texpresso-tonic` helper; when copying them, make sure they are both in the same directory.
+
+`M-x texpresso-display-output` will open a small window listing TeX warnings and errors on the current page.
+Use `M-x texpresso-next-page` and `M-x texpresso-previous-page` to move between pages without leaving Emacs.
+
+### Neovim
+
+A Neovim mode is provided in separate repository [texpresso.vim](https://github.com/let-def/texpresso.vim). It is not yet compatible with vanilla Vim, patches are welcome :bow:.
 
 ## Screencasts
 
