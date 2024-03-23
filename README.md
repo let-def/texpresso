@@ -24,12 +24,40 @@ So far it has only been tested the following systems, where we expect it to work
 - OSX
 - Fedora 39
 - Arch Linux: [a PKGBUILD is available in the AUR](https://aur.archlinux.org/packages/texpresso-git) that builds from the latest Git HEAD on installation.
+- Debian 12
+- Ubuntu 22.04
 
 On other systems you may observe build failures that require modifying the Makefile. Let us know if it works on a system not listed above, or if you can tweak the configuration/build code to support your system without breaking others.
 
+**Rerun `make config` when you change the build environment**, otherwise freshly installed libraries might not be considered by the build system.
+
+### Building with Ubuntu
+
+(Tested with Ubuntu 22.04 ARM64)
+
+Install all needed dependencies with:
+```sh
+apt install base-devel libsdl2-dev re2c libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev cargo libssl-dev libfontconfig-dev
+```
+
+Details:
+- `base-devel` install the compiler (GCC) and basic build tools (GNU Make)
+- `libsdl2-dev`: SDL2 library
+- `re2c`: re2c preprocessor, necessary for generating lexing code
+- `libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev`: libmupdf and its dependencies
+- `cargo libssl-dev libfontconfig-dev`: rust package manager, and dependencies needed by texpresso-tonic rust code
+
+### Building with Arch Linux (and Manjaro)
+
+Dependencies are listed in the PKGBUILD, but if you need to install them manually:
+
+```sh
+pacman -S base-devl fontconfig freetype2 gcc-libs glibc graphite gumbo-parser harfbuzz icu jbig2dec libjpeg-turbo libmupdf libpng openjpeg2 openssl sdl2 zlib cargo git libmupdf re2c
+```
+
 ## Build TeXpresso
 
-First make sure the dependencies are available: `pkg-config`, `re2c`, `SDL2`, `mupdf` (and its own dependencies: `libjpeg`, `libpng`, `freetype2`, `gumbo`, `jbig2dec`... and possibly `leptonica` and `tesseract` depending on the mupdf version).
+First make sure the dependencies are available: `pkg-config`, `re2c`, `SDL2`, `mupdf` (and its own dependencies: `libjpeg`, `libpng`, `freetype2`, `gumbo`, `jbig2dec`... and possibly `leptonica`, `tesseract` and `mujs` depending on the mupdf version).
 Under macOS, `brew` is also used to find local files.
 
 If it succeeds, `make texpresso` produces `build/texpresso`.
@@ -48,10 +76,10 @@ If the build fails, try tweaking the configuration flags in `Makefile.config`.
 First you need an environment that is able to build Tectonic: a functional rust
 and cargo installation, etc. Check tectonic documentation.
 
-Then make sure that the git submodules were initialized:
+Then make sure that the git submodule has been initialized (in the `tectonic` directory):
 
 ```sh
-git submodule update --init --recursive
+git submodule update --init
 ```
 
 Then `make texpresso-tonic` should work.
