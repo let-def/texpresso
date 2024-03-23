@@ -31,7 +31,7 @@ On other systems you may observe build failures that require modifying the Makef
 
 **Rerun `make config` when you change the build environment**, otherwise freshly installed libraries might not be considered by the build system.
 
-### Building with Ubuntu
+### Ubuntu
 
 (Tested with Ubuntu 22.04 ARM64)
 
@@ -47,7 +47,29 @@ Details:
 - `libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev`: libmupdf and its dependencies
 - `cargo libssl-dev libfontconfig-dev`: rust package manager, and dependencies needed by texpresso-tonic rust code
 
-### Building with Arch Linux (and Manjaro)
+### Debian 12
+
+Debian 12 is quite similar to Ubuntu with the added difficulty that the rust version is too old for TeXpresso to build out of the box.
+
+You can install the other dependencies:
+
+```sh
+sudo apt install build-essential libsdl2-dev re2c libmupdf-dev libfreetype-dev libjpeg-dev libjbig2dec0-dev libharfbuzz-dev libopenjp2-7-dev libgumbo-dev libmujs-dev libssl-dev libfontconfig-dev
+```
+
+A workaround for rust is to install [rustup](https://rustup.rs). Make sure that curl is installed and setup rustup:
+
+```sh
+sudo apt install curl
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+After rustup is installed, source the environment before building. E.g:
+```sh
+source $HOME/.cargo/env
+```
+
+### Arch Linux (and Manjaro)
 
 Dependencies are listed in the PKGBUILD, but if you need to install them manually:
 
