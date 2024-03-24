@@ -97,7 +97,7 @@ and cargo installation, etc. Check tectonic documentation.
 Then make sure that the git submodule has been initialized (in the `tectonic` directory):
 
 ```sh
-git submodule update --init
+git submodule update --init --recursive
 ```
 
 Then `make texpresso-tonic` should work.
