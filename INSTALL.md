@@ -73,6 +73,17 @@ Install all dependencies:
 sudo dnf install make gcc mupdf-devel SDL2-devel re2c g++ freetype2-devel libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel gumbo-parser-devel tesseract-devel leptonica-devel cargo openssl-devel fontconfig-devel
 ```
 
+## Download
+
+Simply clone the git repository (and its submodules) using one of the following commands:
+
+```
+git clone --recurse-submodules https://github.com/let-def/texpresso.git   # cloning by HTTP
+git clone --recurse-submodules git@github.com:let-def/texpresso.git       # cloning by SSH
+```
+
+(You may want to adjust the URL if you are looking at a different fork.)
+
 ## Build TeXpresso
 
 First make sure the dependencies are available: `pkg-config`, `re2c`, `SDL2`, `mupdf` (and its own dependencies: `libjpeg`, `libpng`, `freetype2`, `gumbo`, `jbig2dec`... and possibly `leptonica`, `tesseract` and `mujs` depending on the mupdf version).
