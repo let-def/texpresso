@@ -84,6 +84,8 @@ git clone --recurse-submodules git@github.com:let-def/texpresso.git       # clon
 
 (You may want to adjust the URL if you are looking at a different fork.)
 
+Note that while TeXpresso itself (the driver/viewer program) is small (less than 2MiB of sources, about 40MiB once built), the `tectonic` LaTeX engine that we include as a submodule is large -- 120MiB of sources, most of it from its `harfbuzz` dependency, and about 1.2GiB once built.
+
 ## Build TeXpresso
 
 First make sure the dependencies are available: `pkg-config`, `re2c`, `SDL2`, `mupdf` (and its own dependencies: `libjpeg`, `libpng`, `freetype2`, `gumbo`, `jbig2dec`... and possibly `leptonica`, `tesseract` and `mujs` depending on the mupdf version).
