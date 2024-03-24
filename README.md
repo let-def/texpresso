@@ -66,7 +66,7 @@ TeXpresso comes with an Emacs mode. The source can be found in
 Start TeXpresso with `M-x texpresso`. The prompt will let you select the master/root TeX file.
 It will try to start the `texpresso` command. If it is not possible, it will open
 `(customize-variable 'texpresso-binary)` to let you set the path to texpresso
-binary.
+binary (`<where you cloned the repository>/build/texpresso`).
 
 To work correctly, `texpresso` needs `texpresso-tonic` helper; when copying them, make sure they are both in the same directory.
 
