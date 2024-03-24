@@ -1,4 +1,11 @@
+UNAME := $(shell uname)
+
+ifeq ($(UNAME), Darwin)
+CARGO_BUILD_FLAGS ?= --release
+endif
+ifeq ($(UNAME), Linux)
 CARGO_BUILD_FLAGS ?= --release --features external-harfbuzz
+endif
 
 tectonic:
 	cd tectonic && $(TECTONIC_ENV) cargo build $(CARGO_BUILD_FLAGS)
