@@ -3,12 +3,19 @@
 The process should be started from the editor passing the root TeX file as argument:
 
 ```
-texpressso [-json] <some-dir>/root.tex
+texpressso [-I path]* [-json] [-lines] <some-dir>/root.tex
 ```
 
 The rest of the communication will happen on stdin/stdout:
 - TeXpresso reads and interprets commands found on stdin
 - when it needs to communicate some events, it writes a message on stdout.
+
+Description of the arguments:
+- `-json`: use a JSON syntax rather than SEXP syntax for communication
+- `-lines`: update output buffers line-by-line rather than by chunks of bytes (using `append-lines`/`truncate-lines` rather than `append`/`truncate` messages)
+- `-I path`: populate an "include path" in which files should be looked up in priority
+
+The include path is useful if one uses a build system that puts auxiliary files in a dedicated build directory, while the TeX sources are in a separate source directory. In this case, TeXpresso can be started using `texpresso -I build/ source/main.tex`.
 
 ### General considerations
 
@@ -24,9 +31,10 @@ Conversely, it can interpret the messages it is interested in; ignoring the othe
 
 The protocol is designed around s-expressions (each command and message is represented by one s-exp value).
 
-**TODO**: For compatibility with other ecosystems, minimal json support is planned. When started with the `-json` argument, TeXpresso will switch its communication to a json-compatible format: s-expression lists will simply be replaced by JSON arrays (`(a "b" 12)` -> `["a", "b", 12]`).
-
-Later, the protocol could be updated to be more JSON-friendly. In particular, right now it distinguishes between symbols/names (`a`) and strings (`"a"`), a subtlely that exists both in PDF value format and s-expressions, but is foreign to JSON afaict.
+JSON-mode (`-json` flag) prints sexp as follow:
+- a sexp-list is represented by a JSON array
+- a sexp atom (symbol) is represented by a JSON string
+- special characters are escaped using JSON lexical conventions
 
 ### VFS
 
@@ -38,9 +46,9 @@ When looking for a file, TeXpresso checks in its VFS first and then fallbacks to
 LaTeX consumes files as a stream of bytes (8-bit integers). TeXpresso makes no assumption on the encoding, it just shares the raw contents stored on disk.
 
 However, this might not be the case for the content communicated by the editor. 
-JSON strings, for instance, are serialized sequence of unicode codepoints. TeXpresso will convert it to an UTF-8 encoded byte string before sharing with LaTeX. Offsets specified in delta commands should therefore refer to byte offsets of the UTF-8 representation.
-
-**TODO**: It might be possible to switch to a more convenient convention. For instance using line-based deltas, using line numbers rather than byte offsets might be more convenient for neovim.
+JSON strings, for instance, are serialized sequences of unicode codepoints. TeXpresso will convert it to an UTF-8 encoded byte string before sharing with LaTeX.
+Offsets specified in byte-based delta commands (`change`) should therefore refer to byte offsets of the UTF-8 representation.
+Alternatively, one can use line-based communication (using `change-lines` for editor->TeXpresso communication, and by passing `-lines` argument for TeXpresso->editor messages). Lines are numbered by counting '\n'.
 
 ## Commands (editor -> texpresso)
 
@@ -112,7 +120,7 @@ Try to scroll the UI to the contents defined in TeX file at "path" and line. The
 
 ## Messages (texpresso -> editor)
 
-### Synchronizing output messages and log file
+### Byte-based synchronization of output messages and log file
 
 ```
 (truncate out|log size)
@@ -125,8 +133,6 @@ During a LaTeX run, these are append-only emitting only `append` commands. When 
 Size is expressed as a number of byte.
 
 Because this can happen a lot during edition, it is a good practice to buffer these changes and only reflect from time to time. TeXpresso will signal moments it deemed appropriate with a `flush` message.
-However this is not always sufficient to provide a pleasant experience. See also [texpresso#10](https://github.com/let-def/texpresso/issues/10): it is planned to extend this API to provide a better experience while simplifying the logic on the editor side.
-
 Sample script:
 ```
 (truncate out 0)
@@ -136,6 +142,24 @@ Sample script:
 (flush)
 ```
 
+### Line-based synchronization of output messages and log file
+
+```
+(truncate-lines out|log count)
+(append-lines out|log line1 line2... lineN)
+(flush)
+```
+
+Like their byte-based counterparts, these commands are used to share the contents of LaTeX output messages and logs in real-time. They are used instead of the byte-based one when TeXpresso is started with `-lines` flag,
+
+As the LaTeX process runs, it appends data to the standard output and to the log file.
+All completed lines (separated by `\n`), TeXpresso communicates them to the editor. The `\n` are not included in the serialized strings.
+
+When a change happens in the document, the process might backtrack, sending a `truncate-lines` message to drop the invalidated parts of the output. Only `count` lines should be kept.
+
+Because this can happen a lot during edition, it is a good practice to buffer these changes and only reflect from time to time. TeXpresso will signal moments it deemed appropriate with a `flush` message. This is less of a problem with the line-based output.
+
+For instance, to avoid flickering, an editor can keep stale lines after receiving a `truncate-lines` message, overwrite them as `append-lines` messages are received, and really truncate when receiving `flush` message. At this point, all invalidated contents as been removed but the transition has been smoothed out.
 
 ### SyncTeX
 
