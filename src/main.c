@@ -790,6 +790,18 @@ static void display_page(struct persistent_state *ps, ui_state *ui)
   schedule_event(RENDER_EVENT);
 }
 
+#if !SDL_VERSION_ATLEAST(2, 16, 0)
+static void
+SDL_SetWindowAlwaysOnTop(SDL_Window *window, SDL_bool state)
+{
+  (void)window;
+  (void)state;
+  fprintf(stderr, "[info] stay-on-top feature is not available with "
+                  "SDL older than 2.16.0\n");
+}
+#endif
+
+
 static void interpret_command(struct persistent_state *ps,
                               ui_state *ui,
                               vstack *stack,
