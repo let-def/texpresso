@@ -1179,14 +1179,22 @@ bool texpresso_main(struct persistent_state *ps)
       case SDL_MOUSEWHEEL:
         {
            int mx = 0, my = 0;
+           float px = 0, py = 0;
 #if SDL_VERSION_ATLEAST(2, 26, 0)
            mx = e.wheel.mouseX;
            my = e.wheel.mouseY;
 #else
            SDL_GetMouseState(&mx, &my);
 #endif
-        ui_mouse_wheel(ps->ctx, ui, e.wheel.preciseX, e.wheel.preciseY, mx, my,
-                       SDL_GetModState() & KMOD_CTRL, e.wheel.timestamp);
+#if SDL_VERSION_ATLEAST(2, 18, 0)
+          px = e.wheel.preciseX;
+          py = e.wheel.preciseY;
+#else
+          px = e.wheel.x;
+          py = e.wheel.y;
+#endif
+          bool ctrl = !!(SDL_GetModState() & KMOD_CTRL);
+          ui_mouse_wheel(ps->ctx, ui, px, py, mx, my, ctrl, e.wheel.timestamp);
         }
         break;
 
