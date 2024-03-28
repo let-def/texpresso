@@ -24,12 +24,17 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <sys/syslimits.h>
 #include <string.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <errno.h>
 #include <unistd.h>
+
+#ifdef __APPLE__
+# include <sys/syslimits.h>
+#else
+# include <linux/limits.h>
+#endif
 
 static int usage(void)
 {
