@@ -211,7 +211,7 @@ static fz_point get_scale_factor(SDL_Window *window)
   int ww, wh, pw, ph;
   SDL_GetWindowSize(window, &ww, &wh);
 
-#if SDL_VERSION_ATLEAST(2, 26, 0)
+#if SDL_VERSION_ATLEAST(2, 0, 26)
   SDL_GetWindowSizeInPixels(window, &pw, &ph);
 #else
   SDL_GetRendererOutputSize(SDL_GetRenderer(window), &pw, &ph);
@@ -790,7 +790,7 @@ static void display_page(struct persistent_state *ps, ui_state *ui)
   schedule_event(RENDER_EVENT);
 }
 
-#if !SDL_VERSION_ATLEAST(2, 16, 0)
+#if !SDL_VERSION_ATLEAST(2, 0, 16)
 static void
 SDL_SetWindowAlwaysOnTop(SDL_Window *window, SDL_bool state)
 {
@@ -1192,13 +1192,13 @@ bool texpresso_main(struct persistent_state *ps)
         {
            int mx = 0, my = 0;
            float px = 0, py = 0;
-#if SDL_VERSION_ATLEAST(2, 26, 0)
+#if SDL_VERSION_ATLEAST(2, 0, 260)
            mx = e.wheel.mouseX;
            my = e.wheel.mouseY;
 #else
            SDL_GetMouseState(&mx, &my);
 #endif
-#if SDL_VERSION_ATLEAST(2, 18, 0)
+#if SDL_VERSION_ATLEAST(2, 0, 18)
           px = e.wheel.preciseX;
           py = e.wheel.preciseY;
 #else
