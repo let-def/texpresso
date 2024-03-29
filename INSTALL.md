@@ -78,6 +78,15 @@ Install all dependencies:
 sudo dnf install make gcc mupdf-devel SDL2-devel re2c g++ freetype2-devel libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel gumbo-parser-devel tesseract-devel leptonica-devel cargo openssl-devel fontconfig-devel
 ```
 
+### OSX
+
+(Tested on Ventura Intel)
+Install the following dependencies with homebrew:
+
+```sh
+brew install rust re2c mujs mupdf-tools jbig2dec harfbuzz freetype SDL2 gumbo-parser
+```
+
 ## Download
 
 Simply clone the git repository (and its submodules) using one of the following commands:
