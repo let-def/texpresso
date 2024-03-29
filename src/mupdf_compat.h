@@ -48,6 +48,9 @@ struct fz_buffer_s
 	int shared;
 };
 
+// fz_open_file_ptr_no_close is implemented but not exposed by mupdf 1.16
+fz_stream *fz_open_file_ptr_no_close(fz_context *ctx, FILE *file);
+
 #endif
 
 #endif /*!__MUPDF_COMPAT__*/

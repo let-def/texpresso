@@ -26,6 +26,7 @@
 #include FT_FREETYPE_H
 #include "mydvi.h"
 #include "fz_util.h"
+#include "../mupdf_compat.h"
 #include <sys/wait.h>
 #include <unistd.h>
 
