@@ -3,13 +3,33 @@
 
 #include <stdlib.h>
 #include <mupdf/fitz/version.h>
+#include <mupdf/fitz/geometry.h>
 
-// fz_malloc_struct_array was introduced in mupdf 1.19.0
+// fz_malloc_struct_array, fz_irect_width and fz_irect_height
+// were introduced in mupdf 1.19.0
 
 #if (FZ_VERSION_MAJOR == 1) && (FZ_VERSION_MINOR < 19)
 
 #define fz_malloc_struct_array(CTX, N, TYPE) \
 	((TYPE*)Memento_label(fz_calloc(CTX, N, sizeof(TYPE)), #TYPE "[]"))
+
+static inline unsigned int
+fz_irect_width(fz_irect r)
+{
+	unsigned int w;
+	if (r.x0 >= r.x1)
+		return 0;
+	return (int)(r.x1 - r.x0);
+}
+
+static inline unsigned int
+fz_irect_height(fz_irect r)
+{
+	unsigned int w;
+	if (r.y0 >= r.y1)
+		return 0;
+	return (int)(r.y1 - r.y0);
+}
 
 #endif
 

@@ -24,7 +24,8 @@
 
 #include <string.h>
 #include "state.h"
-#include "../dvi/fz_util.h"
+#include "mupdf_compat.h"
+#include "dvi/fz_util.h"
 
 static unsigned long
 sdbm_hash(const unsigned char *str)

@@ -37,6 +37,7 @@
 #include "state.h"
 #include "synctex.h"
 #include "editor.h"
+#include "mupdf_compat.h"
 
 typedef struct
 {
