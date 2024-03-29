@@ -26,6 +26,11 @@ Install all needed dependencies with:
 apt install build-essential libsdl2-dev re2c libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev cargo libssl-dev libfontconfig-dev
 ```
 
+On Ubuntu 20.04, `libharfbuzz-dev` is also needed:
+```sh
+apt install libharfbuzz-dev
+```
+
 Details:
 - `build-essential` install the compiler (GCC) and basic build tools (GNU Make)
 - `libsdl2-dev`: SDL2 library
