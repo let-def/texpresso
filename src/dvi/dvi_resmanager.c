@@ -271,7 +271,7 @@ bundle_serve_hooks_cat(fz_context *ctx, struct bundle_serve_env *env, const char
     ((uint64_t)answer[8] << (0 * 8));
   fz_buffer *buffer = fz_new_buffer(ctx, size);
   buffer->len = size;
-  fprintf(stderr, "success:%d size:%lld\n", success, size);
+  fprintf(stderr, "success:%d size:%d\n", success, (int)size);
   if (fread(buffer->data, size, 1, env->i) != 1)
   {
     fz_drop_buffer(ctx, buffer);
