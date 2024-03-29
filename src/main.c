@@ -39,6 +39,7 @@
 #include "vstack.h"
 #include "prot_parser.h"
 #include "editor.h"
+#include "mupdf_compat.h"
 
 struct persistent_state *pstate;
 

@@ -1,6 +1,7 @@
 #include "editor.h"
 #include "driver.h"
 #include "vstack.h"
+#include "mupdf_compat.h"
 
 static enum editor_protocol protocol = EDITOR_SEXP;
 static bool line_output = 0;

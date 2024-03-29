@@ -25,7 +25,8 @@
 #include <stdlib.h>
 #include "state.h"
 #include "string.h"
-#include "../dvi/fz_util.h"
+#include "mupdf_compat.h"
+#include "dvi/fz_util.h"
 
 /* Rollback log */
 

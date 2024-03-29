@@ -23,6 +23,7 @@
  */
 
 #include "renderer.h"
+#include "mupdf_compat.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
