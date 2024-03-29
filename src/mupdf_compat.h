@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <mupdf/fitz/version.h>
 #include <mupdf/fitz/geometry.h>
+#include <mupdf/fitz/stream.h>
 
 // fz_malloc_struct_array, fz_irect_width and fz_irect_height
 // were introduced in mupdf 1.19.0
