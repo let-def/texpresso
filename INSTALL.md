@@ -23,7 +23,7 @@ On other systems you may observe build failures that require modifying the Makef
 
 Install all needed dependencies with:
 ```sh
-apt install build-essential libsdl2-dev re2c libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev cargo libssl-dev libfontconfig-dev
+apt install build-essential libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev cargo libssl-dev libfontconfig-dev
 ```
 
 On Ubuntu 20.04, `libharfbuzz-dev` is also needed:
@@ -34,7 +34,6 @@ apt install libharfbuzz-dev
 Details:
 - `build-essential` install the compiler (GCC) and basic build tools (GNU Make)
 - `libsdl2-dev`: SDL2 library
-- `re2c`: re2c preprocessor, necessary for generating lexing code
 - `libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev`: libmupdf and its dependencies
 - `cargo libssl-dev libfontconfig-dev`: rust package manager, and dependencies needed by texpresso-tonic rust code
 
@@ -45,7 +44,7 @@ Debian 12 is quite similar to Ubuntu with the added difficulty that the rust ver
 You can install the other dependencies:
 
 ```sh
-sudo apt install build-essential libsdl2-dev re2c libmupdf-dev libfreetype-dev libjpeg-dev libjbig2dec0-dev libharfbuzz-dev libopenjp2-7-dev libgumbo-dev libmujs-dev libssl-dev libfontconfig-dev
+sudo apt install build-essential libsdl2-dev libmupdf-dev libfreetype-dev libjpeg-dev libjbig2dec0-dev libharfbuzz-dev libopenjp2-7-dev libgumbo-dev libmujs-dev libssl-dev libfontconfig-dev
 ```
 
 A workaround for rust is to install [rustup](https://rustup.rs). Make sure that curl is installed and setup rustup:
@@ -65,7 +64,7 @@ source $HOME/.cargo/env
 Dependencies are listed in the PKGBUILD, but if you need to install them manually:
 
 ```sh
-pacman -S base-devel fontconfig freetype2 gcc-libs glibc graphite gumbo-parser harfbuzz icu jbig2dec libjpeg-turbo libmupdf libpng openjpeg2 openssl sdl2 zlib cargo git libmupdf re2c
+pacman -S base-devel fontconfig freetype2 gcc-libs glibc graphite gumbo-parser harfbuzz icu jbig2dec libjpeg-turbo libmupdf libpng openjpeg2 openssl sdl2 zlib cargo git libmupdf
 ```
 
 ### Fedora
@@ -75,17 +74,20 @@ pacman -S base-devel fontconfig freetype2 gcc-libs glibc graphite gumbo-parser h
 Install all dependencies:
 
 ```sh
-sudo dnf install make gcc mupdf-devel SDL2-devel re2c g++ freetype2-devel libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel gumbo-parser-devel tesseract-devel leptonica-devel cargo openssl-devel fontconfig-devel
+sudo dnf install make gcc mupdf-devel SDL2-devel  g++ freetype2-devel libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel gumbo-parser-devel tesseract-devel leptonica-devel cargo openssl-devel fontconfig-devel
 ```
 
 ### OSX
 
-(Tested on Ventura Intel)
+(Tested on Ventura Intel and Sonoma Apple Sillicon)
+
 Install the following dependencies with homebrew:
 
 ```sh
-brew install rust re2c mujs mupdf-tools jbig2dec harfbuzz freetype SDL2 gumbo-parser
+brew install rust mupdf-tools SDL2
 ```
+
+Note: `mupdf-tools` can be replaced by `mupdf`, either is fine.
 
 ## Download
 
@@ -102,7 +104,7 @@ Note that while TeXpresso itself (the driver/viewer program) is small (less than
 
 ## Build TeXpresso
 
-First make sure the dependencies are available: `pkg-config`, `re2c`, `SDL2`, `mupdf` (and its own dependencies: `libjpeg`, `libpng`, `freetype2`, `gumbo`, `jbig2dec`... and possibly `leptonica`, `tesseract` and `mujs` depending on the mupdf version).
+First make sure the dependencies are available: `pkg-config`, `SDL2`, `mupdf` (and its own dependencies: `libjpeg`, `libpng`, `freetype2`, `gumbo`, `jbig2dec`... and possibly `leptonica`, `tesseract` and `mujs` depending on the mupdf version).
 Under macOS, `brew` is also used to find local files.
 
 If it succeeds, `make texpresso` produces `build/texpresso`.
