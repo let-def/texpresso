@@ -259,7 +259,16 @@ bundle_serve_hooks_cat(fz_context *ctx, struct bundle_serve_env *env, const char
     fprintf(stderr, "bundle_serve_hooks_cat: cannot read answer\n");
     return NULL;
   }
-  bool success = answer[0];
+
+  switch (answer[0])
+  {
+    case 'C': case 'P': case 'E': 
+    break;
+    default:
+    fprintf(stderr, "bundle_serve_hooks_cat: unknown response %C\n", answer[0]);
+    abort();
+  };
+
   uint64_t size =
     ((uint64_t)answer[1] << (7 * 8)) |
     ((uint64_t)answer[2] << (6 * 8)) |
@@ -271,7 +280,7 @@ bundle_serve_hooks_cat(fz_context *ctx, struct bundle_serve_env *env, const char
     ((uint64_t)answer[8] << (0 * 8));
   fz_buffer *buffer = fz_new_buffer(ctx, size);
   buffer->len = size;
-  fprintf(stderr, "success:%d size:%d\n", success, (int)size);
+  fprintf(stderr, "success code:%c size:%d\n", answer[0], (int)size);
   if (fread(buffer->data, size, 1, env->i) != 1)
   {
     fz_drop_buffer(ctx, buffer);
@@ -280,8 +289,10 @@ bundle_serve_hooks_cat(fz_context *ctx, struct bundle_serve_env *env, const char
   }
 
   fz_stream *result = NULL;
-  if (success)
+  if (answer[0] == 'C')
     result = fz_open_buffer(ctx, buffer);
+  else if (answer[0] == 'P')
+    result = fz_open_file(ctx, fz_string_from_buffer(ctx, buffer));
   else
     fprintf(stderr, "bundle_serve_hooks_cat: error loading %s: %.*s\n",
             name, (int)size, buffer->data);
