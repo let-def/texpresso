@@ -284,14 +284,14 @@ bundle_serve_hooks_cat(fz_context *ctx, struct bundle_server *env, const char *n
   };
 
   uint64_t size =
-    ((uint64_t)answer[1] << (7 * 8)) |
-    ((uint64_t)answer[2] << (6 * 8)) |
-    ((uint64_t)answer[3] << (5 * 8)) |
-    ((uint64_t)answer[4] << (4 * 8)) |
-    ((uint64_t)answer[5] << (3 * 8)) |
-    ((uint64_t)answer[6] << (2 * 8)) |
-    ((uint64_t)answer[7] << (1 * 8)) |
-    ((uint64_t)answer[8] << (0 * 8));
+    ((uint64_t)answer[1] << (0 * 8)) |
+    ((uint64_t)answer[2] << (1 * 8)) |
+    ((uint64_t)answer[3] << (2 * 8)) |
+    ((uint64_t)answer[4] << (3 * 8)) |
+    ((uint64_t)answer[5] << (4 * 8)) |
+    ((uint64_t)answer[6] << (5 * 8)) |
+    ((uint64_t)answer[7] << (6 * 8)) |
+    ((uint64_t)answer[8] << (7 * 8));
 
   fz_buffer *buffer = fz_new_buffer(ctx, size);
   buffer->len = size;
