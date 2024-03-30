@@ -124,7 +124,8 @@ txp_engine *txp_create_dvi_engine(fz_context *ctx, const char *tectonic_path, co
   struct dvi_engine *self = fz_malloc_struct(ctx, struct dvi_engine);
   self->_class = &_class;
   self->buffer = buffer;
-  self->dvi = incdvi_new(ctx, tectonic_path, dvi_dir);
+  bundle_server *bundle = bundle_server_start(ctx, tectonic_path, dvi_dir);
+  self->dvi = incdvi_new(ctx, bundle_server_hooks(bundle));
   incdvi_update(ctx, self->dvi, buffer);
   return (txp_engine*)self;
 }

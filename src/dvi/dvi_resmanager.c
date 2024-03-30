@@ -28,6 +28,7 @@
 #include "fz_util.h"
 #include "../mupdf_compat.h"
 #include <sys/wait.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 typedef struct cell_dvi_font cell_dvi_font;
@@ -228,36 +229,49 @@ dvi_reshooks dvi_tectonic_hooks(fz_context *ctx, const char *document_dir)
   };
 }
 
-struct bundle_serve_env {
+struct bundle_server {
   char *document_dir;
   pid_t pid;
-  FILE *o, *i;
+  FILE *o, *i, *lock;
 };
 
-static fz_stream *
-bundle_serve_hooks_cat(fz_context *ctx, struct bundle_serve_env *env, const char *name)
+static void my_flock(int fd, int flag)
 {
+  while (flock(fd, flag) == -1)
+  {
+    if (errno == EINTR) continue;
+    perror("bundle_serve_hooks_cat: flock");
+    abort();
+  }
+}
+
+static fz_stream *
+bundle_serve_hooks_cat(fz_context *ctx, struct bundle_server *env, const char *name)
+{
+  fz_stream *result = NULL;
+
+  my_flock(fileno(env->lock), LOCK_EX);
 
   if (fwrite(name, strlen(name), 1, env->o) != 1)
   {
     fprintf(stderr, "bundle_serve_hooks_cat: cannot send request\n");
-    return NULL;
+    goto release;
   }
   if (fwrite("\n", 1, 1, env->o) != 1)
   {
     fprintf(stderr, "bundle_serve_hooks_cat: cannot send newline\n");
-    return NULL;
+    goto release;
   }
   if (fflush(env->o) != 0)
   {
     perror("bundle_serve_hooks_cat: fflush");
-    return NULL;
+    goto release;
   }
   uint8_t answer[9];
   if (fread(answer, 9, 1, env->i) != 1)
   {
     fprintf(stderr, "bundle_serve_hooks_cat: cannot read answer\n");
-    return NULL;
+    goto release;
   }
 
   switch (answer[0])
@@ -278,17 +292,18 @@ bundle_serve_hooks_cat(fz_context *ctx, struct bundle_serve_env *env, const char
     ((uint64_t)answer[6] << (2 * 8)) |
     ((uint64_t)answer[7] << (1 * 8)) |
     ((uint64_t)answer[8] << (0 * 8));
+
   fz_buffer *buffer = fz_new_buffer(ctx, size);
   buffer->len = size;
   fprintf(stderr, "success code:%c size:%d\n", answer[0], (int)size);
+
   if (fread(buffer->data, size, 1, env->i) != 1)
   {
     fz_drop_buffer(ctx, buffer);
     fprintf(stderr, "bundle_serve_hooks_cat: cannot read data\n");
-    return NULL;
+    goto release;
   }
 
-  fz_stream *result = NULL;
   if (answer[0] == 'C')
     result = fz_open_buffer(ctx, buffer);
   else if (answer[0] == 'P')
@@ -298,6 +313,8 @@ bundle_serve_hooks_cat(fz_context *ctx, struct bundle_serve_env *env, const char
             name, (int)size, buffer->data);
   fz_drop_buffer(ctx, buffer);
 
+release:
+  my_flock(fileno(env->lock), LOCK_UN);
   return result;
 }
 
@@ -307,7 +324,7 @@ bundle_serve_hooks_open_file(fz_context *ctx, void *_env, dvi_reskind kind, cons
   char *path = NULL;
   bool free_path = 0;
   fprintf(stderr, "[dvi] loading %s\n", name);
-  struct bundle_serve_env *env = _env;
+  bundle_server *env = _env;
   switch (kind)
   {
     case RES_PDF:
@@ -430,7 +447,7 @@ bundle_serve_hooks_open_file(fz_context *ctx, void *_env, dvi_reskind kind, cons
 static void
 bundle_serve_free_env(fz_context *ctx, void *_env)
 {
-  struct bundle_serve_env *env = _env;
+  bundle_server *env = _env;
 
   if (fclose(env->i) != 0)
     perror("bundle_serve_free_env: fclose(i)");
@@ -446,7 +463,10 @@ bundle_serve_free_env(fz_context *ctx, void *_env)
   fz_free(ctx, env);
 }
 
-dvi_reshooks dvi_bundle_serve_hooks(fz_context *ctx, const char *tectonic_path, const char *document_dir)
+bundle_server *
+bundle_server_start(fz_context *ctx,
+                    const char *tectonic_path,
+                    const char *document_dir)
 {
   char buffer[4096];
   strcpy(buffer, tectonic_path);
@@ -502,11 +522,37 @@ dvi_reshooks dvi_bundle_serve_hooks(fz_context *ctx, const char *tectonic_path, 
   close(from_child[1]);
 
   char *path = fz_strdup(ctx, document_dir ? document_dir : "");
-  struct bundle_serve_env *env = fz_malloc_struct(ctx, struct bundle_serve_env);
+  bundle_server *env = fz_malloc_struct(ctx, bundle_server);
   env->i = i;
   env->o = o;
   env->pid = pid;
+  env->lock = tmpfile();
+  if (!env->lock)
+  {
+    perror("bundle_server_start: tmpfile");
+    abort();
+  }
   env->document_dir = path;
+  return env;
+}
+
+int bundle_server_input(bundle_server *server)
+{
+  return fileno(server->i);
+}
+
+int bundle_server_output(bundle_server *server)
+{
+  return fileno(server->o);
+}
+
+int bundle_server_lock(bundle_server *server)
+{
+  return fileno(server->lock);
+}
+
+dvi_reshooks bundle_server_hooks(bundle_server *env)
+{
   return (dvi_reshooks){
     .env = env,
     .free_env = bundle_serve_free_env,

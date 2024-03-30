@@ -79,6 +79,7 @@ struct tex_engine
   int fence_pos;
   mark_t restart;
 
+  bundle_server *bundle;
   incdvi_t *dvi;
   synctex_t *stex;
 
@@ -1303,7 +1304,8 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   self->c = channel_new();
   self->process_count = 0;
 
-  self->dvi = incdvi_new(ctx, tectonic_path, tex_dir);
+  self->bundle = bundle_server_start(ctx, tectonic_path, tex_dir);
+  self->dvi = incdvi_new(ctx, bundle_server_hooks(self->bundle));
 
   self->stex = synctex_new(ctx);
   self->rollback.trace_len = NOT_IN_TRANSACTION;
