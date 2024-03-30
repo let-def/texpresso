@@ -61,10 +61,10 @@ static int add_page(fz_context *ctx, incdvi_t *d)
   return result;
 }
 
-incdvi_t *incdvi_new(fz_context *ctx, const char *tectonic_path, const char *document_directory)
+incdvi_t *incdvi_new(fz_context *ctx, dvi_reshooks hooks)
 {
   incdvi_t *d = fz_malloc_struct(ctx, incdvi_t);
-  d->dc = dvi_context_new(ctx, dvi_bundle_serve_hooks(ctx, tectonic_path, document_directory));
+  d->dc = dvi_context_new(ctx, hooks);
   return d;
 }
 

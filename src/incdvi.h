@@ -27,10 +27,11 @@
 
 #include <mupdf/fitz.h>
 #include <stdbool.h>
+#include "dvi/mydvi.h"
 
 typedef struct incdvi_s incdvi_t;
 
-incdvi_t *incdvi_new(fz_context *ctx, const char *tectonic_path, const char *document_directory);
+incdvi_t *incdvi_new(fz_context *ctx, dvi_reshooks hooks);
 void incdvi_free(fz_context *ctx, incdvi_t *d);
 void incdvi_reset(incdvi_t *d);
 void incdvi_update(fz_context *ctx, incdvi_t *d, fz_buffer *buf);
