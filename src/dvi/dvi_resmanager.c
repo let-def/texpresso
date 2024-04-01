@@ -30,6 +30,7 @@
 #include <sys/wait.h>
 #include <sys/file.h>
 #include <unistd.h>
+#include <errno.h>
 
 typedef struct cell_dvi_font cell_dvi_font;
 typedef struct cell_tex_enc cell_tex_enc;
