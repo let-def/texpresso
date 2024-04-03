@@ -19,16 +19,11 @@ On other systems you may observe build failures that require modifying the Makef
 
 ### Ubuntu
 
-(Tested with Ubuntu 22.04 ARM64)
+(Tested with Ubuntu 22.04 ARM64 and Ubuntu 20.04)
 
 Install all needed dependencies with:
 ```sh
-apt install build-essential libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev cargo libssl-dev libfontconfig-dev
-```
-
-On Ubuntu 20.04, `libharfbuzz-dev` is also needed:
-```sh
-apt install libharfbuzz-dev
+apt install build-essential libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev cargo libssl-dev libfontconfig-dev libleptonica-dev libharfbuzz-dev
 ```
 
 Details:
