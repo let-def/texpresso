@@ -1,6 +1,6 @@
 # TeXpresso: live rendering and error reporting for LaTeX
 
-_Note: TeXpresso is still in an early development phase._
+_Note: TeXpresso is still in an early development phase. Changes and bug fixes are happening frequently, check the [CHANGELOG.md](CHANGELOG.md)._
 
 **Important: this repository uses submodules. Clone using `git clone --recurse-submodules`.**
 
