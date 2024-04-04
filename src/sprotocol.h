@@ -190,6 +190,7 @@ void channel_free(channel_t *c);
 
 bool channel_handshake(channel_t *c, int fd);
 bool channel_has_pending_query(channel_t *t, int fd, int timeout);
+enum query channel_peek_query(channel_t *t, int fd);
 bool channel_read_query(channel_t *t, int fd, query_t *r);
 void channel_write_ask(channel_t *t, int fd, ask_t *a);
 void channel_write_answer(channel_t *t, int fd, answer_t *a);

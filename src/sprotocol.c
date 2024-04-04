@@ -471,6 +471,15 @@ bool channel_has_pending_query(channel_t *t, int fd, int timeout)
   return 1;
 }
 
+enum query channel_peek_query(channel_t *t, int fd)
+{
+  uint32_t result = read_u32(t, fd);
+  if (result == 0)
+    abort();
+  t->input.pos -= 4;
+  return result;
+}
+
 bool channel_read_query(channel_t *t, int fd, query_t *r)
 {
   uint32_t tag;
