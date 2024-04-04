@@ -1165,14 +1165,19 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
   // Check if nothing changed
   if (trace_len == p->trace_len)
   {
-    if (p->fd > -1 && self->rollback.flush)
+    if (!self->rollback.flush)
+      return false;
+    if (p->fd > -1)
     {
       ask_t a;
       a.tag = C_FLSH;
       channel_write_ask(self->c, p->fd, &a);
       channel_flush(self->c, p->fd);
+      return false;
     }
-    return false;
+    trace_len -= 1;
+    if (trace_len > 0)
+      self->rollback.offset = self->trace[trace_len].seen;
   }
 
   fprintf(stderr, "[change] rewinded trace from %d to %d entries\n",
