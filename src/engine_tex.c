@@ -509,7 +509,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       log_filecell(ctx, self->log, cell);
       log_fileentry(ctx, self->log, e);
       cell->entry = e;
-      record_seen(self, e, 0, q->time);
+      if (e->seen < 0)
+        record_seen(self, e, 0, q->time);
 
       enum accesslevel level =
         (q->open.mode[0] == 'w') ? FILE_WRITE : FILE_READ;
@@ -642,12 +643,12 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
           self->fences[self->fence_pos].position < q->read.pos + n)
       {
         if (n < 0)
-          abort();
+          mabort();
         n = self->fences[self->fence_pos].position - q->read.pos;
         // Weird that n can be negative at this point?!
         fork = (n == 0);
         if (n < 0)
-          abort();
+          mabort("n:%d fence_pos:%d read_pos:%d\n", (int)n, self->fences[self->fence_pos].position, q->read.pos);
       }
       if (fork)
       {
