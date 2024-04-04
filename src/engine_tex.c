@@ -1058,7 +1058,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
     if (fd == -1)
       return 0;
     if (!channel_has_pending_query(self->c, fd, 10))
-      return 1;
+      return 0;
     if (!read_query(self, self->c, &q))
     {
       close(fd);
