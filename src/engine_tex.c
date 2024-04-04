@@ -1186,6 +1186,60 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
   return true;
 }
 
+// Return false if some contents had not been observed: caller should recheck
+// for changed contents.
+// Return true otherwise (process is ready to be flushed).
+static bool check_if_everything_seen(fz_context *ctx, struct tex_engine *self)
+{
+  // If the process is marked ready to flush, seen messages have already been
+  // consumed
+  if (self->rollback.flush)
+    return 1;
+
+  process_t *p = get_process(self);
+
+  // If process is dead, nothing has been missed
+  if (p->fd == -1)
+    return 1;
+
+  // Synchronize with the child process:
+  // - kill if stuck
+  // - check pending SEEN messages to update vision of the process
+  int nothing_seen = 1;
+  do {
+    if (!channel_has_pending_query(self->c, p->fd, 10))
+    {
+      fprintf(stderr, "[kill] worker might be stuck, killing\n");
+      // The process hasn't answered in 10ms
+      // It might be stuck in long computation or a loop, kill it to start from the previous one.
+      close_process(p);
+      break;
+    }
+    // Process only pending SEEN to have an updated view on process state
+    switch (channel_peek_query(self->c, p->fd))
+    {
+      case Q_SEEN:
+        {
+          query_t q;
+          if (!read_query(self, self->c, &q))
+          {
+            close(p->fd);
+            p->fd = -1;
+            break;
+          }
+          answer_query(ctx, self, &q);
+          nothing_seen = 0;
+          continue;
+        }
+      default:
+        break;
+    }
+  } while(0);
+
+  self->rollback.flush = 1;
+  return nothing_seen;
+}
+
 static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileentry_t *e, int changed)
 {
   int trace_len = self->rollback.trace_len;
@@ -1197,8 +1251,8 @@ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileen
 
   if (e->seen < changed)
   {
-    self->rollback.flush = 1;
-    return;
+    if (check_if_everything_seen(ctx, self) || e->seen < changed)
+      return;
   }
 
   while (e->seen >= changed)
