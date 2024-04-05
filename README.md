@@ -1,5 +1,7 @@
 # TeXpresso: live rendering and error reporting for LaTeX
 
+<img align="right" width=128 height=128 src="doc/texpresso_logo.svg">
+
 _Note: TeXpresso is still in an early development phase. Changes and bug fixes are happening frequently, check the [CHANGELOG.md](CHANGELOG.md)._
 
 **Important: this repository uses submodules. Clone using `git clone --recurse-submodules`.**
