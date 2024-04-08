@@ -239,6 +239,10 @@ int main(int argc, const char **argv)
   char window_title[128] = "TeXpresso ";
   strcat(window_title, doc_name);
 
+#if SDL_VERSION_ATLEAST(2, 0, 8)
+  SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
+#endif
+
   SDL_Window *window;
   window = SDL_CreateWindow(window_title,
     SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
