@@ -468,6 +468,18 @@ static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
   }
   else
   {
+    #ifdef __APPLE__
+    // Workaround for macOS
+    // Due to limitations in the implementation of fork on macOS, it is not
+    // possible to load system fonts after fork (without exec). This breaks
+    // TeXpresso sooner or later, and there is no obvious solution besides
+    // implementing XeTeX snapshotting without fork.
+    // The second best thing is to hopefully load all system fonts before the
+    // first fork. Therefore we delay all "unnecessary" forks: we try to only
+    // fork after a first edition.
+    return 0;
+    #endif
+
     // No snapshot, measure time since root process started
     last_time = 0;
   }
