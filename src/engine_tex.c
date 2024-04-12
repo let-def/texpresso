@@ -146,6 +146,13 @@ static pid_t exec_xelatex_generic(char **args, int *fd)
   setenv("TEXPRESSO_FD", buf, 1);
 
 #ifdef __APPLE__
+  static int env_init = 0;
+  if (!env_init)
+  {
+    env_init = 1;
+    setenv("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES", 1);
+  }
+
   pid_t pid = fork();
 #else
   pid_t pid = vfork();
