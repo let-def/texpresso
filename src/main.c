@@ -200,7 +200,7 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
         (curr.tv_sec - start.tv_sec) * 1000 * 1000 * 1000 +
         (curr.tv_nsec - start.tv_nsec);
 
-      if (delta > 1000000)
+      if (delta > 5000000)
         break;
     }
   }
