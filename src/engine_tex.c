@@ -475,9 +475,11 @@ static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
     // TeXpresso sooner or later, and there is no obvious solution besides
     // implementing XeTeX snapshotting without fork.
     // The second best thing is to hopefully load all system fonts before the
-    // first fork. Therefore we delay all "unnecessary" forks: we try to only
-    // fork after a first edition.
-    return 0;
+    // first fork.
+    // Therefore we delay forking until output started, hopping that all fonts
+    // have been specified at this point.
+    if (!incdvi_output_started(self->dvi))
+      return 0;
     #endif
 
     // No snapshot, measure time since root process started
