@@ -241,7 +241,7 @@ int txp_renderer_page_position(fz_context *ctx, txp_renderer *self, SDL_FRect *p
   // fprintf(stderr, "after clamp: %.02f, %.02f\n", r->vp.pan.x, r->vp.pan.y);
 
   // fprintf(stderr, "doc size: (%.02f, %.02f), out size: (%d, %d)\n",
-  //         doc_w, doc_h, r->size.w, r->size.h);
+  //         doc_w, doc_h, self->output_w, self->output_h);
   // fprintf(stderr, "out_ar: %.02f, doc_ar: %.02f, cx: %.02f, cy: %.02f\n",
   //         out_ar, doc_ar, cx, cy);
 
