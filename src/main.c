@@ -437,7 +437,7 @@ static void pan_to(fz_context *ctx, ui_state *ui, enum pan_to to)
   // a helper function for other UI actions, so no event scheduled
 }
 
-static void previous_page(fz_context *ctx, ui_state *ui)
+static void previous_page(fz_context *ctx, ui_state *ui, bool pan)
 {
   synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
   if (ui->page > 0)
@@ -453,17 +453,20 @@ static void previous_page(fz_context *ctx, ui_state *ui)
     // The new page has not been loaded yet, so we compute the coordinate with
     // respect to the page currently displayed. Most of the time, pages have the
     // same dimension, so this is fine.
-    pan_to(ctx, ui, PAN_TO_BOTTOM);
+    if (pan)
+      pan_to(ctx, ui, PAN_TO_BOTTOM);
+
     schedule_event(RELOAD_EVENT);
   }
 }
 
-static void next_page(fz_context *ctx, ui_state *ui)
+static void next_page(fz_context *ctx, ui_state *ui, bool pan)
 {
   synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
   ui->page += 1;
   // FIXME: Same remark as in previous_page.
-  pan_to(ctx, ui, PAN_TO_TOP);
+  if (pan)
+    pan_to(ctx, ui, PAN_TO_TOP);
   schedule_event(RELOAD_EVENT);
 }
 
@@ -485,13 +488,13 @@ static void ui_pan(fz_context *ctx, ui_state *ui, float factor)
 
   if (config->pan.y == -range && factor < 0)
   {
-    next_page(ctx, ui);
+    next_page(ctx, ui, 1);
     return;
   }
 
   if (config->pan.y == range && factor > 0)
   {
-    previous_page(ctx, ui);
+    previous_page(ctx, ui, 1);
     return;
   }
 
@@ -899,11 +902,11 @@ static void interpret_command(struct persistent_state *ps,
     break;
 
     case EDIT_PREVIOUS_PAGE:
-      previous_page(ps->ctx, ui);
+      previous_page(ps->ctx, ui, 0);
       break;
 
     case EDIT_NEXT_PAGE:
-      next_page(ps->ctx, ui);
+      next_page(ps->ctx, ui, 0);
       break;
 
     case EDIT_MOVE_WINDOW:
@@ -1184,7 +1187,7 @@ bool texpresso_main(struct persistent_state *ps)
         {
           case SDLK_LEFT:
           case SDLK_PAGEUP:
-            previous_page(ps->ctx, ui);
+            previous_page(ps->ctx, ui, 0);
             break;
 
           case SDLK_UP:
@@ -1197,7 +1200,7 @@ bool texpresso_main(struct persistent_state *ps)
 
           case SDLK_RIGHT:
           case SDLK_PAGEDOWN:
-            next_page(ps->ctx, ui);
+            next_page(ps->ctx, ui, 0);
             break;
 
           case SDLK_p:
