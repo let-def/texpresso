@@ -1188,11 +1188,11 @@ bool texpresso_main(struct persistent_state *ps)
             break;
 
           case SDLK_UP:
-            ui_pan(ps->ctx, ui, 0.9);
+            ui_pan(ps->ctx, ui, 2.0/3.0);
             break;
 
           case SDLK_DOWN:
-            ui_pan(ps->ctx, ui, -0.9);
+            ui_pan(ps->ctx, ui, -2.0/3.0);
             break;
 
           case SDLK_RIGHT:
