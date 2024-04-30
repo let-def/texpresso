@@ -480,8 +480,8 @@ static void ui_pan(fz_context *ctx, ui_state *ui, float factor)
   float delta = bounds.window_size.y * scale.y * factor;
   float range = bounds.pan_interval.y < 0 ? 0 : bounds.pan_interval.y;
 
-  fprintf(stderr, "ui_pan: factor:%.02f delta:%.02f current:%.02f range:%.02f\n",
-          factor, delta, config->pan.y, range);
+  //fprintf(stderr, "ui_pan: factor:%.02f delta:%.02f current:%.02f range:%.02f\n",
+  //        factor, delta, config->pan.y, range);
 
   if (config->pan.y == -range && factor < 0)
   {
