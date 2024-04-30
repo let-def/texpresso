@@ -49,10 +49,29 @@ typedef struct
   uint32_t background_color, foreground_color;
 } txp_renderer_config;
 
+typedef struct
+{
+  // Bounds of the page being displayed (after cropping), in
+  // document space.
+  fz_rect page_bounds;
+
+  // Size of the window where the document is displayed.
+  fz_point window_size;
+
+  // Size of the page being displayed, in window space.
+  fz_point document_size;
+
+  // Panning range from -pan_interval to pan_interval.
+  fz_point pan_interval;
+} txp_renderer_bounds;
+
 void txp_renderer_set_contents(fz_context *ctx, txp_renderer *self, fz_display_list *dl);
 fz_display_list *txp_renderer_get_contents(fz_context *ctx, txp_renderer *self);
 txp_renderer_config *txp_renderer_get_config(fz_context* ctx, txp_renderer *self);
-int txp_renderer_page_position(fz_context *ctx, txp_renderer *self, SDL_FRect *rect, fz_point *translate, float *scale);
+
+bool txp_renderer_page_bounds(fz_context *ctx, txp_renderer *self, txp_renderer_bounds *result);
+bool txp_renderer_page_position(fz_context *ctx, txp_renderer *self, SDL_FRect *rect, fz_point *translate, float *scale);
+
 void txp_renderer_render(fz_context *ctx, txp_renderer *self);
 void txp_renderer_set_scale_factor(fz_context *ctx, txp_renderer *self, fz_point scale);
 bool txp_renderer_start_selection(fz_context *ctx, txp_renderer *self, fz_point pt);
