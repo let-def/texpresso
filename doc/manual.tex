@@ -10,7 +10,9 @@
 \title{TeXpresso manual}
 \author{Frédéric Bour}
 
-\setmainfont{Cabin}
+\renewcommand{\familydefault}{\sfdefault}
+
+%\setmainfont{Cabin}
 %[
 %  Extension = .otf,
 %  UprightFont = *-Regular,
@@ -151,6 +153,31 @@ with {\em contents} (the real filesystem is not actually changed, only the view 
 \paragraph{Notification channels.} These commands are used by \txp to share the standard output and the log file of the underlying \LaTeX{} process.
 
 \texttt{(append out|log "text")} appends {\em "text"} to the standard output (if the second argument is {\em out}) or the log file (if the second argument is {\em log}). Emacs interpets this by adding this text to the \texttt{*texpresso-out} or \texttt{*texpresso-log*} buffers.
+
+\section{Limitations}
+
+\subsection{Using system fonts on macOS}
+
+To load a system font, XeTeX needs to connect to a system service. 
+Unfortunately using system services interferes with TeXpresso's approach to snapshotting.
+
+We recommend that you avoid using system fonts. It is a good practice anyway as system fonts are less portable. Instead, you can use the \texttt{fontspec} package to load a local font file (provided in \texttt{.ttf} or \texttt{.otf} format). This provides stronger reproducibility guarantees and works well with TeXpresso.
+
+If you really need to load system fonts, try loading all of them in the preamble. TeXpresso will still misbehave if you interactively update the preamble (be prepared to restart the process from time to time), but it should work well when working on the rest of the document.
+
+FIXME: Add a hotkey to manually restart \LaTeX{} processes when interactivity breaks.
+
+\paragraph{Technical details.}
+
+TeXpresso uses \texttt{fork(2)} to take snapshots of \LaTeX{} processes. This comes with two important limitations on macOS:
+\begin{itemize}
+  \item forking a multi-threaded process is quite unstable,
+  \item a forked process lose connections to system services.
+\end{itemize}
+
+Forking a multi-threaded process also leads to undefined behaviors on Linux. Fortunately, stopping other threads before forking proved sufficient to get a stable behavior on Linux/glibc at least, but not on macOS. Instead, we fixed TeXpresso's design to only fork single-threaded processes. 
+
+Unfortunately, we were not able to fix the second limitation, and system services are used to load fonts.
 
 \section{Plan}
 \begin{itemize}
