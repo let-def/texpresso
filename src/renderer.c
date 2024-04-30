@@ -233,6 +233,7 @@ bool txp_renderer_page_bounds(fz_context *ctx, txp_renderer *self, txp_renderer_
     doc_w = doc_h * doc_ar;
   }
 
+  result->page_bounds   = bounds;
   result->window_size   = fz_make_point(self->output_w, self->output_h);
   result->document_size = fz_make_point(doc_w, doc_h);
   result->pan_interval  = fz_make_point((doc_w - self->output_w) / 2.0,
