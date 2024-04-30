@@ -140,6 +140,11 @@ void incdvi_update(fz_context *ctx, incdvi_t *d, fz_buffer *buf)
     d->fontdef_offset = d->offset;
 }
 
+bool incdvi_output_started(incdvi_t *d)
+{
+  return (d->page_len > 0);
+}
+
 int incdvi_page_count(incdvi_t *d)
 {
   return (d->page_len / 2);

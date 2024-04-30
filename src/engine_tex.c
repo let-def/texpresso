@@ -146,6 +146,13 @@ static pid_t exec_xelatex_generic(char **args, int *fd)
   setenv("TEXPRESSO_FD", buf, 1);
 
 #ifdef __APPLE__
+  static int env_init = 0;
+  if (!env_init)
+  {
+    env_init = 1;
+    setenv("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES", 1);
+  }
+
   pid_t pid = fork();
 #else
   pid_t pid = vfork();
@@ -461,6 +468,20 @@ static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
   }
   else
   {
+    #ifdef __APPLE__
+    // Workaround for macOS
+    // Due to limitations in the implementation of fork on macOS, it is not
+    // possible to load system fonts after fork (without exec). This breaks
+    // TeXpresso sooner or later, and there is no obvious solution besides
+    // implementing XeTeX snapshotting without fork.
+    // The second best thing is to hopefully load all system fonts before the
+    // first fork.
+    // Therefore we delay forking until output started, hopping that all fonts
+    // have been specified at this point.
+    if (!incdvi_output_started(self->dvi))
+      return 0;
+    #endif
+
     // No snapshot, measure time since root process started
     last_time = 0;
   }
