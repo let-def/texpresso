@@ -427,17 +427,33 @@ static void wakeup_poll_thread(int poll_stdin_pipe[2], char c)
 
 /* Command interpreter */
 
-enum pan_to { PAN_TO_TOP, PAN_TO_BOTTOM };
+enum pan_to { PAN_TO_LEFT, PAN_TO_RIGHT, PAN_TO_TOP, PAN_TO_BOTTOM };
 static void pan_to(fz_context *ctx, ui_state *ui, enum pan_to to)
 {
   txp_renderer_config *config = txp_renderer_get_config(ctx, ui->doc_renderer);
   txp_renderer_bounds bounds;
   if (txp_renderer_page_bounds(ctx, ui->doc_renderer, &bounds))
-    config->pan.y = (to == PAN_TO_TOP) ? bounds.pan_interval.y : -bounds.pan_interval.y;
+  {
+    switch (to)
+    {
+      case PAN_TO_LEFT:
+        config->pan.x = bounds.pan_interval.x;
+        break;
+      case PAN_TO_RIGHT:
+        config->pan.x = -bounds.pan_interval.x;
+        break;
+      case PAN_TO_TOP:
+        config->pan.y = bounds.pan_interval.y;
+        break;
+      case PAN_TO_BOTTOM:
+        config->pan.y = -bounds.pan_interval.y;
+        break;
+    }
+  }
   // a helper function for other UI actions, so no event scheduled
 }
 
-static void previous_page(fz_context *ctx, ui_state *ui, bool pan)
+static bool previous_page(fz_context *ctx, ui_state *ui)
 {
   synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
   if (ui->page > 0)
@@ -449,28 +465,30 @@ static void previous_page(fz_context *ctx, ui_state *ui, bool pan)
         send(get_status, ui->eng) == DOC_TERMINATED)
       ui->page = page_count - 1;
 
-    // FIXME: technically, this is slightly incorrect.
-    // The new page has not been loaded yet, so we compute the coordinate with
-    // respect to the page currently displayed. Most of the time, pages have the
-    // same dimension, so this is fine.
-    if (pan)
-      pan_to(ctx, ui, PAN_TO_BOTTOM);
-
     schedule_event(RELOAD_EVENT);
+    return 1;
   }
+  return 0;
 }
 
-static void next_page(fz_context *ctx, ui_state *ui, bool pan)
+static bool next_page(fz_context *ctx, ui_state *ui)
 {
   synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
-  ui->page += 1;
-  // FIXME: Same remark as in previous_page.
-  if (pan)
-    pan_to(ctx, ui, PAN_TO_TOP);
-  schedule_event(RELOAD_EVENT);
+
+  int page_count = send(page_count, ui->eng);
+
+  if (send(get_status, ui->eng) != DOC_TERMINATED ||
+      (page_count > 0 && ui->page - 1 < page_count))
+  {
+    ui->page += 1;
+    schedule_event(RELOAD_EVENT);
+    return 1;
+  }
+
+  return 0;
 }
 
-static void ui_pan(fz_context *ctx, ui_state *ui, float factor)
+static void ui_pan(fz_context *ctx, ui_state *ui, float xfactor, float yfactor)
 {
   fz_point scale = get_scale_factor(ui->window);
 
@@ -480,26 +498,45 @@ static void ui_pan(fz_context *ctx, ui_state *ui, float factor)
   if (!txp_renderer_page_bounds(ctx, ui->doc_renderer, &bounds))
     return;
 
-  float delta = bounds.window_size.y * scale.y * factor;
-  float range = bounds.pan_interval.y < 0 ? 0 : bounds.pan_interval.y;
+  float ydelta = bounds.window_size.y * scale.y * yfactor;
+  float yrange = bounds.pan_interval.y < 0 ? 0 : bounds.pan_interval.y;
+  float xdelta = bounds.window_size.x * scale.x * xfactor;
+  float xrange = bounds.pan_interval.x < 0 ? 0 : bounds.pan_interval.x;
 
   //fprintf(stderr, "ui_pan: factor:%.02f delta:%.02f current:%.02f range:%.02f\n",
   //        factor, delta, config->pan.y, range);
 
-  if (config->pan.y == -range && factor < 0)
+  // FIXME: the pan_to calls below are slightly incorrects.
+  // The new pages have not been loaded yet, so we compute the coordinate with
+  // respect to the page currently displayed. Most of the time, pages have the
+  // same dimension, so this is fine.
+  
+  if (config->pan.y == -yrange && yfactor < 0)
   {
-    next_page(ctx, ui, 1);
-    return;
+    if (next_page(ctx, ui))
+      pan_to(ctx, ui, PAN_TO_TOP);
   }
-
-  if (config->pan.y == range && factor > 0)
+  else if (config->pan.y == yrange && yfactor > 0)
   {
-    previous_page(ctx, ui, 1);
-    return;
+    if (previous_page(ctx, ui))
+      pan_to(ctx, ui, PAN_TO_BOTTOM);
   }
-
-  config->pan.y += delta;
-  schedule_event(RENDER_EVENT);
+  else if (config->pan.x == -xrange && xfactor < 0)
+  {
+    if (next_page(ctx, ui))
+      pan_to(ctx, ui, PAN_TO_LEFT);
+  }
+  else if (config->pan.x == xrange && xfactor > 0)
+  {
+    if (previous_page(ctx, ui))
+      pan_to(ctx, ui, PAN_TO_RIGHT);
+  }
+  else
+  {
+    config->pan.y += ydelta;
+    config->pan.x += xdelta;
+    schedule_event(RENDER_EVENT);
+  }
 }
 
 static const char *relative_path(const char *path, const char *dir, int *go_up)
@@ -902,11 +939,11 @@ static void interpret_command(struct persistent_state *ps,
     break;
 
     case EDIT_PREVIOUS_PAGE:
-      previous_page(ps->ctx, ui, 0);
+      previous_page(ps->ctx, ui);
       break;
 
     case EDIT_NEXT_PAGE:
-      next_page(ps->ctx, ui, 0);
+      next_page(ps->ctx, ui);
       break;
 
     case EDIT_MOVE_WINDOW:
@@ -1182,25 +1219,33 @@ bool texpresso_main(struct persistent_state *ps)
         quit = 1;
         break;
 
+#define PAN_FACTOR (2.0/3.0)
+
       case SDL_KEYDOWN:
         switch (e.key.keysym.sym)
         {
           case SDLK_LEFT:
-          case SDLK_PAGEUP:
-            previous_page(ps->ctx, ui, 0);
+            ui_pan(ps->ctx, ui, PAN_FACTOR, 0);
             break;
 
           case SDLK_UP:
-            ui_pan(ps->ctx, ui, 2.0/3.0);
+            ui_pan(ps->ctx, ui, 0, PAN_FACTOR);
             break;
 
           case SDLK_DOWN:
-            ui_pan(ps->ctx, ui, -2.0/3.0);
+            ui_pan(ps->ctx, ui, 0, -PAN_FACTOR);
             break;
 
           case SDLK_RIGHT:
+            ui_pan(ps->ctx, ui, -PAN_FACTOR, 0);
+            break;
+
+          case SDLK_PAGEUP:
+            previous_page(ps->ctx, ui);
+            break;
+
           case SDLK_PAGEDOWN:
-            next_page(ps->ctx, ui, 0);
+            next_page(ps->ctx, ui);
             break;
 
           case SDLK_p:
