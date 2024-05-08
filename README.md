@@ -42,6 +42,7 @@ The driver sends information between the editor and the renderer in both directi
 
 Keyboard controls:
 - `←`, `→`: change page
+- `↑`, `↓`: move within the page
 - `p` (for "page"): switch between "fit-to-page" and "fit-to-width" zoom modes
 - `c` ("crop"): crop borders
 - `q` ("quit"): quit

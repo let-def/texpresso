@@ -205,7 +205,7 @@ static fz_stext_page *get_stext(fz_context *ctx, txp_renderer *self)
   return self->stext;
 }
 
-int txp_renderer_page_position(fz_context *ctx, txp_renderer *self, SDL_FRect *prect, fz_point *ptranslate, float *pscale)
+bool txp_renderer_page_bounds(fz_context *ctx, txp_renderer *self, txp_renderer_bounds *result)
 {
   if (!self->contents)
     return 0;
@@ -233,27 +233,41 @@ int txp_renderer_page_position(fz_context *ctx, txp_renderer *self, SDL_FRect *p
     doc_w = doc_h * doc_ar;
   }
 
-  float cx = (doc_w - self->output_w) / 2.0;
-  float cy = (doc_h - self->output_h) / 2.0;
+  result->page_bounds   = bounds;
+  result->window_size   = fz_make_point(self->output_w, self->output_h);
+  result->document_size = fz_make_point(doc_w, doc_h);
+  result->pan_interval  = fz_make_point((doc_w - self->output_w) / 2.0,
+                                        (doc_h - self->output_h) / 2.0);
+
+  return 1;
+}
+
+bool txp_renderer_page_position(fz_context *ctx, txp_renderer *self, SDL_FRect *prect, fz_point *ptranslate, float *pscale)
+{
+  txp_renderer_bounds bounds;
+  if (!txp_renderer_page_bounds(ctx, self, &bounds))
+    return 0;
+
+  float cx = bounds.pan_interval.x, cy = bounds.pan_interval.y;
 
   self->config.pan.x = clampf(self->config.pan.x, -cx, cx);
   self->config.pan.y = clampf(self->config.pan.y, -cy, cy);
   // fprintf(stderr, "after clamp: %.02f, %.02f\n", r->vp.pan.x, r->vp.pan.y);
 
   // fprintf(stderr, "doc size: (%.02f, %.02f), out size: (%d, %d)\n",
-  //         doc_w, doc_h, r->size.w, r->size.h);
+  //         doc_w, doc_h, self->output_w, self->output_h);
   // fprintf(stderr, "out_ar: %.02f, doc_ar: %.02f, cx: %.02f, cy: %.02f\n",
   //         out_ar, doc_ar, cx, cy);
 
-  float scale = doc_w / (bounds.x1 - bounds.x0);
+  float scale = bounds.document_size.x / (bounds.page_bounds.x1 - bounds.page_bounds.x0);
   float tx = self->config.pan.x - cx;
   float ty = self->config.pan.y - cy;
 
   if (prect)
-    *prect = (SDL_FRect){.x = tx, .y = ty, .w = doc_w, .h = doc_h};
+    *prect = (SDL_FRect){.x = tx, .y = ty, .w = bounds.document_size.x, .h = bounds.document_size.y};
 
   if (ptranslate)
-    *ptranslate = fz_make_point(tx - bounds.x0 * scale, ty - bounds.y0 * scale);
+    *ptranslate = fz_make_point(tx - bounds.page_bounds.x0 * scale, ty - bounds.page_bounds.y0 * scale);
 
   if (pscale)
     *pscale = scale;
