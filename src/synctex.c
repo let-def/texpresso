@@ -290,6 +290,7 @@ static void synctex_process_line(fz_context *ctx, synctex_t *stx, int offset, co
         myabort();
       }
       ib_append(ctx, &stx->input_off, offset);
+      editor_notify_file_opened(index, (const char *)bol, eol - bol);
       break;
     }
 
