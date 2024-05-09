@@ -7,6 +7,7 @@
 - Fix race conditions when latest process observe data being changed
 - Workaround limitations of fork on macOS when using system fonts
 - Up/down scrolls vertically through the document, and change pages when reaching the border (#52, contributed by @gasche)
+- Fix JSON printing of non-ASCII characters (broke paths with chinese characters, see #53)
 
 # v0.0 Fri Apr  5 06:52:52 JST 2024
 

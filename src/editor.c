@@ -250,7 +250,7 @@ static void output_json_string(FILE *f, const char *ptr, int len)
 {
   for (const char *lim = ptr + len; ptr < lim; ptr++)
   {
-    char c = *ptr;
+    unsigned char c = *ptr;
     if (c < 32)
     {
       switch (c)
