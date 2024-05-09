@@ -80,6 +80,11 @@ Use `M-x texpresso-next-page` and `M-x texpresso-previous-page` to move between 
 
 A Neovim mode is provided in a separate repository [texpresso.vim](https://github.com/let-def/texpresso.vim). It is not yet compatible with vanilla Vim, patches are welcome :bow:.
 
+### Visual Studio Code
+
+A vscode mode is being developed in [texpresso-vscode](https://github.com/DominikPeters/texpresso-vscode), thanks to @DominikPeters.
+Look for [TeXpresso](https://marketplace.visualstudio.com/items?itemName=DominikPeters.texpresso-basic) in the marketplace.
+
 ## Screencasts
 
 **Neovim integration.**
