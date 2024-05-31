@@ -1276,10 +1276,12 @@ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileen
   if (trace_len == NOT_IN_TRANSACTION)
     mabort();
 
-  if (e->seen < changed)
+  if (e->seen < changed && trace_len == get_process(self)->trace_len)
   {
     if (process_pending_messages(ctx, self))
       return;
+
+    trace_len = self->rollback.trace_len = get_process(self)->trace_len;
 
     // A pending message might have updated e->seen
     if (e->seen < changed)
