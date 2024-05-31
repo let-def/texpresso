@@ -243,7 +243,7 @@ static void close_process(process_t *p)
 static void pop_process(fz_context *ctx, struct tex_engine *self)
 {
   process_t *p = get_process(self);
-  close_process(get_process(self));
+  close_process(p);
   channel_reset(self->c);
   self->process_count -= 1;
   mark_t mark =
@@ -1215,7 +1215,7 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
 // Return false if some contents had not been observed: caller should recheck
 // for changed contents.
 // Return true otherwise (process is ready to be flushed).
-static bool check_if_everything_seen(fz_context *ctx, struct tex_engine *self)
+static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
 {
   // If the process is marked ready to flush, seen messages have already been
   // consumed
@@ -1277,7 +1277,11 @@ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileen
 
   if (e->seen < changed)
   {
-    if (check_if_everything_seen(ctx, self) || e->seen < changed)
+    if (process_pending_messages(ctx, self))
+      return;
+
+    // A pending message might have updated e->seen
+    if (e->seen < changed)
       return;
   }
 
