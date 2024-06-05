@@ -17,19 +17,25 @@ $(DIR)/libmydvi.a: $(DIR_OBJECTS)
 $(DIR)/dvi_resmanager.o: dvi_resmanager.c
 	$(CC) $(shell pkg-config --cflags freetype2) -c -o $@ $<
 
-%.c: %.re2c.c
-	re2c $< -o $@ --tags --bit-vectors
-
 $(DIR)/%.o: %.c
 	$(CC) -c -o $@ $<
 
 $(DIR)/%.o: $(DIR)/%.c
 	$(CC) -c -o $@ $<
 
+%.c: %.re2c.c
+	@ if test $@ -ot $^; then \
+		echo -e >&2 "\033[0;33mre2c: $@ is older than $^ or missing"; \
+	  echo -e >&2 "      consider running 'make re2c'\033[0m"; \
+	fi
+
+re2c:
+	$(MAKE) -f Makefile.re2c all
+
 clean:
 	rm -f $(DIR)/libmydvi.a $(DIR_OBJECTS)
 
-.PHONY: all clean
+.PHONY: all clean re2c
 
 ../../Makefile.config:
 	$(MAKE) -C ../.. config

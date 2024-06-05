@@ -30,6 +30,9 @@ texpresso-debug: $(BUILD)/texpresso-debug
 $(BUILD)/texpresso-debug: ../scripts/texpresso-debug
 	cp $< $@
 
+re2c:
+	$(MAKE) -C dvi $@
+
 $(DIR)/%.o: %.c
 	$(CC) -c -o $@ -Idvi/ $<
 
@@ -44,4 +47,4 @@ clean:
 	$(MAKE) -C .. config
 include ../Makefile.config
 
-.PHONY: all clean $(TARGETS)
+.PHONY: all clean $(TARGETS) re2c

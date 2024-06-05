@@ -1,0 +1,9 @@
+SOURCES = $(wildcard *.re2c.c)
+TARGETS = $(patsubst %.re2c.c,%.c,$(SOURCES))
+
+all: $(TARGETS)
+
+%.c: %.re2c.c
+	re2c $< -o $@ --tags --bit-vectors
+
+.PHONY: all
