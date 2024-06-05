@@ -20,6 +20,9 @@ distclean:
 	rm -rf build Makefile.config
 	cd tectonic && cargo clean
 
+re2c:
+	$(MAKE) -C src $@
+
 UNAME := $(shell uname)
 
 Makefile.config: Makefile
@@ -52,4 +55,4 @@ texpresso-tonic:
 	$(MAKE) -f Makefile.tectonic tectonic
 	cp -f tectonic/target/release/texpresso-tonic build/
 
-.PHONY: all dev clean config texpresso-tonic
+.PHONY: all dev clean config texpresso-tonic re2c
