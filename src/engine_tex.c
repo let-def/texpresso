@@ -243,7 +243,7 @@ static void close_process(process_t *p)
 static void pop_process(fz_context *ctx, struct tex_engine *self)
 {
   process_t *p = get_process(self);
-  close_process(get_process(self));
+  close_process(p);
   channel_reset(self->c);
   self->process_count -= 1;
   mark_t mark =
@@ -1197,6 +1197,7 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
       return false;
     }
     trace_len -= 1;
+    revert_trace(&self->trace[trace_len]);
     if (trace_len > 0)
       self->rollback.offset = self->trace[trace_len].seen;
   }
@@ -1215,7 +1216,7 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
 // Return false if some contents had not been observed: caller should recheck
 // for changed contents.
 // Return true otherwise (process is ready to be flushed).
-static bool check_if_everything_seen(fz_context *ctx, struct tex_engine *self)
+static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
 {
   // If the process is marked ready to flush, seen messages have already been
   // consumed
@@ -1275,9 +1276,15 @@ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileen
   if (trace_len == NOT_IN_TRANSACTION)
     mabort();
 
-  if (e->seen < changed)
+  if (e->seen < changed && trace_len == get_process(self)->trace_len)
   {
-    if (check_if_everything_seen(ctx, self) || e->seen < changed)
+    if (process_pending_messages(ctx, self))
+      return;
+
+    trace_len = self->rollback.trace_len = get_process(self)->trace_len;
+
+    // A pending message might have updated e->seen
+    if (e->seen < changed)
       return;
   }
 
