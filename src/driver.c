@@ -225,8 +225,25 @@ int main(int argc, const char **argv)
   fz_context *ctx = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
   fz_register_document_handlers(ctx);
 
+  bool init = 0;
+
+#ifndef __APPLE__
+  if (!getenv("SDL_VIDEODRIVER"))
+  {
+    setenv("SDL_VIDEODRIVER", "wayland", 0);
+    if (SDL_Init(SDL_INIT_VIDEO) < 0)
+    {
+      fprintf(stderr, "SDL could not initialize wayland driver! SDL_Error: %s\n", SDL_GetError());
+      fprintf(stderr, "Falling back to default driver\n");
+      unsetenv("SDL_VIDEODRIVER");
+    }
+    else 
+      init = 1;
+  }
+#endif
+
   //Initialize SDL
-  if (SDL_Init(SDL_INIT_VIDEO) < 0)
+  if (init == 0 && SDL_Init(SDL_INIT_VIDEO) < 0)
   {
     fprintf(stderr, "SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
     abort();

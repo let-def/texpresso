@@ -123,7 +123,7 @@ tectonic_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const cha
       break;
 
     case RES_FONT:
-      if (name[0] == '/')
+      if (name[0] == '/' || name[0] == '.')
       {
         path = (char *)name;
         break;
@@ -359,7 +359,7 @@ bundle_serve_hooks_open_file(fz_context *ctx, void *_env, dvi_reskind kind, cons
       break;
 
     case RES_FONT:
-      if (name[0] == '/')
+      if (name[0] == '/' || name[0] == '.' || fz_file_exists(ctx, name))
       {
         path = (char *)name;
         break;

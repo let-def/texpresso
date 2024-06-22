@@ -32,6 +32,7 @@ struct pdf_engine
   char *path;
   int page_count;
   fz_document *doc;
+  bool changed;
 };
 
 #define SELF struct pdf_engine *self = (struct pdf_engine*)_self
@@ -71,10 +72,26 @@ static void engine_begin_changes(txp_engine *_self, fz_context *ctx)
 
 static void engine_detect_changes(txp_engine *_self, fz_context *ctx)
 {
+  SELF;
+  fz_document *doc = fz_open_document(ctx, self->path);
+  if (!doc)
+    return;
+
+  fz_drop_document(ctx, self->doc);
+  self->doc = doc;
+  self->page_count = fz_count_pages(ctx, doc);
+  self->changed = 1;
 }
 
 static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
 {
+  SELF;
+  if (self->changed)
+  {
+    self->changed = 0;
+    return 1;
+  }
+  else
   return 0;
 }
 
