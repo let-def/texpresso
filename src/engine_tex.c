@@ -996,25 +996,30 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
   if (get_process(self)->trace_len <= trace)
     mabort();
 
-  self->fence_pos = 0;
-
   offset = (offset - 64) & ~(64 - 1);
   if (offset < self->trace[trace].seen)
     offset = self->trace[trace].seen;
   if (offset == -1)
-    offset = 0;
+  {
+    fprintf(stderr,
+            "[fence] skipping first fence because it is out of bounds for %s (offset %d)\n",
+            self->fences[self->fence_pos].entry->path, offset);
+  }
+  else
+  {
+    self->fence_pos = 0;
+    self->fences[0].entry = self->trace[trace].entry;
+    self->fences[0].position = offset;
 
-  self->fences[0].entry = self->trace[trace].entry;
-  self->fences[0].position = offset;
+    fprintf(stderr,
+            "[fence] placing fence %d at trace position %d, file %s, offset %d\n",
+            self->fence_pos, trace, self->fences[self->fence_pos].entry->path,
+            self->fences[self->fence_pos].position);
+  }
 
   int process = self->process_count - 1;
   int delta = 50;
   int time = self->trace[trace].time - 10;
-
-  fprintf(stderr,
-          "[fence] placing fence %d at trace position %d, file %s, offset %d\n",
-          self->fence_pos, trace, self->fences[self->fence_pos].entry->path,
-          self->fences[self->fence_pos].position);
 
   int target_process = self->process_count - 1;
   while (target_process >= 0 && self->processes[target_process].trace_len > trace)
