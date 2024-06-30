@@ -501,7 +501,50 @@ bundle_server_start(fz_context *ctx,
     dup2(from_child[1], STDOUT_FILENO);
     close(to_child[1]);
     close(from_child[0]);
-    execlp(tectonic_path, "texpresso-tonic", "-X", "bundle", "serve", NULL);
+    char *base_args[] = {
+      "texpresso-tonic", "-X", "bundle", "serve", NULL
+    };
+    char **args;
+    char *extra = getenv("TEXPRESSO_BUNDLE_ARGS");
+    if (extra)
+    {
+      extra = strdup(extra);
+      int count = 0;
+      char *p = extra;
+      while (*p)
+      {
+        if (*p == ' ') count += 1;
+        if (*p == '\\') p++;
+        if (*p) p++;
+      }
+      args = calloc(sizeof(char *), sizeof(base_args)/sizeof(base_args[0]) + count);
+      args[0] = base_args[0];
+      args[1] = extra;
+      int i = 2;
+      char *q = p = extra;
+      while (*p)
+      {
+        if (*p == ' ')
+        {
+          *q++ = 0;
+          p++;
+          args[i++] = q;
+        }
+        else if (*p == '\\')
+        {
+          p++;
+          *q++ = *p;
+          if (*p) p++;
+        }
+        else
+          *q++ = *p++;
+      }
+      for (int j = 1; j < sizeof(base_args)/sizeof(base_args[0]); j++)
+        args[i++] = base_args[j];
+    }
+    else
+      args = base_args;
+    execvp(tectonic_path, args);
     abort();
   }
 
