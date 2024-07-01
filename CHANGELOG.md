@@ -14,6 +14,8 @@
 - Remove gumbo dependencies on macOS (change in homebrew packaging of mupdf)
 - On Linux, try Wayland video driver first to solve HIDPI issues
 - PDF engine: reload document on filesystem changes
+- Avoid placing fence after opening but before reading a file
+- Use TEXPRESSO_BUNDLE_ARGS to pass extra arguments to texpresso-tonic/tectonic bundle
 
 # v0.0 Fri Apr  5 06:52:52 JST 2024
 
