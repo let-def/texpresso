@@ -424,10 +424,10 @@ void editor_flush(void)
   switch (protocol)
   {
     case EDITOR_SEXP:
-      puts("(flush)\n");
+      fprintf(stdout, "(flush)\n");
       break;
     case EDITOR_JSON:
-      puts("[\"flush\"]\n");
+      fprintf(stdout, "[\"flush\"]\n");
       break;
   }
 }
@@ -462,10 +462,31 @@ void editor_reset_sync(void)
   switch (protocol)
   {
     case EDITOR_SEXP:
-      puts("(reset-sync)\n");
+      fprintf(stdout, "(reset-sync)\n");
       break;
     case EDITOR_JSON:
-      puts("[\"reset-sync\"]\n");
+      fprintf(stdout, "[\"reset-sync\"]\n");
       break;
+  }
+}
+
+void editor_notify_file_opened(int index, const char *path, int len)
+{
+  if (len == 0)
+    return;
+  switch (protocol)
+  {
+    case EDITOR_SEXP:
+      fprintf(stdout, "(input-file %d \"", index);
+      break;
+    case EDITOR_JSON:
+      fprintf(stdout, "[input-file\", %d, \"", index);
+      break;
+  }
+  output_data_string(stdout, path, len);
+  switch (protocol)
+  {
+    case EDITOR_SEXP: fprintf(stdout, "\")\n"); break;
+    case EDITOR_JSON: fprintf(stdout, "\"]\n"); break;
   }
 }

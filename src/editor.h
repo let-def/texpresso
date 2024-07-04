@@ -103,5 +103,6 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf);
 void editor_flush(void);
 void editor_synctex(const char *dirname, const char *basename, int basename_len, int line, int column);
 void editor_reset_sync(void);
+void editor_notify_file_opened(int index, const char *path, int len);
 
 #endif  // EDITOR_H_
