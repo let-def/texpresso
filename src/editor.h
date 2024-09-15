@@ -25,6 +25,7 @@ enum EDITOR_COMMAND
   EDIT_MAP_WINDOW,
   EDIT_UNMAP_WINDOW,
   EDIT_CROP,
+  EDIT_INVERT,
 };
 
 struct editor_command {
@@ -85,6 +86,9 @@ struct editor_command {
 
     struct {
     } crop;
+
+    struct {
+    } invert;
   };
 };
 

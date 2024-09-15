@@ -982,6 +982,14 @@ static void interpret_command(struct persistent_state *ps,
       schedule_event(RENDER_EVENT);
     }
     break;
+    case EDIT_INVERT:
+    {
+      txp_renderer_config *config =
+          txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+      config->invert_color = !config->invert_color;
+      schedule_event(RENDER_EVENT);
+    }
+    break;
   }
 }
 
