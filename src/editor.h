@@ -24,6 +24,7 @@ enum EDITOR_COMMAND
   EDIT_SYNCTEX_FORWARD,
   EDIT_MAP_WINDOW,
   EDIT_UNMAP_WINDOW,
+  EDIT_CROP,
 };
 
 struct editor_command {
@@ -82,6 +83,8 @@ struct editor_command {
     struct {
     } unmap_window;
 
+    struct {
+    } crop;
   };
 };
 

@@ -973,6 +973,15 @@ static void interpret_command(struct persistent_state *ps,
       }
     }
     break;
+
+    case EDIT_CROP:
+    {
+      txp_renderer_config *config =
+          txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+      config->crop = !config->crop;
+      schedule_event(RENDER_EVENT);
+    }
+    break;
   }
 }
 
