@@ -48,6 +48,8 @@ typedef struct
   float scale;
 } texture_state;
 
+#define SELECTION_RECT_COUNT 400
+
 struct txp_renderer_s
 {
   SDL_Renderer *sdl;
@@ -63,7 +65,7 @@ struct txp_renderer_s
   SDL_Texture *tex;
   texture_state st;
   fz_point selection_start;
-  fz_rect selections[40];
+  fz_rect selections[SELECTION_RECT_COUNT];
   int selection_count;
   fz_point scale_factor;
 
@@ -885,8 +887,9 @@ bool txp_renderer_drag_selection(fz_context *ctx, txp_renderer *self, fz_point p
 
   p = fz_make_point((pt.x - translate.x) / scale, (pt.y - translate.y) / scale);
 
-  fz_quad quads[40];
-  int count = fz_highlight_selection(ctx, page, self->selection_start, p, quads, 40);
+  fz_quad quads[SELECTION_RECT_COUNT];
+  int count = fz_highlight_selection(ctx, page, self->selection_start, p,
+                                     quads, SELECTION_RECT_COUNT);
 
   return set_quads(ctx, self, quads, count);
 }
