@@ -1291,6 +1291,7 @@ bool texpresso_main(struct persistent_state *ps)
         {
           case SDL_WINDOWEVENT_SIZE_CHANGED:
           case SDL_WINDOWEVENT_RESIZED:
+          case SDL_WINDOWEVENT_EXPOSED:
             schedule_event(RENDER_EVENT);
             break;
         }
