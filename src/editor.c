@@ -228,6 +228,18 @@ bool editor_parse(fz_context *ctx,
             },
     };
   }
+  else if (strcmp(verb, "crop") == 0)
+  {
+    if (len != 1)
+      goto arity;
+    *out = (struct editor_command){.tag = EDIT_CROP, .crop = {}};
+  }
+  else if (strcmp(verb, "invert") == 0)
+  {
+    if (len != 1)
+      goto arity;
+    *out = (struct editor_command){.tag = EDIT_INVERT, .invert = {}};
+  }
   else
   {
     fprintf(stderr, "[command] unknown verb: %s\n", verb);
