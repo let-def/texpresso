@@ -151,10 +151,10 @@ BEGIN_EXTERN_C
 
 /* Generic memory management wrappers used widely in the original code. */
 
-char *xstrdup(const char *s);
-void *xmalloc(size_t size);
-void *xrealloc(void *old_address, size_t new_size);
-void *xcalloc(size_t nelem, size_t elsize);
+#define xstrdup strdup
+#define xmalloc malloc
+#define xrealloc realloc
+#define xcalloc calloc
 
 static inline void *mfree(void *ptr) {
     free(ptr);
