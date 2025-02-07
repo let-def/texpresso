@@ -218,9 +218,6 @@ PRINTF_FUNC(2,0) void ttstub_diag_vprintf(ttbc_diagnostic_t *diag, const char *f
  * to understand how those functions work.
  */
 
-jmp_buf *ttbc_global_engine_enter(ttbc_state_t *api);
-void ttbc_global_engine_exit(void);
-
 NORETURN PRINTF_FUNC(1,2) int _tt_abort(const char *format, ...);
 
 PRINTF_FUNC(1,2) void ttstub_issue_warning(const char *format, ...);
