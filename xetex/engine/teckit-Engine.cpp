@@ -120,7 +120,7 @@ Stage::lookaheadCount() const
 	return 0;
 }
 
-#include "teckit-NormalizationData.c"
+#include "teckit-NormalizationData.c.inc"
 
 Normalizer::Normalizer(bool compose)
 	: prevCombClass(0)
