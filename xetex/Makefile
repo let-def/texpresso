@@ -23,7 +23,7 @@ CXXFLAGS = -std=c++17 $(CFLAGS) $(_CXXFLAGS)
 LDFLAGS = -lm -lz $(shell $(PKG_CONFIG) $(PKG) --libs) $(_LDFLAGS) $(_FLAGS)
 
 DIRS=engine layout dpx
-BUILD_DIRS=$(patsubst %,build/%, $(DIRS))
+BUILD_DIRS=build $(patsubst %,build/%, $(DIRS))
 
 OBJECTS ?= $(foreach dir,$(DIRS), $(patsubst %.cpp,build/%.o, $(patsubst %.c,build/%.o, \
 		$(wildcard $(dir)/*.c) \
@@ -41,5 +41,14 @@ build/%.o: %.cpp | $(BUILD_DIRS)
 
 $(BUILD_DIRS):
 	mkdir -p $@
+
+clean:
+	rm -f  $(OBJECTS)
+
+distclean:
+	rm -rf build
+
+undefined:
+	$(MAKE) all 2>&1 | grep -o 'undefined reference to `.*'"'" | sort -u | cut -d ' ' -f 4
 
 .PHONY: all clean distclean
