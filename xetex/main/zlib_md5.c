@@ -2,7 +2,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <zlib.h>
-#include "../include/tectonic_bridge_flate.h"
+#include "tectonic_bridge_flate.h"
+#include "tectonic_bridge_core_generated.h"
 
 FlateResult tectonic_flate_compress(uint8_t *output_ptr, uint64_t *output_len, const uint8_t *input_ptr, uint64_t input_len, uint32_t compression_level)
 {
@@ -47,7 +48,7 @@ void tectonic_flate_free_decompressor(void *handle)
 
 #include "picohash.h"
 
-bool ttbc_get_data_md5(void *_ctx, const uint8_t *data, size_t len, uint8_t *digest)
+int ttbc_get_data_md5(const uint8_t *data, size_t len, uint8_t *digest)
 {
   _picohash_md5_ctx_t ctx;
   _picohash_md5_init(&ctx);
@@ -56,7 +57,7 @@ bool ttbc_get_data_md5(void *_ctx, const uint8_t *data, size_t len, uint8_t *dig
   return 1;
 }
 
-bool ttstub_get_file_md5(void *_ctx, char const *path, char *digest)
+int ttstub_get_file_md5(char const *path, char *digest)
 {
   FILE *f = fopen(path, "rb");
   if (!f)
