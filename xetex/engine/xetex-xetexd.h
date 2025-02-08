@@ -351,13 +351,6 @@ typedef struct {
     int32_t synctex_tag;
 } input_state_t;
 
-typedef enum {
-    HISTORY_SPOTLESS = 0,
-    HISTORY_WARNING_ISSUED = 1,
-    HISTORY_ERROR_ISSUED = 2,
-    HISTORY_FATAL_ERROR = 3
-} tt_history_t;
-
 /* Functions originating in texmfmp.c */
 
 void getmd5sum(int32_t s, bool file);
@@ -1172,7 +1165,6 @@ cur_length(void) {
 
 /* Tectonic related functions */
 void tt_cleanup(void);
-tt_history_t tt_run_engine(const char *dump_name, const char *input_file_name, time_t build_date);
 
 void tt_insert_special(const char *ascii_text);
 

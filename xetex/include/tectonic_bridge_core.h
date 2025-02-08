@@ -248,6 +248,18 @@ int ttstub_get_file_md5(char const *path, char *digest);
 
 int ttstub_shell_escape(const unsigned short *cmd, size_t len);
 
+/* Tectonic entrypoints */
+
+typedef enum {
+    HISTORY_SPOTLESS = 0,
+    HISTORY_WARNING_ISSUED = 1,
+    HISTORY_ERROR_ISSUED = 2,
+    HISTORY_FATAL_ERROR = 3
+} tt_history_t;
+
+tt_history_t tt_run_engine(const char *dump_name, const char *input_file_name, time_t build_date);
+extern bool in_initex_mode;
+
 END_EXTERN_C
 
 #endif /* not TECTONIC_CORE_BRIDGE_H */
