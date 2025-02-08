@@ -7,13 +7,12 @@
 #include <unistd.h>
 #include "tectonic_bridge_core.h"
 #include "tectonic_bridge_core_generated.h"
+#include "utils.h"
+#include "formats.h"
 
 /**
  * Global definitions
  */
-
-// Is logging enabled
-bool logging = 1;
 
 // Name of root document
 char *primary_document = NULL;
@@ -24,95 +23,6 @@ char last_open[PATH_MAX+1];
 // Buffer for printing format string
 #define FORMAT_BUF_SIZE 4096
 char format_buf[FORMAT_BUF_SIZE];
-
-/**
- * @brief Logging helper functions for debugging and error handling.
- */
-
-#include <execinfo.h>
-#define BT_BUF_SIZE 100
-
-/**
- * @brief Prints a backtrace to stderr.
- *
- * This function captures the current call stack and prints it to the standard error output.
- * It uses the `backtrace` and `backtrace_symbols` functions to retrieve and format the stack trace.
- */
-static void print_backtrace(void)
-{
-    int nptrs;
-    void *buffer[BT_BUF_SIZE];
-    char **strings;
-
-    nptrs = backtrace(buffer, BT_BUF_SIZE);
-    fprintf(stderr, "backtrace() returned %d addresses\n", nptrs);
-
-    /* The call backtrace_symbols_fd(buffer, nptrs, STDOUT_FILENO)
-       would produce similar output to the following: */
-
-    strings = backtrace_symbols(buffer, nptrs);
-    if (strings == NULL)
-    {
-        perror("backtrace_symbols");
-        exit(EXIT_FAILURE);
-    }
-
-    for (int j = 0; j < nptrs; j++)
-        fprintf(stderr, "%s\n", strings[j]);
-
-    free(strings);
-}
-
-/**
- * @brief Aborts the program and prints a backtrace.
- */
-#define do_abort() \
-    do { print_backtrace(); abort(); } while(0)
-
-#define do_abortf(...) do_abortf_(__VA_ARGS__)
-#define do_abortf_(fmt, ...) \
-    do { fprintf(stderr, fmt "\n", ##__VA_ARGS__); print_backtrace(); abort(); } while(0)
-
-/**
- * @brief Stringification macro.
- *
- * STR(x) expands macros in x and turn the result into a string
- */
-#define STR(x) STR_(x)
-#define STR_(x) #x
-
-/**
- * @brief Logs entry to a (long-running) function
- *
- * @param kind  Boolean value that determines whether the log should be printed.
- * @param fmt   Format string for the function arguments.
- * @param ...   Arguments to be logged.
- */
-#define log_proc(kind, ...) log_proc_(kind, __VA_ARGS__)
-#define log_proc_(kind, fmt, ...) \
-    do { if (kind) fprintf(stderr, "%s(" fmt ")\n", __func__, ##__VA_ARGS__); } while (0)
-
-/**
- * @brief Logs entry to a leaf function
- *
- * @param kind  Boolean value that determines whether the log should be printed.
- * @param fmt   Format string for the function arguments.
- * @param ...   Arguments to be logged.
- */
-#define log_func(kind, ...) log_func_(kind, __VA_ARGS__)
-#define log_func_(kind, fmt, ...) \
-    do { if (kind) fprintf(stderr, "%s(" fmt ")", __func__, ##__VA_ARGS__); } while(0)
-
-/**
- * @brief Logs function result with a format string.
- *
- * @param kind  Boolean value that determines whether the log should be printed.
- * @param fmt   Format string for the result.
- * @param ...   Result to be logged.
- */
-#define log_result(kind, ...) log_result_(kind, __VA_ARGS__)
-#define log_result_(kind, fmt, ...) \
-    do { if (kind) fprintf(stderr, " = " fmt "\n", ##__VA_ARGS__); } while(0)
 
 NORETURN PRINTF_FUNC(1,2) int _tt_abort(const char *format, ...)
 {
@@ -132,77 +42,11 @@ int ttstub_shell_escape(const unsigned short *cmd, size_t len)
     return 0;
 }
 
-// File format management
-//
-// It is common to omit file extensions in TeX ecosystem :)
-// ... We need to guess them.
-
-const char *exts_enc[]       = {".enc", NULL};
-const char *exts_font_map[]  = {".map", NULL};
-const char *exts_tfm[]       = {".tfm", NULL};
-const char *exts_vf[]        = {".vf", NULL};
-const char *exts_true_type[] = {".ttf", NULL};
-const char *exts_type1[]     = {".pfb", NULL};
-const char *exts_open_type[] = {".otf", NULL};
-const char *exts_tex[]       = {".tex", NULL};
-const char *exts_none[]      = {NULL};
-
-const char **format_extensions(ttbc_file_format format)
-{
-    switch (format)
-    {
-        case TTBC_FILE_FORMAT_ENC:       return exts_enc;
-        case TTBC_FILE_FORMAT_FONT_MAP:  return exts_font_map;
-        case TTBC_FILE_FORMAT_TFM:       return exts_tfm;
-        case TTBC_FILE_FORMAT_VF:        return exts_vf;
-        case TTBC_FILE_FORMAT_TRUE_TYPE: return exts_true_type;
-        case TTBC_FILE_FORMAT_TYPE1:     return exts_type1;
-        case TTBC_FILE_FORMAT_OPEN_TYPE: return exts_open_type;
-        case TTBC_FILE_FORMAT_TEX:       return exts_tex;
-        default:                         return exts_none;
-    }
-}
-
-#define CASE(x) case TTBC_FILE_FORMAT_##x: return #x
-
-static const char *ttbc_file_format_to_string(ttbc_file_format format)
-{
-    switch (format)
-    {
-        CASE(AFM);
-        CASE(BIB);
-        CASE(BST);
-        CASE(CMAP);
-        CASE(CNF);
-        CASE(ENC);
-        CASE(FORMAT);
-        CASE(FONT_MAP);
-        CASE(MISC_FONTS);
-        CASE(OFM);
-        CASE(OPEN_TYPE);
-        CASE(OVF);
-        CASE(PICT);
-        CASE(PK);
-        CASE(PROGRAM_DATA);
-        CASE(SFD);
-        CASE(TECTONIC_PRIMARY);
-        CASE(TEX);
-        CASE(TEX_PS_HEADER);
-        CASE(TFM);
-        CASE(TRUE_TYPE);
-        CASE(TYPE1);
-        CASE(VF);
-    }
-    static char buf[80];
-    sprintf(buf, "unknown format %d", format);
-    return buf;
-}
-
 // Input management
 static FILE *input_as_file(ttbc_input_handle_t *h) { return (void*)h; }
 static ttbc_input_handle_t *file_as_input(FILE *h) { return (void*)h; }
 
-ttbc_input_handle_t *ttstub_input_open(char const *path, ttbc_file_format format, int is_gz)
+ttbc_input_handle_t *ttstub_input_open(const char *path, ttbc_file_format format, int is_gz)
 {
     log_proc(logging, "path:%s, format:%s, is_gz:%b", path, ttbc_file_format_to_string(format), is_gz);
     if (is_gz != 0)
