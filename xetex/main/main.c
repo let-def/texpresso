@@ -121,6 +121,7 @@ NORETURN PRINTF_FUNC(1,2) int _tt_abort(const char *format, ...)
     va_start(ap, format);
     vfprintf(stderr, format, ap);
     va_end(ap);
+    fprintf(stderr, "\n");
     do_abort();
 }
 
@@ -446,8 +447,34 @@ PRINTF_FUNC(1,2) void ttstub_issue_error(const char *format, ...)
 
 // Entry point
 
+// Generate everything based on 1738978143
+// (February 8, 2025)
+#define EXECUTION_DATE 1738978143
+
 int main(int argc, char **argv)
 {
+    // Generate a format file
+    in_initex_mode = true;
+    primary_document = "xelatex.ini";
+    tt_history_t result = tt_run_engine("xetex.fmt", "xelatex.ini", EXECUTION_DATE);
 
+    switch (result)
+    {
+        case HISTORY_SPOTLESS:
+            fprintf(stderr, "Spotless execution.\n");
+            break;
+        case HISTORY_WARNING_ISSUED:
+            fprintf(stderr, "Warnings issued.\n");
+            break;
+        case HISTORY_ERROR_ISSUED:
+            fprintf(stderr, "Errors issued.\n");
+            break;
+        case HISTORY_FATAL_ERROR:
+            fprintf(stderr, "Aborted with a fatal error.\n");
+            break;
+    }
 
+    if (result == HISTORY_SPOTLESS)
+        return 0;
+    return 1;
 }
