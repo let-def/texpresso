@@ -12,6 +12,7 @@ DIRS=engine layout dpx main
 
 ## Build tools configuration
 
+_FLAGS?=-fsanitize=address
 _CC?=gcc
 _CXX?=g++
 _LD?=g++
