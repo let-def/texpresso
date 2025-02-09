@@ -58,6 +58,12 @@ ttbc_input_handle_t *ttstub_input_open(const char *path, ttbc_file_format format
     size_t len = 0;
     char tmp[PATH_MAX + 1];
 
+    if (!f && format == TTBC_FILE_FORMAT_FORMAT)
+    {
+        const char *cached = tectonic_cache_path(path);
+        if (cached) f = fopen(cached, "rb");
+    }
+
     if (f)
         strcpy(last_open, path);
 
