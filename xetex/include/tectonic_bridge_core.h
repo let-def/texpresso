@@ -226,6 +226,7 @@ PRINTF_FUNC(1,2) void ttstub_issue_error(const char *format, ...);
 void ttstub_diag_finish(ttbc_diagnostic_t *diag);
 
 rust_output_handle_t ttstub_output_open(char const *path, int is_gz);
+rust_output_handle_t ttstub_output_open_format(char const *path, int is_gz);
 rust_output_handle_t ttstub_output_open_stdout(void);
 int ttstub_output_putc(rust_output_handle_t handle, int c);
 size_t ttstub_output_write(rust_output_handle_t handle, const char *data, size_t len);
