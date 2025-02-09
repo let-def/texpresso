@@ -173,6 +173,16 @@ ttbc_output_handle_t *ttstub_output_open(char const *path, int is_gz)
     log_proc(logging, "path:%s, is_gz:%b", path, is_gz);
     if (is_gz)
         do_abortf("is_gz not supported");
+
+    return file_as_output(fopen(path, "wb"));
+}
+
+ttbc_output_handle_t *ttstub_output_open_format(char const *path, int is_gz)
+{
+    log_proc(logging, "path:%s, is_gz:%b", path, is_gz);
+    path = tectonic_cache_path("texpresso-xelatex.fmt");
+    if (!path)
+        return NULL;
     return file_as_output(fopen(path, "wb"));
 }
 
@@ -312,27 +322,59 @@ PRINTF_FUNC(1,2) void ttstub_issue_error(const char *format, ...)
 int main(int argc, char **argv)
 {
     // Generate a format file
-    in_initex_mode = true;
-    primary_document = "xelatex.ini";
-    tt_history_t result = tt_run_engine("xetex.fmt", "xelatex.ini", EXECUTION_DATE);
-
-    switch (result)
+    const char *path = tectonic_cache_path("texpresso-xelatex.fmt");
+    if (access(path, R_OK) != 0)
     {
+      in_initex_mode = true;
+      primary_document = "xelatex.ini";
+      tt_history_t result =
+          tt_run_engine("texpresso-xelatex.fmt", "xelatex.ini", EXECUTION_DATE);
+
+      fprintf(stderr, "Format generation: ");
+      switch (result)
+      {
         case HISTORY_SPOTLESS:
-            fprintf(stderr, "Spotless execution.\n");
-            break;
+          fprintf(stderr, "Spotless execution.\n");
+          break;
         case HISTORY_WARNING_ISSUED:
-            fprintf(stderr, "Warnings issued.\n");
-            break;
+          fprintf(stderr, "Warnings issued.\n");
+          break;
         case HISTORY_ERROR_ISSUED:
-            fprintf(stderr, "Errors issued.\n");
-            break;
+          fprintf(stderr, "Errors issued.\n");
+          break;
         case HISTORY_FATAL_ERROR:
-            fprintf(stderr, "Aborted with a fatal error.\n");
-            break;
+          fprintf(stderr, "Aborted with a fatal error.\n");
+          break;
+      }
+      if (result != HISTORY_SPOTLESS)
+        return 1;
     }
 
-    if (result == HISTORY_SPOTLESS)
+    if (argc == 1)
         return 0;
+
+    in_initex_mode = false;
+    primary_document = argv[1];
+    tt_history_t result =
+        tt_run_engine("texpresso-xelatex.fmt", primary_document, EXECUTION_DATE);
+
+    fprintf(stderr, "Format generation: ");
+    switch (result)
+    {
+      case HISTORY_SPOTLESS:
+        fprintf(stderr, "Spotless execution.\n");
+        break;
+      case HISTORY_WARNING_ISSUED:
+        fprintf(stderr, "Warnings issued.\n");
+        break;
+      case HISTORY_ERROR_ISSUED:
+        fprintf(stderr, "Errors issued.\n");
+        break;
+      case HISTORY_FATAL_ERROR:
+        fprintf(stderr, "Aborted with a fatal error.\n");
+        break;
+    }
+    if (result == HISTORY_SPOTLESS)
+      return 0;
     return 1;
 }

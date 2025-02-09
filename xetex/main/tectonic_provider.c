@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <errno.h>
 #include "tectonic_provider.h"
 #include "utils.h"
 
@@ -90,7 +91,7 @@ static bool mkdir_p(char *path)
   return !(mkdir(path, S_IRWXU) != 0 && errno != EEXIST);
 }
 
-static char *cache_path(const char *basename)
+const char *tectonic_cache_path(const char *basename)
 {
   static char cache_path[PATH_MAX + 1];
   static int cache_dirlen = 0;
@@ -140,7 +141,7 @@ static char *cache_path(const char *basename)
 
 static bool check_cache_validity(char checksum[4096])
 {
-  const char *dir = cache_path("SHA256SUM");
+  const char *dir = tectonic_cache_path("SHA256SUM");
 
   // Give up if there is no cache directory
   if (!dir)
@@ -178,7 +179,7 @@ static void prepare_cache(void)
     return;
 
   // Base cache directory
-  const char *path = cache_path(NULL);
+  const char *path = tectonic_cache_path(NULL);
 
   DIR *dir;
   struct dirent *entry;
@@ -201,7 +202,7 @@ static void prepare_cache(void)
 
   closedir(dir);
 
-  const char *checksum_path = cache_path("SHA256SUM");
+  const char *checksum_path = tectonic_cache_path("SHA256SUM");
   FILE *f = fopen(checksum_path, "wb");
   fwrite(checksum, 1, strlen(checksum), f);
   fclose(f);
@@ -303,7 +304,7 @@ FILE *tectonic_get_file(const char *name)
   if (!tectonic_has_file(name))
     return NULL;
 
-  const char *cached = cache_path(name);
+  const char *cached = tectonic_cache_path(name);
   FILE *f = fopen(cached, "rb");
   if (f)
     return f;

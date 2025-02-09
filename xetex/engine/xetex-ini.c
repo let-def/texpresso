@@ -2124,7 +2124,7 @@ store_fmt_file(void)
     format_ident = make_string();
     pack_job_name(".fmt");
 
-    fmt_out = ttstub_output_open (name_of_file, 0);
+    fmt_out = ttstub_output_open_format (name_of_file, 0);
     if (fmt_out == NULL)
         _tt_abort ("cannot open format output file \"%s\"", name_of_file);
 
