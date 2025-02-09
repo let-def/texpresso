@@ -49,7 +49,7 @@ static ttbc_input_handle_t *file_as_input(FILE *h) { return (void*)h; }
 
 ttbc_input_handle_t *ttstub_input_open(const char *path, ttbc_file_format format, int is_gz)
 {
-    log_proc(logging, "path:%s, format:%s, is_gz:%b", path, ttbc_file_format_to_string(format), is_gz);
+    log_proc(logging, "path:%s, format:%s, is_gz:%d", path, ttbc_file_format_to_string(format), is_gz);
     if (is_gz != 0)
         do_abortf("GZ compression not supported");
 
@@ -170,7 +170,7 @@ int ttstub_output_close(ttbc_output_handle_t *handle)
 
 ttbc_output_handle_t *ttstub_output_open(char const *path, int is_gz)
 {
-    log_proc(logging, "path:%s, is_gz:%b", path, is_gz);
+    log_proc(logging, "path:%s, is_gz:%d", path, is_gz);
     if (is_gz)
         do_abortf("is_gz not supported");
 
@@ -179,7 +179,7 @@ ttbc_output_handle_t *ttstub_output_open(char const *path, int is_gz)
 
 ttbc_output_handle_t *ttstub_output_open_format(char const *path, int is_gz)
 {
-    log_proc(logging, "path:%s, is_gz:%b", path, is_gz);
+    log_proc(logging, "path:%s, is_gz:%d", path, is_gz);
     path = tectonic_cache_path("texpresso-xelatex.fmt");
     if (!path)
         return NULL;
