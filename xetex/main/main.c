@@ -77,31 +77,16 @@ ttbc_input_handle_t *ttstub_input_open(const char *path, ttbc_file_format format
     {
         fprintf(stderr, "input_open: failed to open file %s\n", path);
         fprintf(stderr, "Trying tectonic provider.\n");
-        FILE *tf;
         strcpy(tmp, path);
-        tf = tectonic_get_file(tmp);
-        for (const char **exts = format_extensions(format); !tf && *exts; exts++)
+        f = tectonic_get_file(tmp);
+        for (const char **exts = format_extensions(format); !f && *exts; exts++)
         {
             strcpy(tmp, path);
             strcat(tmp, *exts);
-            tf = tectonic_get_file(tmp);
+            f = tectonic_get_file(tmp);
         }
-        if (!tf)
-        {
-            fprintf(stderr, "Tectonic failed to provide the file.\n");
-        }
-        else
-        {
-            f = fopen(tmp, "wb");
-            strcpy(last_open, tmp);
-            char buffer[4096];
-            int read;
-            while ((read = fread(buffer, 1, 4096, tf)) > 0)
-                fwrite(buffer, 1, read, f);
-            fclose(f);
-            tectonic_close_file(tf);
-            f = fopen(tmp, "rb");
-        }
+        if (!f)
+          fprintf(stderr, "Tectonic failed to provide the file.\n");
     }
 
     return file_as_input(f);
