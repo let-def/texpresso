@@ -49,7 +49,9 @@ static ttbc_input_handle_t *file_as_input(FILE *h) { return (void*)h; }
 
 ttbc_input_handle_t *ttstub_input_open(const char *path, ttbc_file_format format, int is_gz)
 {
-    log_proc(logging, "path:%s, format:%s, is_gz:%d", path, ttbc_file_format_to_string(format), is_gz);
+    log_proc(logging, "path:%s, format:%s, is_gz:%d", path,
+             ttbc_file_format_to_string(format), is_gz);
+
     if (is_gz != 0)
         do_abortf("GZ compression not supported");
 
@@ -61,7 +63,8 @@ ttbc_input_handle_t *ttstub_input_open(const char *path, ttbc_file_format format
     if (!f && format == TTBC_FILE_FORMAT_FORMAT)
     {
         const char *cached = tectonic_cache_path(path);
-        if (cached) f = fopen(cached, "rb");
+        if (cached)
+            f = fopen(cached, "rb");
     }
 
     if (f)
@@ -92,7 +95,7 @@ ttbc_input_handle_t *ttstub_input_open(const char *path, ttbc_file_format format
             f = tectonic_get_file(tmp);
         }
         if (!f)
-          fprintf(stderr, "Tectonic failed to provide the file.\n");
+            fprintf(stderr, "Tectonic failed to provide the file.\n");
     }
 
     return file_as_input(f);
