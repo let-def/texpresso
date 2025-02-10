@@ -88,13 +88,13 @@ ttbc_input_handle_t *ttstub_input_open(const char *path, ttbc_file_format format
         fprintf(stderr, "input_open: failed to open file %s\n", path);
         fprintf(stderr, "Trying texlive provider.\n");
 
-        const char *tlpath = texlive_file_path(path);
+        const char *tlpath = texlive_file_path(path, NULL);
         for (const char **exts = format_extensions(format); !tlpath && *exts;
              exts++)
         {
             strcpy(tmp, path);
             strcat(tmp, *exts);
-            tlpath = texlive_file_path(tmp);
+            tlpath = texlive_file_path(tmp, NULL);
         }
         if (tlpath)
         {

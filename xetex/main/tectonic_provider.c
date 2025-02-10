@@ -208,7 +208,7 @@ static void prepare_cache(void)
   fclose(f);
 }
 
-static void load_tectonic_files(void)
+static void list_tectonic_files(void)
 {
   static int loaded = 0;
   if (loaded)
@@ -294,7 +294,7 @@ FILE *tectonic_cat(const char *name)
 
 bool tectonic_has_file(const char *name)
 {
-  load_tectonic_files();
+  list_tectonic_files();
   int index = lookup_entry_index(name);
   return (entries[index] != -1);
 }
@@ -333,4 +333,47 @@ FILE *tectonic_get_file(const char *name)
   fclose(f);
 
   return fopen(cached, "rb");
+}
+
+void tectonic_record_version(FILE *fr)
+{
+  FILE *fh = tectonic_get_file("SHA256SUM");
+  if (!fh)
+  {
+    fwrite("!", 1, 1, fr);
+    return;
+  }
+
+  char buffer[4096];
+  int read;
+  while ((read = fread(buffer, 1, 4096, fh)) > 0)
+  {
+    if (fwrite(buffer, 1, read, fr) != read)
+      break;
+  }
+  fclose(fh);
+}
+
+bool tectonic_check_version(FILE *fr)
+{
+  FILE *fh = tectonic_get_file("SHA256SUM");
+  if (!fh)
+  {
+    char c;
+    return (fread(&c, 1, 1, fr) == 1 && c == '!');
+  }
+
+  char b1[4096], b2[4096];
+  int read, valid = 1;
+  while ((read = fread(b1, 1, 4096, fh)) > 0)
+  {
+    if ((fread(b2, 1, read, fr) != read) &&
+        (memcmp(b1, b2, read) == 0))
+      continue;
+    valid = 0;
+    break;
+  }
+  valid = valid && (feof(fh) && !ferror(fh));
+  fclose(fh);
+  return valid;
 }

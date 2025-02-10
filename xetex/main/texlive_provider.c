@@ -1,6 +1,7 @@
 #include "texlive_provider.h"
 #include <dirent.h>
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -364,8 +365,46 @@ static void list_texlive_files(void)
         perror("pclose");
 }
 
-const char *texlive_file_path(const char *name)
+static void stat_path(const char *path, int *size, int *mtime)
+{
+    struct stat st;
+    if (path && stat(path, &st) == 0)
+    {
+        *size = st.st_size;
+        *mtime = st.st_mtime;
+    }
+    else
+    {
+        *size = -1;
+        *mtime = -1;
+    }
+}
+
+const char *texlive_file_path(const char *name, FILE *record_dependency)
 {
     list_texlive_files();
-    return find(&table, name);
+    const char *path = find(&table, name);
+
+    if (record_dependency)
+    {
+        int size, mtime;
+        stat_path(path, &size, &mtime);
+        fprintf(record_dependency, "%s\n%d:%d\n", name, size, mtime);
+    }
+    return path;
+}
+
+bool texlive_check_dependencies(FILE *record)
+{
+    char name[1024];
+    int size, mtime;
+
+    while (fscanf(record, "%1023[^\n]\n%d:%d\n", name, &size, &mtime) == 3)
+    {
+        int size2, mtime2;
+        stat_path(find(&table, name), &size2, &mtime2);
+        if (size != size2 || mtime != mtime2)
+            return 0;
+    }
+    return 1;
 }
