@@ -63,9 +63,20 @@ static void init(struct table *table)
   table->hash.pow = 18;
   table->hash.count = 0;
   table->hash.cells = calloc(sizeof(struct cell), cell_count(table));
+  if (!table->hash.cells)
+  {
+    perror("calloc for cells");
+    abort();
+  }
   table->entries.cap = 256;
   table->entries.len = 1;
   table->entries.buffer = malloc(256);
+  if (!table->entries.buffer)
+  {
+    perror("malloc for entries buffer");
+    free(table->hash.cells);
+    abort();
+  }
   table->entries.buffer[0] = '\0';
 }
 
@@ -117,8 +128,10 @@ static void grow(struct table *table)
   table->hash.pow += 1;
   table->hash.cells = calloc(sizeof(struct cell), cell_count(table));
   if (!table->hash.cells)
+  {
+    perror("calloc for growing table");
     abort();
-
+  }
   for (int i = 0; i < count; i++)
   {
     struct cell *ocell = &ocells[i];
@@ -192,7 +205,10 @@ static void add(struct table *table,
       table->entries.cap *= 2;
     table->entries.buffer = realloc(table->entries.buffer, table->entries.cap);
     if (!table->entries.buffer)
+    {
+      perror("realloc for growing buffer");
       abort();
+    }
   }
 
   char *data = table->entries.buffer + table->entries.len;
@@ -267,6 +283,13 @@ static void process_line(struct table *table, char *path)
         line[len - 1] = 0;
       free(sub);
       sub = strdup(line[1] == '/' ? line + 2 : line + 1);
+      if (!sub)
+      {
+        perror("strdup");
+        free(line);
+        fclose(f);
+        return;
+      }
       continue;
     }
 
@@ -280,7 +303,6 @@ static void process_line(struct table *table, char *path)
   if (fclose(f) != 0)
   {
     perror("fclose");
-    return;
   }
 }
 
@@ -314,11 +336,19 @@ static bool list_texlive_files(void)
 
   while ((len = getline(&line, &cap, p)) != -1)
   {
-    printf("Retrieved line of length %zd:\n", len);
-    fwrite(line, len, 1, stdout);
+    if (LOG)
+    {
+      printf("Retrieved line of length %zd:\n", len);
+      fwrite(line, len, 1, stdout);
+    }
+
     // Remove newline character from the end of the line
     if (len > 0 && line[len - 1] == '\n')
       line[len - 1] = '\0';
+
+    if (len == 0)
+      continue;
+
     process_line(&table, line);
   }
 
@@ -336,7 +366,7 @@ static bool list_texlive_files(void)
 }
 
 /// Retrieves the file size and modification time for a given path.
-/// size and mtime are set to -1 if file does not exists.
+/// size and mtime are set to -1 if file does not exist.
 ///
 /// @param path The path to the file.
 /// @param size Pointer to store the file size.
@@ -362,7 +392,12 @@ static void stat_path(const char *path, int *size, int *mtime)
 /// @return The path to the file.
 const char *texlive_file_path(const char *name, FILE *record_dependency)
 {
-  list_texlive_files();
+  if (!list_texlive_files())
+  {
+    fprintf(stderr, "TeXlive is not available\n");
+    return NULL;
+  }
+
   const char *path = find(&table, name);
 
   if (record_dependency)
