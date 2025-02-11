@@ -68,9 +68,18 @@ static bool mkdir_path(char *path, char *base)
     bool fail = mkdir(path, S_IRWXU) != 0 && errno != EEXIST;
     *p = '/';
     if (fail)
+    {
+      perror("cache initialization: mkdir failed");
       return 0;
+    }
   }
-  return !(mkdir(path, S_IRWXU) != 0 && errno != EEXIST);
+  bool fail = !(mkdir(path, S_IRWXU) != 0 && errno != EEXIST);
+  if (fail)
+  {
+    perror("cache initialization: mkdir failed");
+    return 0;
+  }
+  return 1;
 }
 
 const char *cache_path(const char *folder, const char *name)
@@ -85,13 +94,13 @@ const char *cache_path(const char *folder, const char *name)
     const char *var;
     if ((var = getenv("XDG_CACHE_HOME")) && var[0])
     {
-      strcpy(base, var);
-      strcat(base, "/texpresso");
+      if (snprintf(base, sizeof(base), "%s/texpresso", var) >= sizeof(base))
+        return NULL;
     }
     else if ((var = getenv("HOME")) && var[0])
     {
-      strcpy(base, var);
-      strcat(base, "/.cache/texpresso");
+      if (snprintf(base, sizeof(base), "%s/.cache/texpresso", var) >= sizeof(base))
+        return NULL;
     }
     else
       return NULL;
@@ -106,24 +115,27 @@ const char *cache_path(const char *folder, const char *name)
     return NULL;
 
   int len = baselen;
-  if (folder)
+  if (folder && len < sizeof(base))
   {
     base[len++] = '/';
-    for (int i = len; len < PATH_MAX && folder[len - i]; len++)
-      base[len] = folder[len - i];
-    base[len] = 0;
+    len += snprintf(base + len, sizeof(base) - len, "%s", folder);
     mkdir_path(base, base + baselen + 1);
   }
-  if (name)
+  if (name && len < sizeof(base))
   {
     base[len++] = '/';
-    for (int i = len; len < PATH_MAX && name[len - i]; len++)
-      base[len] = name[len - i];
+    len += snprintf(base + len, sizeof(base) - len, "%s", name);
   }
 
-  if (len >= PATH_MAX)
-      return NULL;
+  if (len > PATH_MAX)
+    abort();
 
   base[len] = 0;
+  if (len == PATH_MAX)
+  {
+    fprintf(stderr, "Error: cache path is too long:\n%s\n", base);
+    return NULL;
+  }
+
   return base;
 }
