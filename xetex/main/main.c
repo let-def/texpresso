@@ -63,7 +63,7 @@ ttbc_input_handle_t *ttstub_input_open(const char *path, ttbc_file_format format
 
     if (!f && format == TTBC_FILE_FORMAT_FORMAT)
     {
-        const char *cached = texlive_cache_path(path);
+        const char *cached = cache_path("texlive", path);
         if (cached)
             f = fopen(cached, "rb");
     }
@@ -196,7 +196,7 @@ ttbc_output_handle_t *ttstub_output_open(char const *path, int is_gz)
 ttbc_output_handle_t *ttstub_output_open_format(char const *path, int is_gz)
 {
     log_proc(logging, "path:%s, is_gz:%d", path, is_gz);
-    path = texlive_cache_path("texpresso-xelatex.fmt");
+    path = cache_path("texlive", "texpresso-xelatex.fmt");
     if (!path)
         return NULL;
     return file_as_output(fopen(path, "wb"));
@@ -338,7 +338,7 @@ PRINTF_FUNC(1,2) void ttstub_issue_error(const char *format, ...)
 int main(int argc, char **argv)
 {
     // Generate a format file
-    const char *path = texlive_cache_path("texpresso-xelatex.fmt");
+    const char *path = cache_path("texlive", "texpresso-xelatex.fmt");
     if (access(path, R_OK) != 0)
     {
       in_initex_mode = true;
