@@ -1,11 +1,9 @@
+#include "tectonic_provider.h"
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <dirent.h>
 #include <unistd.h>
-#include <errno.h>
-#include "tectonic_provider.h"
 #include "utils.h"
 
 int *entries;
@@ -16,22 +14,21 @@ size_t names_len = 0, names_cap = 1;
 
 static void append_buffer(char *buffer, int len)
 {
-    size_t new_len = names_len + len;
-    if (new_len > names_cap)
-    {
-        while (new_len > names_cap)
-            names_cap *= 2;
-        names = realloc(names, names_cap);
-        if (names == NULL)
-            do_abortf("Cannot allocate buffer to read Tectonic bundle");
-    }
+  size_t new_len = names_len + len;
+  if (new_len > names_cap)
+  {
+    while (new_len > names_cap)
+      names_cap *= 2;
+    names = realloc(names, names_cap);
+    if (names == NULL)
+      do_abortf("Cannot allocate buffer to read Tectonic bundle");
+  }
 
-    memmove(names + names_len, buffer, len);
-    names_len += len;
+  memmove(names + names_len, buffer, len);
+  names_len += len;
 }
 
-static unsigned long
-sdbm_hash(const void *p)
+static unsigned long sdbm_hash(const void *p)
 {
   unsigned long hash = 0;
   int c;
@@ -44,104 +41,24 @@ sdbm_hash(const void *p)
 
 int lookup_entry_index(const char *name)
 {
-    unsigned long hash = sdbm_hash(name);
-    int mask = (1 << entries_pow) - 1;
-    int index = hash & mask;
+  unsigned long hash = sdbm_hash(name);
+  int mask = (1 << entries_pow) - 1;
+  int index = hash & mask;
 
-    while (1)
-    {
-        int offset = entries[index];
-        if (offset == -1)
-            return index;
-        if (strcmp(name, names + offset) == 0)
-            return index;
-        index = (index + 1) & mask;
-    }
-}
-
-static void normalize_path(char *path0)
-{
-  char *index = path0, *path = path0;
-  while (*path)
+  while (1)
   {
-    *index = *path;
-    if (*path == '/')
-      while (path[1] == '/')
-        path++;
-    index++;
-    path++;
+    int offset = entries[index];
+    if (offset == -1)
+      return index;
+    if (strcmp(name, names + offset) == 0)
+      return index;
+    index = (index + 1) & mask;
   }
-  while (index > path0 && index[-1] == '/')
-    index--;
-  *index = '\0';
-}
-
-static bool mkdir_p(char *path)
-{
-  for (char *p = path + 1; *p; p++)
-  {
-    if (*p != '/')
-      continue;
-    *p = '\0';
-    bool fail = mkdir(path, S_IRWXU) != 0 && errno != EEXIST;
-    *p = '/';
-    if (fail)
-      return 0;
-  }
-  return !(mkdir(path, S_IRWXU) != 0 && errno != EEXIST);
-}
-
-const char *tectonic_cache_path(const char *basename)
-{
-  static char cache_path[PATH_MAX + 1];
-  static int cache_dirlen = 0;
-
-  if (cache_dirlen == 0)
-  {
-    const char *var;
-    if ((var = getenv("XDG_CACHE_HOME")) && var[0])
-    {
-      strcpy(cache_path, var);
-    }
-    else if ((var = getenv("HOME")) && var[0])
-    {
-      strcpy(cache_path, var);
-      strcat(cache_path, "/.cache");
-    }
-    else
-    {
-      cache_dirlen = -1;
-      return NULL;
-    }
-    strcat(cache_path, "/texpresso/tectonic");
-    normalize_path(cache_path);
-    if (!mkdir_p(cache_path))
-    {
-      cache_dirlen = -1;
-      return NULL;
-    }
-    cache_dirlen = strlen(cache_path);
-  }
-
-  if (cache_dirlen < 0)
-    return NULL;
-
-  if (basename)
-  {
-    cache_path[cache_dirlen] = '/';
-    int i = cache_dirlen + 1, j;
-    for (j = i; j < PATH_MAX && basename[j - i]; j++)
-      cache_path[j] = basename[j - i];
-    cache_path[j] = '\0';
-  }
-  else
-    cache_path[cache_dirlen] = 0;
-  return cache_path;
 }
 
 static bool check_cache_validity(char checksum[4096])
 {
-  const char *dir = tectonic_cache_path("SHA256SUM");
+  const char *dir = cache_path("tectonic", "SHA256SUM");
 
   // Give up if there is no cache directory
   if (!dir)
@@ -179,7 +96,7 @@ static void prepare_cache(void)
     return;
 
   // Base cache directory
-  const char *path = tectonic_cache_path(NULL);
+  const char *path = cache_path("tectonic", NULL);
 
   DIR *dir;
   struct dirent *entry;
@@ -202,7 +119,7 @@ static void prepare_cache(void)
 
   closedir(dir);
 
-  const char *checksum_path = tectonic_cache_path("SHA256SUM");
+  const char *checksum_path = cache_path("tectonic", "SHA256SUM");
   FILE *f = fopen(checksum_path, "wb");
   fwrite(checksum, 1, strlen(checksum), f);
   fclose(f);
@@ -304,7 +221,7 @@ FILE *tectonic_get_file(const char *name)
   if (!tectonic_has_file(name))
     return NULL;
 
-  const char *cached = tectonic_cache_path(name);
+  const char *cached = cache_path("tectonic", name);
   FILE *f = fopen(cached, "rb");
   if (f)
     return f;
@@ -325,7 +242,8 @@ FILE *tectonic_get_file(const char *name)
   }
   if (read != 0 || ferror(p) || ferror(f))
   {
-    pclose(p); fclose(f);
+    pclose(p);
+    fclose(f);
     unlink(cached);
     return NULL;
   }
@@ -367,8 +285,7 @@ bool tectonic_check_version(FILE *fr)
   int read, valid = 1;
   while ((read = fread(b1, 1, 4096, fh)) > 0)
   {
-    if ((fread(b2, 1, read, fr) != read) &&
-        (memcmp(b1, b2, read) == 0))
+    if ((fread(b2, 1, read, fr) != read) && (memcmp(b1, b2, read) == 0))
       continue;
     valid = 0;
     break;

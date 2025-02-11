@@ -5,8 +5,6 @@
 #include <stdbool.h>
 
 const char *texlive_file_path(const char *name, FILE *record_dependency);
-const char *texlive_cache_path(const char *basename);
-
 bool texlive_check_dependencies(FILE *record);
 
 #endif // TEXLIVE_PROVIDER_H_

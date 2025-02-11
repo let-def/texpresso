@@ -70,5 +70,6 @@ void print_backtrace(void);
 #define log_result_(kind, fmt, ...) \
     do { if (kind) fprintf(stderr, " = " fmt "\n", ##__VA_ARGS__); } while(0)
 
+const char *cache_path(const char *folder, const char *name);
 
 #endif // UTILS_H_
