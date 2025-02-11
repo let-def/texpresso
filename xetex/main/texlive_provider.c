@@ -245,12 +245,14 @@ static void process_line(struct table *table, char *path)
 
 struct table table;
 
-static void list_texlive_files(void)
+static bool list_texlive_files(void)
 {
   static int loaded = 0;
+
   if (loaded)
-    return;
-  loaded = 1;
+    return (loaded == 1);
+
+  loaded = -1;
 
   init(&table);
 
@@ -263,7 +265,7 @@ static void list_texlive_files(void)
   if (!p)
   {
     perror("popen");
-    return;
+    return 0;
   }
 
   while ((len = getline(&line, &cap, p)) != -1)
@@ -278,10 +280,14 @@ static void list_texlive_files(void)
   free(line);
 
   ret = pclose(p);
-  if (ret >= 0)
-    printf("Exit code: %d\n", ret);
-  else if (ret == -1)
+  if (ret == -1)
     perror("pclose");
+  else if (ret > 0)
+    printf("Exit code: %d\n", ret);
+  else
+    loaded = 1;
+
+  return (loaded == 1);
 }
 
 static void stat_path(const char *path, int *size, int *mtime)
@@ -326,4 +332,9 @@ bool texlive_check_dependencies(FILE *record)
       return 0;
   }
   return 1;
+}
+
+bool texlive_available(void)
+{
+  return (list_texlive_files() == 1);
 }

@@ -294,3 +294,8 @@ bool tectonic_check_version(FILE *fr)
   fclose(fh);
   return valid;
 }
+
+bool tectonic_available(void)
+{
+  return tectonic_has_file("SHA256SUM");
+}
