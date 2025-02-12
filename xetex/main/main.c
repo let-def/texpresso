@@ -87,7 +87,7 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
 
   if (!f && format == TTBC_FILE_FORMAT_FORMAT)
   {
-    const char *cached = cache_path("texlive", path);
+    const char *cached = format_path(".fmt");
     if (cached)
       f = fopen(cached, "rb");
   }
@@ -117,7 +117,7 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
 
     if (use_texlive)
     {
-      const char *tlpath = texlive_file_path(path, NULL);
+      const char *tlpath = texlive_file_path(path, dependency_tape);
       for (const char **exts = format_extensions(format); !tlpath && *exts;
            exts++)
       {
