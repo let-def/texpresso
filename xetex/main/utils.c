@@ -210,10 +210,10 @@ const char *cache_path_(const char *folder, const char *name, ...)
     bool delim = 0;
     va_list ap;
     va_start(ap, name);
-    fprintf(stderr, "cache_path %s", folder);
+    if (0) fprintf(stderr, "cache_path %s", folder);
     while (name)
     {
-      fprintf(stderr, ", %s", name);
+      if (0) fprintf(stderr, "/%s", name);
       if (*name && !delim)
       {
         cache_path_buffer[len++] = '/';
