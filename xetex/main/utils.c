@@ -1,13 +1,14 @@
 #include <dirent.h>
 #include <errno.h>
 #include <execinfo.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "utils.h"
 
-int logging = 1;
+int logging = 0;
 #define BT_BUF_SIZE 100
 
 /**
@@ -171,7 +172,7 @@ static int cache_base_init(void)
  * @param name The file name within the cache path. Can be NULL.
  * @return A pointer to the constructed cache path on success, NULL on failure.
  */
-const char *cache_path(const char *folder, const char *name)
+const char *cache_path_(const char *folder, const char *name, ...)
 {
   // 0  if uninitialized,
   // -1 if initialization failed,
@@ -203,11 +204,28 @@ const char *cache_path(const char *folder, const char *name)
     }
   }
 
-  // Append name
-  if (name && *name && len < sizeof(cache_path_buffer))
+  // Append other components
+  if (name && len < sizeof(cache_path_buffer))
   {
-    cache_path_buffer[len++] = '/';
-    len += snprintf(cache_path_buffer + len, sizeof(cache_path_buffer) - len, "%s", name);
+    bool delim = 0;
+    va_list ap;
+    va_start(ap, name);
+    fprintf(stderr, "cache_path %s", folder);
+    while (name)
+    {
+      fprintf(stderr, ", %s", name);
+      if (*name && !delim)
+      {
+        cache_path_buffer[len++] = '/';
+        delim = 1;
+      }
+      len += snprintf(cache_path_buffer + len,
+                      sizeof(cache_path_buffer) - len,
+                      "%s", name);
+      name = va_arg(ap, const char *);
+    }
+    fprintf(stderr, "\n");
+    va_end(ap);
   }
 
   if (len > PATH_MAX)
