@@ -167,59 +167,75 @@ static const char *find(struct table *table, const char *key)
   return p;
 }
 
-static bool is_component(const char *path, const char *component)
+// Function to check if 'component' is a prefix of 'path'.
+// Returns true if 'component' is a prefix and is separated by a '/' or end of
+// 'path'.
+static bool has_component(const char *path, const char *component)
 {
+  // Iterate through both strings until a mismatch is found or end of
+  // 'component' is reached.
   while (*path == *component && *component)
   {
     path++;
     component++;
   }
+  // Check if end of 'component' is reached and 'path' either ends or is
+  // followed by '/'.
   return !*component && (!*path || *path == '/');
 }
 
+// Function to rank 'dir' against 'existing' based on predefined component
+// priority. Returns true if 'dir' has higher or equal priority.
 static bool rank_component(const char *existing, const char *dir)
 {
-  // Hardcoded lookup rules: xelatex > latex > xetex > generic
+  // Hardcoded lookup rules: xelatex > latex > xetex > generic.
   static const char *components[] = {
       "xelatex", "latex", "xetex", "generic", NULL,
   };
 
   for (const char **component = components; *component; component++)
   {
-    if (is_component(dir, *component))
+    if (has_component(dir, *component))
       return 1;
-    if (is_component(existing, *component))
+    if (has_component(existing, *component))
       return 0;
   }
   return 0;
 }
 
+// Function to compare 'dir' against 'existing' based on a common 'root'.
+// Returns true if 'dir' should be preferred over 'existing'.
 static bool rank(const char *existing, const char *root, const char *dir)
 {
+  // Ensure that 'root' is a prefix of 'existing'
   while (*root && *existing && *existing == *root)
   {
     existing++;
     root++;
   }
+  // If 'root' is not fully matched or 'existing' does not continue with '/', they are not comparable
   if (*root || *existing != '/')
   {
     fprintf(stderr, "rank: root differ, skipping\n");
     return 0;
   }
-  existing++;
+  existing++; // Skip the '/' after common root
 
+  // Track the last '/' positions in 'existing' and 'dir'
   const char *eslash = existing, *dslash = dir;
   while (*existing && *dir == *existing)
   {
     if (*dir == '/')
     {
-      eslash = existing + 1;
-      dslash = dir + 1;
+      eslash = existing + 1; // Update position after '/'
+      dslash = dir + 1;      // Update position after '/'
     }
     existing++;
     dir++;
   }
 
+  // We found the shared prefix and the first components where paths differ.
+  // Use rank_component to determine priority between the two.
   if (rank_component(eslash, dslash))
   {
     fprintf(stderr, "%s has priority over %s\n", dslash, eslash);
