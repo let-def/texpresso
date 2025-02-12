@@ -167,7 +167,76 @@ static const char *find(struct table *table, const char *key)
   return p;
 }
 
-/// Adds a file to the hash table.
+static bool is_component(const char *path, const char *component)
+{
+  while (*path == *component && *component)
+  {
+    path++;
+    component++;
+  }
+  return !*component && (!*path || *path == '/');
+}
+
+static bool rank_component(const char *existing, const char *dir)
+{
+  // Hardcoded lookup rules: xelatex > latex > xetex > generic
+  static const char *components[] = {
+      "xelatex", "latex", "xetex", "generic", NULL,
+  };
+
+  for (const char **component = components; *component; component++)
+  {
+    if (is_component(dir, *component))
+      return 1;
+    if (is_component(existing, *component))
+      return 0;
+  }
+  return 0;
+}
+
+static bool rank(const char *existing, const char *root, const char *dir)
+{
+  while (*root && *existing && *existing == *root)
+  {
+    existing++;
+    root++;
+  }
+  if (*root || *existing != '/')
+  {
+    fprintf(stderr, "rank: root differ, skipping\n");
+    return 0;
+  }
+  existing++;
+
+  const char *eslash = existing, *dslash = dir;
+  while (*existing && *dir == *existing)
+  {
+    if (*dir == '/')
+    {
+      eslash = existing + 1;
+      dslash = dir + 1;
+    }
+    existing++;
+    dir++;
+  }
+
+  if (rank_component(eslash, dslash))
+  {
+    fprintf(stderr, "%s has priority over %s\n", dslash, eslash);
+    return 1;
+  }
+  else
+  {
+    fprintf(stderr, "%s does not have priority over %s\n", dslash, eslash);
+    return 0;
+  }
+}
+
+/// Adds a file to the hash table:
+/// - if it is not a directory
+/// - if it is already in the table:
+///   rank the directories to decide which one to keep
+///
 /// @param table Pointer to the table structure.
 /// @param root Root directory of the file.
 /// @param dir Directory of the file.
@@ -177,19 +246,46 @@ static void add(struct table *table,
                 const char *dir,
                 const char *name)
 {
+  bool has_dot = 0;
+  for (const char *p = name; *p; p++)
+  {
+    if (*p == '.')
+    {
+      has_dot = 1;
+      break;
+    }
+  }
+  if (!has_dot)
+  {
+    if (0)
+      printf("add: skipping %s/%s/%s\n  (no dot: assuming it is a directory)\n",
+             root, dir, name);
+    return;
+  }
+
   struct cell *c = lookup(table, name);
   if (c->offset != 0)
   {
     char *p = &table->entries.buffer[c->offset];
     while (p[-1])
       p -= 1;
-    if (LOG)
-      printf("add: skipping %s/%s/%s\n  (already having: %s)\n", root, dir,
-             name, p);
-    return;
+    if (rank(p, root, dir))
+      printf("add: %s/%s/%s shadows previous binding\n  (already having: %s)\n",
+             root, dir, name, p);
+    else
+    {
+      if (LOG)
+        printf("add: skipping %s/%s/%s\n  (already having: %s)\n", root, dir,
+               name, p);
+      return;
+    }
   }
-  if (LOG)
-    printf("add: adding %s\n", name);
+  else
+  {
+    table->hash.count += 1;
+    if (LOG)
+      printf("add: adding %s\n", name);
+  }
 
   int rlen = strlen(root);
   int dlen = strlen(dir);
@@ -224,7 +320,6 @@ static void add(struct table *table,
   c->offset = data - table->entries.buffer;
   table->entries.len = tlen;
 
-  table->hash.count += 1;
   if (table->hash.count * 3 == cell_count(table) * 2)
     grow(table);
 }
