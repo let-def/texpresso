@@ -404,7 +404,7 @@ static void usage(char *argv0)
       "Usage: %s [-texlive] [-tectonic] <path.tex>\n"
       "Run XeTeX engine on <path.tex> using packages from a TeX distribution.\n"
       "\n"
-      "TeX distribution:\n"
+      "Supported TeX distributions:\n"
       "  -texlive     Use TeXlive packages (need kpsewhich command)\n"
       "  -tectonic    Use Tectonic packages (need tectonic command)\n"
       "Default: try TeXlive first, then Tectonic, then fails\n",
@@ -501,13 +501,25 @@ static bool bootstrap_format(void)
 int main(int argc, char **argv)
 {
   const char *doc_path = NULL;
+  bool dashdash = 0;
 
   for (int i = 1; i < argc; i++)
   {
-    if (strcmp(argv[i], "-tectonic") == 0)
-      use_tectonic = 1;
-    else if (strcmp(argv[i], "-texlive") == 0)
-      use_texlive = 1;
+    if (!dashdash && argv[i][0] == '-')
+    {
+      if (strcmp(argv[i], "-tectonic") == 0)
+        use_tectonic = 1;
+      else if (strcmp(argv[i], "-texlive") == 0)
+        use_texlive = 1;
+      else if (strcmp(argv[i], "--") == 0)
+        dashdash = 1;
+      else
+      {
+        fprintf(stderr, "Unknown option: %s\n", argv[i]);
+        usage(argv[0]);
+        return 1;
+      }
+    }
     else if (doc_path == NULL)
       doc_path = argv[i];
     else
@@ -590,7 +602,7 @@ int main(int argc, char **argv)
   tt_history_t result =
       tt_run_engine("texpresso.fmt", primary_document, EXECUTION_DATE);
 
-  fprintf(stderr, "Format generation: ");
+  fprintf(stderr, "Document generation: ");
   switch (result)
   {
     case HISTORY_SPOTLESS:
