@@ -56,7 +56,7 @@ int lookup_entry_index(const char *name)
   }
 }
 
-static bool check_cache_validity(char checksum[4096])
+static bool check_cache_validity(void)
 {
   const char *dir = cache_path("tectonic", "SHA256SUM");
 
@@ -82,17 +82,17 @@ static bool check_cache_validity(char checksum[4096])
   if (!p)
     return 0;
 
-  int r2 = fread(checksum, 1, 4096, p);
-  checksum[r2] = 0;
+  char b2[4096];
+  int r2 = fread(b2, 1, 4096, p);
+  b2[r2] = 0;
   pclose(p);
 
-  return (r1 == r2) && (memcmp(b1, checksum, r1) == 0);
+  return (r1 == r2) && (memcmp(b1, b2, r1) == 0);
 }
 
 static void prepare_cache(void)
 {
-  char checksum[4096];
-  if (check_cache_validity(checksum))
+  if (check_cache_validity())
     return;
 
   // Base cache directory
@@ -119,10 +119,8 @@ static void prepare_cache(void)
 
   closedir(dir);
 
-  const char *checksum_path = cache_path("tectonic", "SHA256SUM");
-  FILE *f = fopen(checksum_path, "wb");
-  fwrite(checksum, 1, strlen(checksum), f);
-  fclose(f);
+  FILE *f = tectonic_get_file("SHA256SUM");
+  if (f) fclose(f);
 }
 
 static void list_tectonic_files(void)
@@ -285,7 +283,7 @@ bool tectonic_check_version(FILE *fr)
   int read, valid = 1;
   while ((read = fread(b1, 1, 4096, fh)) > 0)
   {
-    if ((fread(b2, 1, read, fr) != read) && (memcmp(b1, b2, read) == 0))
+    if ((fread(b2, 1, read, fr) == read) && (memcmp(b1, b2, read) == 0))
       continue;
     valid = 0;
     break;
