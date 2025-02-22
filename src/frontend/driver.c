@@ -230,14 +230,14 @@ int main(int argc, const char **argv)
 #ifndef __APPLE__
   if (!getenv("SDL_VIDEODRIVER"))
   {
-    setenv("SDL_VIDEODRIVER", "wayland", 0);
+    SDL_SetHint(SDL_HINT_VIDEODRIVER, "wayland");
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
     {
       fprintf(stderr, "SDL could not initialize wayland driver! SDL_Error: %s\n", SDL_GetError());
       fprintf(stderr, "Falling back to default driver\n");
-      unsetenv("SDL_VIDEODRIVER");
+      SDL_SetHint(SDL_HINT_VIDEODRIVER, NULL);
     }
-    else 
+    else
       init = 1;
   }
 #endif
