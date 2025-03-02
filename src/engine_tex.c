@@ -495,7 +495,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
   answer_t a;
   switch (q->tag)
   {
-    case Q_OPEN:
+    case Q_OPRD:
+    case Q_OPWR:
     {
       check_fid(q->open.fid);
       filecell_t *cell = &self->st.table[q->open.fid];
@@ -506,7 +507,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       char fs_path_buffer[1024];
       const char *fs_path = NULL;
 
-      if (q->open.mode[0] == 'r')
+      if (q->tag == Q_OPRD)
       {
         e = filesystem_lookup(self->fs, q->open.path);
         if (!e || !entry_data(e))
@@ -534,7 +535,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
         record_seen(self, e, 0, q->time);
 
       enum accesslevel level =
-        (q->open.mode[0] == 'w') ? FILE_WRITE : FILE_READ;
+        (q->tag == Q_OPRD) ? FILE_READ : FILE_WRITE;
 
       if (level == FILE_READ)
       {
@@ -545,7 +546,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
           if (!fs_path)
           {
             if (!e->edit_data)
-              mabort("path: %s\nmode:%s\n", q->open.path, q->open.mode);
+              mabort("path: %s\nmode:%c\n", q->open.path, (q->tag == Q_OPRD) ? 'r' : 'w');
             e->saved.level = FILE_READ;
             memset(&e->fs_stat, 0, sizeof(e->fs_stat));
           }

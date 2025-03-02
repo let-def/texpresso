@@ -208,7 +208,8 @@ const char *query_to_string(enum query q)
 {
   switch (q)
   {
-    CASE(Q,OPEN);
+    CASE(Q,OPRD);
+    CASE(Q,OPWR);
     CASE(Q,READ);
     CASE(Q,WRIT);
     CASE(Q,CLOS);
@@ -383,9 +384,14 @@ void log_query(FILE *f, query_t *r)
   fprintf(f, "%04dms: ", r->time);
   switch (r->tag)
   {
-    case Q_OPEN:
+    case Q_OPRD:
       {
-        fprintf(f, "OPEN(%d, \"%s\", \"%s\")\n", r->open.fid, r->open.path, r->open.mode);
+        fprintf(f, "OPRD(%d, \"%s\")\n", r->open.fid, r->open.path);
+        break;
+      }
+    case Q_OPWR:
+      {
+        fprintf(f, "OPWR(%d, \"%s\")\n", r->open.fid, r->open.path);
         break;
       }
     case Q_READ:
@@ -481,13 +487,12 @@ bool channel_read_query(channel_t *t, int fd, query_t *r)
   int pos = 0;
   switch (tag)
   {
-    case Q_OPEN:
+    case Q_OPRD:
+    case Q_OPWR:
       {
         r->open.fid = read_u32(t, fd);
         int pos_path = read_zstr(t, fd, &pos);
-        int pos_mode = read_zstr(t, fd, &pos);
         r->open.path = &t->buf[pos_path];
-        r->open.mode = &t->buf[pos_mode];
         break;
       }
     case Q_READ:
