@@ -45,6 +45,7 @@ clean:
 
 ../Makefile.config:
 	$(MAKE) -C .. config
+
 include ../Makefile.config
 
-.PHONY: all clean $(TARGETS) re2c
+.PHONY: all clean $(TARGETS) re2c compile_commands.json

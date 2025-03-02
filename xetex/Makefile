@@ -38,9 +38,6 @@ clean:
 distclean:
 	rm -rf build
 
-compile_commands.json:
-	bear -- $(MAKE) --always-make all _CC=clang _CXX=clang++ _LD=clang++
-
 ## Internal targets
 
 build/$(XETEX_BIN): $(OBJECTS)
@@ -58,4 +55,4 @@ $(BUILD_DIRS):
 undefined:
 	$(MAKE) all 2>&1 | grep -o 'undefined reference to `.*'"'" | sort -u | cut -d ' ' -f 4
 
-.PHONY: all clean distclean compile_commands.json
+.PHONY: all clean distclean
