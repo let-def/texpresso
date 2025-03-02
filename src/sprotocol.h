@@ -50,7 +50,8 @@ typedef int file_id;
 /* QUERIES */
 
 enum query {
-  Q_OPEN = PACK('O','P','E','N'),
+  Q_OPRD = PACK('O','P','R','D'),
+  Q_OPWR = PACK('O','P','W','R'),
   Q_READ = PACK('R','E','A','D'),
   Q_WRIT = PACK('W','R','I','T'),
   Q_CLOS = PACK('C','L','O','S'),
@@ -72,7 +73,7 @@ typedef struct {
   union {
     struct {
       file_id fid;
-      char *path, *mode;
+      char *path;
     } open;
     struct {
       file_id fid;
