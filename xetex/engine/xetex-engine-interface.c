@@ -26,6 +26,10 @@ tt_xetex_set_int_variable (const char *var_name, int value)
     in_initex_mode = (value != 0);
   else if (streq_ptr(var_name, "synctex_enabled"))
     synctex_enabled = (value != 0);
+  else if (streq_ptr(var_name, "synctex_use_gz"))
+    synctex_use_gz = (value != 0);
+  else if (streq_ptr(var_name, "synctex_texpresso_extension"))
+    synctex_texpresso_extension = (value != 0);
   else if (streq_ptr(var_name, "semantic_pagination_enabled"))
     semantic_pagination_enabled = (value != 0);
   else if (streq_ptr(var_name, "shell_escape_enabled"))

@@ -244,6 +244,8 @@ ssize_t ttstub_input_read(rust_input_handle_t handle, char *data, size_t len);
 int ttstub_input_getc(rust_input_handle_t handle);
 int ttstub_input_ungetc(rust_input_handle_t handle, int ch);
 int ttstub_input_close(rust_input_handle_t handle);
+int ttstub_pic_get_cached_bounds(const char *name, int type, int page, float bounds[4]);
+void ttstub_pic_set_cached_bounds(const char *name, int type, int page, const float bounds[4]);
 
 int ttstub_get_file_md5(char const *path, char *digest);
 

@@ -56,6 +56,8 @@ void synctex_abort(bool log_opened);
 /*  Send this message when starting a new input.  */
 void synctex_start_input(void);
 
+void synctex_end_file_reading(void);
+
 /*  Recording the "{..." line.  In *tex.web, use synctex_sheet(pdf_output) at
  *  the very beginning of the ship_out procedure.
 */
