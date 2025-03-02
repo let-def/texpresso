@@ -10,6 +10,7 @@
 #include "tectonic_bridge_core_generated.h"
 #include "tectonic_provider.h"
 #include "texlive_provider.h"
+#include "texpresso_protocol.h"
 #include "utils.h"
 
 #define LOG 0
@@ -29,6 +30,10 @@ bool use_tectonic = 0;
 
 // Use texlive provider
 bool use_texlive = 0;
+
+// Connect to TeXpresso
+bool use_texpresso = 0;
+txp_client *texpresso = NULL;
 
 // A file in which dependencies are recorded (or NULL if not necessary)
 FILE *dependency_tape;
@@ -406,9 +411,10 @@ void ttstub_pic_set_cached_bounds(const char *name, int type, int page, const fl
 {
 }
 
-int texpresso_fork_with_channel(int fd, uint32_t time)
+pid_t texpresso_fork_with_channel(int fd, uint32_t time)
 {
-
+  fprintf(stderr, "texpresso_fork_with_channel: TODO\n");
+  exit(1);
 }
 
 // Entry point
@@ -417,12 +423,13 @@ static void usage(char *argv0)
 {
   fprintf(
       stderr,
-      "Usage: %s [-texlive] [-tectonic] <path.tex>\n"
+      "Usage: %s [-texlive] [-tectonic] [-texpresso] <path.tex>\n"
       "Run XeTeX engine on <path.tex> using packages from a TeX distribution.\n"
       "\n"
       "Supported TeX distributions:\n"
       "  -texlive     Use TeXlive packages (need kpsewhich command)\n"
       "  -tectonic    Use Tectonic packages (need tectonic command)\n"
+      "  -texpresso   Internal (route I/O through TeXpresso)\n"
       "Default: try TeXlive first, then Tectonic, then fails\n",
       argv0);
 }
@@ -527,6 +534,8 @@ int main(int argc, char **argv)
         use_tectonic = 1;
       else if (strcmp(argv[i], "-texlive") == 0)
         use_texlive = 1;
+      else if (strcmp(argv[i], "-texpresso") == 0)
+        use_texpresso = 1;
       else if (strcmp(argv[i], "--") == 0)
         dashdash = 1;
       else
