@@ -37,6 +37,7 @@ static void special_out(int32_t p);
 static void write_out(int32_t p);
 static void pic_out(int32_t p);
 static void write_to_dvi(int32_t a, int32_t b);
+static void dvi_eop(void);
 static void dvi_swap(void);
 static void dvi_four(int32_t x);
 static void dvi_two(UTF16_code s);
@@ -259,8 +260,7 @@ ship_out(int32_t p)
     else
         hlist_out();
 
-    dvi_out(EOP);
-    total_pages++;
+    dvi_eop();
     cur_s = -1;
 
 done:
@@ -2291,8 +2291,7 @@ finalize_dvi_file(void)
         if (cur_s > 0) {
             dvi_out(POP);
         } else {
-            dvi_out(EOP);
-            total_pages++;
+            dvi_eop();
         }
 
         cur_s--;
@@ -2390,6 +2389,29 @@ write_to_dvi(int32_t a, int32_t b)
         _tt_abort ("failed to write data to XDV file");
 }
 
+static void
+dvi_flush(void)
+{
+  if (dvi_limit != DVI_BUF_SIZE)
+  {
+    write_to_dvi(HALF_BUF, DVI_BUF_SIZE - 1);
+    dvi_gone = dvi_gone + HALF_BUF;
+  }
+  write_to_dvi(0, dvi_ptr - 1);
+  dvi_limit  = DVI_BUF_SIZE;
+  dvi_offset = dvi_offset + dvi_ptr;
+  dvi_gone   = dvi_gone + dvi_ptr;
+  dvi_ptr    = 0;
+}
+
+static void
+dvi_eop(void)
+{
+  dvi_out(EOP);
+  total_pages++;
+  dvi_flush();
+  ttstub_output_flush(dvi_file);
+}
 
 static void
 dvi_swap(void)

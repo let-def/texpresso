@@ -5041,6 +5041,7 @@ end_file_reading(void)
     if (cur_input.name == 18 || cur_input.name == 19) {
         pseudo_close();
     } else if (cur_input.name > 17) {
+        synctex_end_file_reading();
         u_close(input_file[cur_input.index]);
         input_file[cur_input.index] = NULL;
     }
