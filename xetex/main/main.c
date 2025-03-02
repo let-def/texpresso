@@ -395,6 +395,22 @@ PRINTF_FUNC(1, 2) void ttstub_issue_error(const char *format, ...)
   ttstub_diag_finish(diag);
 }
 
+// FIXME: Implement bounds caching later
+
+int ttstub_pic_get_cached_bounds(const char *name, int type, int page, float bounds[4])
+{
+  return 0;
+}
+
+void ttstub_pic_set_cached_bounds(const char *name, int type, int page, const float bounds[4])
+{
+}
+
+int texpresso_fork_with_channel(int fd, uint32_t time)
+{
+
+}
+
 // Entry point
 
 static void usage(char *argv0)
