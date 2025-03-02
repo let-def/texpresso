@@ -51,4 +51,7 @@ endif
 texpresso-xetex:
 	$(MAKE) -C xetex
 
-.PHONY: all dev clean config texpresso-xetex re2c
+compile_commands.json:
+	bear -- $(MAKE) -B -k all
+
+.PHONY: all dev clean config texpresso-xetex re2c compile_commands.json
