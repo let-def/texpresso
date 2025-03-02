@@ -1,6 +1,6 @@
 all:
 	$(MAKE) texpresso
-	$(MAKE) texpresso-tonic
+	$(MAKE) texpresso-xetex
 	@echo "# Build succeeded. Try running:"
 	@echo "# build/texpresso test/simple.tex"
 
@@ -18,7 +18,6 @@ clean:
 
 distclean:
 	rm -rf build Makefile.config
-	cd tectonic && cargo clean
 
 re2c:
 	$(MAKE) -C src $@
@@ -42,7 +41,6 @@ config:
 	echo >>Makefile.config 'CC=gcc $$(CFLAGS)'
 	echo >>Makefile.config 'LDCC=g++ $$(CFLAGS)'
 	echo >>Makefile.config "LIBS=-lmupdf -lm `CC=gcc ./mupdf-config.sh` -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2"
-	echo >>Makefile.config "TECTONIC_ENV="
 endif
 
 ifeq ($(UNAME), Darwin)
@@ -54,11 +52,9 @@ config:
 	echo >>Makefile.config 'CC=gcc $$(CFLAGS)'
 	echo >>Makefile.config 'LDCC=g++ $$(CFLAGS)'
 	echo >>Makefile.config "LIBS=-L$(BREW)/lib -lmupdf -lm `CC=gcc ./mupdf-config.sh -L$(BREW)/lib` -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lSDL2"
-	echo >>Makefile.config "TECTONIC_ENV=PKG_CONFIG_PATH=$(BREW_ICU4C)/lib/pkgconfig C_INCLUDE_PATH=$(BREW_ICU4C)/include LIBRARY_PATH=$(BREW_ICU4C)/lib"
 endif
 
-texpresso-tonic:
-	$(MAKE) -f Makefile.tectonic tectonic
-	cp -f tectonic/target/release/texpresso-tonic build/
+texpresso-xetex:
+	$(MAKE) -C xetex
 
-.PHONY: all dev clean config texpresso-tonic re2c
+.PHONY: all dev clean config texpresso-xetex re2c
