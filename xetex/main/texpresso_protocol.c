@@ -304,7 +304,7 @@ pid_t txp_fork(txp_client *io)
   int fd = fileno(io->file);
   if (fd == -1)
     ppanic("fork_with_channel: fileno");
-  uint32_t result = texpresso_fork_with_channel(fd, delta);
+  pid_t result = texpresso_fork_with_channel(fd, delta);
   if (result == 0)
   {
     // FIXME

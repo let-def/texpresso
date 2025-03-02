@@ -8,7 +8,7 @@
 #include <stdbool.h>
 #include <sys/types.h>
 
-extern int texpresso_fork_with_channel(int fd, uint32_t time);
+extern pid_t texpresso_fork_with_channel(int fd, uint32_t time);
 
 // File descriptors and client identifiers
 typedef int32_t txp_file_id;
