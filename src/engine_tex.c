@@ -26,7 +26,6 @@
 #include <limits.h>
 #include <unistd.h>
 #include <string.h>
-#include <errno.h>
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -37,7 +36,6 @@
 #include "state.h"
 #include "synctex.h"
 #include "editor.h"
-#include "mupdf_compat.h"
 
 typedef struct
 {
@@ -63,7 +61,7 @@ struct tex_engine
   struct txp_engine_class *_class;
 
   char *name;
-  char *tectonic_path;
+  char *engine_path;
   char *inclusion_path;
   filesystem_t *fs;
   state_t st;
@@ -182,7 +180,7 @@ static pid_t exec_xelatex_generic(char **args, int *fd)
   return pid;
 }
 
-static pid_t exec_xelatex(char *tectonic_path, const char *filename,
+static pid_t exec_xelatex(char *engine_path, const char *filename,
                           int bundle_input, int bundle_output, int bundle_lock,
                           int *fd)
 {
@@ -190,7 +188,7 @@ static pid_t exec_xelatex(char *tectonic_path, const char *filename,
   sprintf(bundle_url, "texpresso-bundle://%d,%d,%d",
           bundle_input, bundle_output, bundle_lock);
   char *args[] = {
-    tectonic_path,
+    engine_path,
     "-X",
     "texpresso",
     "--bundle",
@@ -206,7 +204,7 @@ static pid_t exec_xelatex(char *tectonic_path, const char *filename,
   };
 
   pid_t pid = exec_xelatex_generic(args, fd);
-  fprintf(stderr, "[process] launched pid %d (using %s)\n", pid, tectonic_path);
+  fprintf(stderr, "[process] launched pid %d (using %s)\n", pid, engine_path);
   return pid;
 }
 
@@ -217,7 +215,7 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
     log_rollback(ctx, self->log, self->restart);
     self->process_count = 1;
     process_t *p = get_process(self);
-    p->pid = exec_xelatex(self->tectonic_path, self->name,
+    p->pid = exec_xelatex(self->engine_path, self->name,
                           bundle_server_input(self->bundle),
                           bundle_server_output(self->bundle),
                           bundle_server_lock(self->bundle),
@@ -310,7 +308,7 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
   incdvi_free(ctx, self->dvi);
   synctex_free(ctx, self->stex);
   fz_free(ctx, self->name);
-  fz_free(ctx, self->tectonic_path);
+  fz_free(ctx, self->engine_path);
   fz_free(ctx, self->inclusion_path);
   fz_free(ctx, self);
 }
@@ -1383,7 +1381,7 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
 }
 
 txp_engine *txp_create_tex_engine(fz_context *ctx,
-                                  const char *tectonic_path,
+                                  const char *engine_path,
                                   const char *inclusion_path,
                                   const char *tex_dir,
                                   const char *tex_name)
@@ -1392,7 +1390,7 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   self->_class = &_class;
 
   self->name = fz_strdup(ctx, tex_name);
-  self->tectonic_path = fz_strdup(ctx, tectonic_path);
+  self->engine_path = fz_strdup(ctx, engine_path);
   self->inclusion_path = fz_strdup(ctx, inclusion_path ? inclusion_path : "");
   state_init(&self->st);
   self->fs = filesystem_new(ctx);
@@ -1404,7 +1402,7 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   self->c = channel_new();
   self->process_count = 0;
 
-  self->bundle = bundle_server_start(ctx, tectonic_path, tex_dir);
+  self->bundle = bundle_server_start(ctx, engine_path, tex_dir);
   self->dvi = incdvi_new(ctx, bundle_server_hooks(self->bundle));
 
   self->stex = synctex_new(ctx);
