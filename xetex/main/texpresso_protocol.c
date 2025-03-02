@@ -143,10 +143,8 @@ static enum tag txp_io_recv_tag(txp_client *io)
   while (1)
   {
     enum tag t = txp_io_recv_u32(io);
-
     if (t != T_FLSH)
       return t;
-
     io->generation += 1;
   }
 }
@@ -303,7 +301,10 @@ pid_t txp_fork(txp_client *io)
   // let delta = self.delta + ProcessTime::elapsed(&self.start_time);
   // let result = texpresso_fork_with_channel(self.file.as_raw_fd(),
   //                                          delta.as_millis() as u32);
-  uint32_t result = texpresso_fork_with_channel(io->file, delta);
+  int fd = fileno(io->file);
+  if (fd == -1)
+    ppanic("fork_with_channel: fileno");
+  uint32_t result = texpresso_fork_with_channel(fd, delta);
   if (result == 0)
   {
     // FIXME
