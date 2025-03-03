@@ -56,6 +56,7 @@ enum query {
   Q_WRIT = PACK('W','R','I','T'),
   Q_CLOS = PACK('C','L','O','S'),
   Q_SIZE = PACK('S','I','Z','E'),
+  Q_MTIM = PACK('M','T','I','M'),
   Q_SEEN = PACK('S','E','E','N'),
   Q_GPIC = PACK('G','P','I','C'),
   Q_SPIC = PACK('S','P','I','C'),
@@ -92,6 +93,9 @@ typedef struct {
     } size;
     struct {
       file_id fid;
+    } mtim;
+    struct {
+      file_id fid;
       int pos;
     } seen;
     struct {
@@ -115,32 +119,11 @@ enum answer {
   A_DONE = PACK('D','O','N','E'),
   A_PASS = PACK('P','A','S','S'),
   A_SIZE = PACK('S','I','Z','E'),
+  A_MTIM = PACK('M','T','I','M'),
   A_READ = PACK('R','E','A','D'),
   A_FORK = PACK('F','O','R','K'),
   A_OPEN = PACK('O','P','E','N'),
   A_GPIC = PACK('G','P','I','C'),
-};
-
-enum accs_answer {
-  ACCS_PASS = 0,
-  ACCS_OK   = 1,
-  ACCS_ENOENT = 2,
-  ACCS_EACCES = 3,
-};
-
-struct stat_time {
-  uint32_t sec, nsec;
-};
-
-struct stat_answer {
-  uint32_t dev, ino;
-  uint32_t mode;
-  uint32_t nlink;
-  uint32_t uid, gid;
-  uint32_t rdev;
-  uint32_t size;
-  uint32_t blksize, blocks;
-  struct stat_time atime, ctime, mtime;
 };
 
 #define READ_FORK (-1)
@@ -149,13 +132,16 @@ typedef struct {
   enum answer tag;
   union {
     struct {
-      int size;
+      uint32_t size;
     } size;
+    struct {
+      uint32_t mtime;
+    } mtim;
     struct {
       int size;
     } read;
     struct {
-      int size;
+      int path_len;
     } open;
     struct {
       float bounds[4];

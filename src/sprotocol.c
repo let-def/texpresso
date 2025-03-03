@@ -218,6 +218,7 @@ const char *query_to_string(enum query q)
     CASE(Q,GPIC);
     CASE(Q,SPIC);
     CASE(Q,CHLD);
+    CASE(Q,MTIM);
   }
 }
 
@@ -228,6 +229,7 @@ const char *answer_to_string(enum answer q)
     CASE(A,DONE);
     CASE(A,PASS);
     CASE(A,SIZE);
+    CASE(A,MTIM);
     CASE(A,READ);
     CASE(A,FORK);
     CASE(A,OPEN);
@@ -385,63 +387,44 @@ void log_query(FILE *f, query_t *r)
   switch (r->tag)
   {
     case Q_OPRD:
-      {
-        fprintf(f, "OPRD(%d, \"%s\")\n", r->open.fid, r->open.path);
-        break;
-      }
+      fprintf(f, "OPRD(%d, \"%s\")\n", r->open.fid, r->open.path);
+      return;
     case Q_OPWR:
-      {
-        fprintf(f, "OPWR(%d, \"%s\")\n", r->open.fid, r->open.path);
-        break;
-      }
+      fprintf(f, "OPWR(%d, \"%s\")\n", r->open.fid, r->open.path);
+      return;
     case Q_READ:
-      {
-        fprintf(f, "READ(%d, %d, %d)\n", r->read.fid, r->read.pos, r->read.size);
-        break;
-      }
+      fprintf(f, "READ(%d, %d, %d)\n", r->read.fid, r->read.pos, r->read.size);
+      return;
     case Q_WRIT:
-      {
-        fprintf(f, "WRIT(%d, %d, %d)\n",
-            r->writ.fid, r->writ.pos, r->writ.size);
-        break;
-      }
+      fprintf(f, "WRIT(%d, %d, %d)\n", r->writ.fid, r->writ.pos, r->writ.size);
+      return;
     case Q_CLOS:
-      {
-        fprintf(f, "CLOS(%d)\n", r->clos.fid);
-        break;
-      }
+      fprintf(f, "CLOS(%d)\n", r->clos.fid);
+      return;
     case Q_SIZE:
-      {
-        fprintf(f, "SIZE(%d)\n", r->size.fid);
-        break;
-      }
+      fprintf(f, "SIZE(%d)\n", r->size.fid);
+      return;
+    case Q_MTIM:
+      fprintf(f, "MTIM(%d)\n", r->mtim.fid);
+      return;
     case Q_SEEN:
-      {
-        fprintf(f, "SEEN(%d, %d)\n", r->seen.fid, r->seen.pos);
-        break;
-      }
+      fprintf(f, "SEEN(%d, %d)\n", r->seen.fid, r->seen.pos);
+      return;
     case Q_GPIC:
-      {
-        fprintf(f, "GPIC(\"%s\",%d,%d)\n", r->gpic.path, r->gpic.type, r->gpic.page);
-        break;
-      }
+      fprintf(f, "GPIC(\"%s\",%d,%d)\n", r->gpic.path, r->gpic.type,
+              r->gpic.page);
+      return;
     case Q_SPIC:
-      {
-        fprintf(f, "SPIC(\"%s\", %d, %d, %.02f, %.02f, %.02f, %.02f)\n", 
-                r->spic.path, 
-                r->spic.cache.type, r->spic.cache.page,
-                r->spic.cache.bounds[0], r->spic.cache.bounds[1],
-                r->spic.cache.bounds[2], r->spic.cache.bounds[3]);
-        break;
-      }
+      fprintf(f, "SPIC(\"%s\", %d, %d, %.02f, %.02f, %.02f, %.02f)\n",
+              r->spic.path, r->spic.cache.type, r->spic.cache.page,
+              r->spic.cache.bounds[0], r->spic.cache.bounds[1],
+              r->spic.cache.bounds[2], r->spic.cache.bounds[3]);
+      return;
     case Q_CHLD:
-      {
-        fprintf(f, "CHLD(pid:%d, fd:%d)\n", r->chld.pid, r->chld.fd);
-        break;
-      }
-    default:
-      mabort();
+      fprintf(f, "CHLD(pid:%d, fd:%d)\n", r->chld.pid, r->chld.fd);
+      return;
   }
+  mabort();
 }
 
 bool channel_has_pending_query(channel_t *t, int fd, int timeout)
@@ -522,6 +505,11 @@ bool channel_read_query(channel_t *t, int fd, query_t *r)
         r->size.fid = read_u32(t, fd);
         break;
       }
+    case Q_MTIM:
+      {
+        r->mtim.fid = read_u32(t, fd);
+        break;
+      }
     case Q_SEEN:
       {
         r->seen.fid = read_u32(t, fd);
@@ -582,12 +570,6 @@ void channel_write_ask(channel_t *t, int fd, ask_t *a)
   }
 }
 
-static void write_time(channel_t *t, int fd, struct stat_time tm)
-{
-  write_u32(t, fd, tm.sec);
-  write_u32(t, fd, tm.nsec);
-}
-
 void channel_write_answer(channel_t *t, int fd, answer_t *a)
 {
   if (LOG)
@@ -613,9 +595,12 @@ void channel_write_answer(channel_t *t, int fd, answer_t *a)
     case A_SIZE:
       write_u32(t, fd, a->size.size);
       break;
+    case A_MTIM:
+      write_u32(t, fd, a->mtim.mtime);
+      break;
     case A_OPEN:
-      write_u32(t, fd, a->open.size);
-      write_bytes(t, fd, t->buf, a->open.size);
+      write_u32(t, fd, a->open.path_len);
+      write_bytes(t, fd, t->buf, a->open.path_len);
       break;
     case A_GPIC:
       write_f32(t, fd, a->gpic.bounds[0]);

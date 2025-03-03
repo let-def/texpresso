@@ -629,7 +629,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       }
 
       int n = strlen(q->open.path);
-      a.open.size = n;
+      a.open.path_len = n;
       a.tag = A_OPEN;
       memmove(channel_get_buffer(self->c, n), q->open.path, n);
       channel_write_answer(self->c, p->fd, &a);
@@ -806,6 +806,18 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       a.size.size = entry_data(e)->len;
       if (LOG)
         fprintf(stderr, "SIZE = %d (seen = %d)\n", a.size.size, e->seen);
+      channel_write_answer(self->c, p->fd, &a);
+      break;
+    }
+    case Q_MTIM:
+    {
+      check_fid(q->clos.fid);
+      fileentry_t *e = self->st.table[q->clos.fid].entry;
+      if (e == NULL || e->saved.level < FILE_READ) mabort();
+      a.tag = A_MTIM;
+      a.mtim.mtime = e->fs_stat.st_mtime;
+      if (LOG)
+        fprintf(stderr, "MTIM = %d\n", a.mtim.mtime);
       channel_write_answer(self->c, p->fd, &a);
       break;
     }
