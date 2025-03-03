@@ -83,7 +83,7 @@ void print_backtrace(void);
  *         The returned buffer is managed by the function and valid until the
  *         next call.
  */
-const char *cache_path_(const char *folder, const char *name, ...);
-#define cache_path(folder, ...) cache_path_(folder, __VA_ARGS__, NULL)
+const char *cache_path_(const char *folder, const char *name[]);
+#define cache_path(folder, ...) cache_path_(folder, (const char*[]){__VA_ARGS__, NULL})
 
 #endif // UTILS_H_
