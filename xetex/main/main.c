@@ -68,11 +68,120 @@ int ttstub_shell_escape(const unsigned short *cmd, size_t len)
 // Input management
 static FILE *input_as_file(ttbc_input_handle_t *h)
 {
+  if (texpresso)
+    abort();
   return (void *)h;
 }
 static ttbc_input_handle_t *file_as_input(FILE *h)
 {
+  if (texpresso)
+    abort();
   return (void *)h;
+}
+
+// Allocation of IDs for texpresso protocol
+uint64_t allocated[16];
+
+static txp_file_id next_id(void)
+{
+  for (int i = 0; i < 16; i++)
+    if (allocated[i] != UINT64_MAX)
+      for (int j = 0; j < 64; ++j)
+        if ((allocated[i] & ((uint64_t)1 << j)) == 0)
+          return (i << 6) | j;
+  fprintf(stderr, "All ids have been allocated\n");
+  abort();
+}
+
+static void alloc_id(txp_file_id id)
+{
+  int cell = id >> 6;
+  if (cell < 0 || cell >= 16)
+    abort();
+  int offset = id & 63;
+  if ((allocated[cell] & ((uint64_t)1 << offset)) != 0)
+    abort();
+  allocated[cell] |= (uint64_t)1 << offset;
+}
+
+static void release_id(txp_file_id id)
+{
+  int cell = id >> 6;
+  if (cell < 0 || cell >= 16)
+    abort();
+  int offset = id & 63;
+  if ((allocated[cell] & (1 << offset)) == 0)
+    abort();
+  allocated[cell] &= ~((uint64_t)1 << offset);
+}
+
+typedef struct
+{
+  txp_file_id id;
+  union
+  {
+    FILE *file;
+    struct
+    {
+      int file_size;
+      int file_pos;
+      int buf_pos, buf_len;
+      uint8_t buffer[1024];
+    };
+  };
+} txp_input;
+
+typedef struct {
+  txp_file_id id;
+  FILE *file;
+} txp_input_file;
+
+static txp_input *input_as_txp(ttbc_input_handle_t *h)
+{
+  if (!texpresso) abort();
+  return (void *)h;
+}
+
+static ttbc_input_handle_t *txp_as_input(txp_input *h)
+{
+  if (!texpresso) abort();
+  return (void *)h;
+}
+
+static enum txp_file_kind
+kind_of_ttbc_format(ttbc_file_format format)
+{
+#define CASE(x) case TTBC_FILE_FORMAT_##x: return TXP_KIND_##x
+  switch (format)
+  {
+    CASE(AFM);
+    CASE(BIB);
+    CASE(BST);
+    CASE(CMAP);
+    CASE(CNF);
+    CASE(ENC);
+    CASE(FORMAT);
+    CASE(FONT_MAP);
+    CASE(MISC_FONTS);
+    CASE(OFM);
+    CASE(OPEN_TYPE);
+    CASE(OVF);
+    CASE(PICT);
+    CASE(PK);
+    CASE(PROGRAM_DATA);
+    CASE(SFD);
+    CASE(TEX);
+    CASE(TEX_PS_HEADER);
+    CASE(TFM);
+    CASE(TRUE_TYPE);
+    CASE(TYPE1);
+    CASE(VF);
+    case TTBC_FILE_FORMAT_TECTONIC_PRIMARY:
+      return TXP_KIND_PRIMARY;
+    default:
+      abort();
+  }
+#undef CASE
 }
 
 ttbc_input_handle_t *ttstub_input_open(const char *path,
@@ -84,6 +193,49 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
 
   if (is_gz != 0)
     do_abortf("GZ compression not supported");
+
+  if (texpresso && format == TTBC_FILE_FORMAT_FORMAT)
+  {
+    const char *cached = format_path(".fmt");
+    if (!cached)
+      return NULL;
+
+    FILE *f = fopen(cached, "rb");
+    if (!f)
+      return NULL;
+
+    strcpy(last_open, cached);
+
+    txp_input *input = calloc(1, sizeof(txp_input_file));
+    if (!input)
+      abort();
+    input->id = -1;
+    input->file = f;
+
+    return txp_as_input((txp_input *)input);
+  }
+
+  if (texpresso)
+  {
+    txp_file_id id = next_id();
+
+    char *path =
+      txp_open(texpresso, id, path, kind_of_ttbc_format(format), TXP_READ);
+
+    if (!path)
+      return NULL;
+
+    strcpy(last_open, path);
+    free(path);
+
+    txp_input *input = calloc(1, sizeof(txp_input));
+    if (!input)
+      abort();
+
+    input->id = id;
+    input->file_size = -1;
+    return txp_as_input(input);
+  }
 
   FILE *f = fopen(path, "rb");
   const void *buffer = NULL;
@@ -171,31 +323,93 @@ ttbc_input_handle_t *ttstub_input_open_primary(void)
 
 int ttstub_input_close(ttbc_input_handle_t *handle)
 {
+  if (texpresso)
+  {
+    txp_input *input = input_as_txp(handle);
+    if (input->id == -1)
+    {
+      int result = fclose(input->file);
+      free(input);
+      return result;
+    }
+
+    txp_close(texpresso, input->id);
+    free(input);
+    return 0;
+  }
+
   return fclose(input_as_file(handle));
 }
 
 int ttstub_input_getc(ttbc_input_handle_t *handle)
 {
+  if (texpresso)
+  {
+    txp_input *input = input_as_txp(handle);
+    if (input->id == -1)
+      return getc(input->file);
+
+    if (input->buf_pos >= input->buf_len)
+    {
+      input->file_pos += input->buf_len;
+      input->buf_pos = 0;
+      input->buf_len = txp_read(texpresso, input->id, input->file_pos,
+                                input->buffer, sizeof(input->buffer));
+      if (input->buf_len == 0)
+        return EOF;
+    }
+
+    return input->buffer[input->buf_pos++];
+  }
+
   return getc(input_as_file(handle));
 }
 
 time_t ttstub_input_get_mtime(ttbc_input_handle_t *handle)
 {
   struct stat file_stat;
-  if (fstat(fileno(input_as_file(handle)), &file_stat) == -1)
+  if (texpresso)
   {
-    return 0;  // Error getting file statistics
+    txp_input *input = input_as_txp(handle);
+    if (input->id == -1)
+    {
+      if (fstat(fileno(input->file), &file_stat) == -1)
+        return 0;  // Error getting file statistics
+      return file_stat.st_mtime;
+    }
+
+    return txp_mtime(texpresso, input->id);
   }
+
+  if (fstat(fileno(input_as_file(handle)), &file_stat) == -1)
+    return 0;  // Error getting file statistics
   return file_stat.st_mtime;
+}
+
+uint32_t txp_input_size(txp_input *input)
+{
+  if (input->file_size == -1)
+    input->file_size = txp_size(texpresso, input->id);
+  return input->file_size;
 }
 
 size_t ttstub_input_get_size(ttbc_input_handle_t *handle)
 {
   struct stat file_stat;
-  if (fstat(fileno(input_as_file(handle)), &file_stat) == -1)
+  if (texpresso)
   {
-    return 0;  // Error getting file statistics
+    txp_input *input = input_as_txp(handle);
+    if (input->id == -1)
+    {
+      if (fstat(fileno(input->file), &file_stat) == -1)
+        return 0;  // Error getting file statistics
+      return file_stat.st_size;
+    }
+
+    return txp_input_size(input);
   }
+  if (fstat(fileno(input_as_file(handle)), &file_stat) == -1)
+    return 0;  // Error getting file statistics
   return file_stat.st_size;
 }
 
@@ -203,16 +417,90 @@ size_t ttstub_input_seek(ttbc_input_handle_t *handle,
                          ssize_t offset,
                          int whence)
 {
+  if (texpresso)
+  {
+    txp_input *input = input_as_txp(handle);
+    if (input->id == -1)
+      return fseek(input->file, offset, whence);
+
+    int ofs = offset;
+    if (whence == SEEK_CUR)
+      ofs += input->file_pos + input->buf_pos;
+    else if (whence == SEEK_END)
+      ofs += txp_input_size(input);
+
+    if (ofs < 0)
+      return -1;
+
+    int buf_pos = ofs - input->file_pos;
+    if (buf_pos > 0 && buf_pos <= input->buf_len)
+      input->buf_pos = buf_pos;
+    else
+    {
+      input->file_pos = ofs;
+      input->buf_pos = input->buf_len = 0;
+    }
+
+    return 0;
+  }
   return fseek(input_as_file(handle), offset, whence);
 }
 
 ssize_t ttstub_input_read(ttbc_input_handle_t *handle, char *data, size_t len)
 {
+  if (texpresso)
+  {
+    txp_input *input = input_as_txp(handle);
+    if (input->id == -1)
+      return fread(data, 1, len, input->file);
+
+    if (input->buf_pos < input->buf_len)
+    {
+      if (len >= input->buf_len - input->buf_pos)
+        len = input->buf_len - input->buf_pos;
+      memmove(data, input->buffer + input->buf_pos, len);
+      input->buf_pos += len;
+      return len;
+    }
+
+    if (len < sizeof(input->buffer))
+    {
+      input->file_pos = input->file_pos + input->buf_len;
+      input->buf_len = txp_read(texpresso, input->id, input->file_pos, input->buffer, len);
+      if (len > input->buf_len)
+        len = input->buf_len;
+      memmove(data, input->buffer, len);
+      input->buf_pos = len;
+      return len;
+    }
+    else
+    {
+      input->file_pos = input->file_pos + input->buf_len;
+      len = txp_read(texpresso, input->id, input->file_pos, input->buffer, len);
+      input->file_pos += len;
+      input->buf_pos = input->buf_len = 0;
+      return len;
+    }
+  }
+
   return fread(data, 1, len, input_as_file(handle));
 }
 
 int ttstub_input_ungetc(ttbc_input_handle_t *handle, int ch)
 {
+  if (texpresso)
+  {
+    txp_input *input = input_as_txp(handle);
+    if (input->id == -1)
+      return ungetc(ch, input->file);
+
+    if (input->buf_pos == 0)
+      return EOF;
+
+    input->buffer[--input->buf_pos] = ch;
+    return ch;
+  }
+
   return ungetc(ch, input_as_file(handle));
 }
 
@@ -228,10 +516,14 @@ ssize_t ttstub_get_last_input_abspath(char *buffer, size_t len)
 // Output management
 static FILE *output_as_file(ttbc_output_handle_t *h)
 {
+  if (texpresso)
+    abort();
   return (void *)h;
 }
 static ttbc_output_handle_t *file_as_output(FILE *h)
 {
+  if (texpresso)
+    abort();
   return (void *)h;
 }
 
@@ -620,6 +912,27 @@ int main(int argc, char **argv)
   {
     fprintf(stderr, "Failed to generate format.\n");
     return 1;
+  }
+
+  // Initialize TeXpresso if necessary
+  if (use_texpresso)
+  {
+    const char *texpresso_fd = getenv("TEXPRESSO_FD");
+    int fd = 0;
+    if (texpresso_fd)
+      while (*texpresso_fd >= '0' && *texpresso_fd <= '9')
+        fd = fd * 10 + *texpresso_fd - '0';
+    if (!fd || !texpresso_fd || *texpresso_fd)
+    {
+      fprintf(stderr, "Flag -texpresso is for internal use only.\n");
+      return 1;
+    }
+    texpresso = txp_connect(fdopen(fd, "r+"));
+    if (!texpresso)
+    {
+      fprintf(stderr, "Failed to connect to TeXpresso.\n");
+      return 1;
+    }
   }
 
   // Generate document

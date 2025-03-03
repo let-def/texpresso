@@ -11,26 +11,25 @@ struct txp_client
   txp_file_id seen;
 };
 
-#define PACK(a,b,c,d) ((d << 24) | (c << 16) | (b << 8) | a)
-
 /* QUERIES */
 
 enum tag
 {
-  T_CLOS = PACK('C', 'L', 'O', 'S'),
-  T_DONE = PACK('D', 'O', 'N', 'E'),
-  T_FLSH = PACK('F', 'L', 'S', 'H'),
-  T_FORK = PACK('F', 'O', 'R', 'K'),
-  T_GPIC = PACK('G', 'P', 'I', 'C'),
-  T_OPRD = PACK('O', 'P', 'R', 'D'),
-  T_OPWR = PACK('O', 'P', 'W', 'R'),
-  T_OPEN = PACK('O', 'P', 'E', 'N'),
-  T_PASS = PACK('P', 'A', 'S', 'S'),
-  T_READ = PACK('R', 'E', 'A', 'D'),
-  T_SEEN = PACK('S', 'E', 'E', 'N'),
-  T_SIZE = PACK('S', 'I', 'Z', 'E'),
-  T_SPIC = PACK('S', 'P', 'I', 'C'),
-  T_WRIT = PACK('W', 'R', 'I', 'T'),
+  T_CLOS = FOURCC('C', 'L', 'O', 'S'),
+  T_DONE = FOURCC('D', 'O', 'N', 'E'),
+  T_FLSH = FOURCC('F', 'L', 'S', 'H'),
+  T_FORK = FOURCC('F', 'O', 'R', 'K'),
+  T_GPIC = FOURCC('G', 'P', 'I', 'C'),
+  T_OPRD = FOURCC('O', 'P', 'R', 'D'),
+  T_OPWR = FOURCC('O', 'P', 'W', 'R'),
+  T_OPEN = FOURCC('O', 'P', 'E', 'N'),
+  T_PASS = FOURCC('P', 'A', 'S', 'S'),
+  T_READ = FOURCC('R', 'E', 'A', 'D'),
+  T_SEEN = FOURCC('S', 'E', 'E', 'N'),
+  T_SIZE = FOURCC('S', 'I', 'Z', 'E'),
+  T_SPIC = FOURCC('S', 'P', 'I', 'C'),
+  T_WRIT = FOURCC('W', 'R', 'I', 'T'),
+  T_MTIM = FOURCC('M', 'T', 'I', 'M'),
 };
 
 _Noreturn
@@ -198,11 +197,13 @@ static void txp_io_send_tag(txp_client *io, enum tag t)
 char *txp_open(txp_client *io,
                txp_file_id file,
                const char *path,
-               bool for_write)
+               enum txp_file_kind kind,
+               enum txp_open_mode mode)
 {
-  txp_io_send_tag(io, for_write ? T_OPWR : T_OPRD);
+  txp_io_send_tag(io, (mode == TXP_READ) ? T_OPRD : T_OPWR);
   txp_io_send_u32(io, file);
   txp_io_send_str(io, path);
+  txp_io_send_u32(io, kind);
   enum tag t = txp_io_recv_tag(io);
   switch (t)
   {
@@ -276,20 +277,6 @@ void txp_close(txp_client *io, txp_file_id file)
   txp_io_send_u32(io, file);
   txp_io_check_done(io);
 }
-
-// static uint32_t txp_io_size(txp_client *io, txp_file_id file)
-// {
-//   txp_io_send_tag(io, T_SIZE);
-//   txp_io_send_u32(io, file);
-//   enum tag t = txp_io_recv_tag(io);
-//   switch (t)
-//   {
-//     case T_SIZE:
-//       return txp_io_recv_u32(io);
-//     default:
-//       panic_tag(t);
-//   }
-// }
 
 pid_t txp_fork(txp_client *io)
 {
@@ -375,4 +362,26 @@ void txp_flush(txp_client *io)
 {
   txp_flush_seen(io);
   txp_io_flush(io);
+}
+
+// File mtime
+uint32_t txp_mtime(txp_client *io, txp_file_id file)
+{
+  txp_io_send_tag(io, T_MTIM);
+  txp_io_send_u32(io, file);
+  enum tag t = txp_io_recv_tag(io);
+  if (t != T_MTIM)
+    panic_tag(t);
+  return txp_io_recv_u32(io);
+}
+
+// File size
+uint32_t txp_size(txp_client *io, txp_file_id file)
+{
+  txp_io_send_tag(io, T_SIZE);
+  txp_io_send_u32(io, file);
+  enum tag t = txp_io_recv_tag(io);
+  if (t != T_SIZE)
+    panic_tag(t);
+  return txp_io_recv_u32(io);
 }
