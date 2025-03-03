@@ -172,7 +172,7 @@ static int cache_base_init(void)
  * @param name The file name within the cache path. Can be NULL.
  * @return A pointer to the constructed cache path on success, NULL on failure.
  */
-const char *cache_path_(const char *folder, const char *name, ...)
+const char *cache_path_(const char *folder, const char *name[])
 {
   // 0  if uninitialized,
   // -1 if initialization failed,
@@ -208,12 +208,10 @@ const char *cache_path_(const char *folder, const char *name, ...)
   if (name && len < sizeof(cache_path_buffer))
   {
     bool delim = 0;
-    va_list ap;
-    va_start(ap, name);
     if (0) fprintf(stderr, "cache_path %s", folder);
-    while (name)
+    for (; *name; name++)
     {
-      if (0) fprintf(stderr, "/%s", name);
+      if (0) fprintf(stderr, "/%s", *name);
       if (*name && !delim)
       {
         cache_path_buffer[len++] = '/';
@@ -221,11 +219,9 @@ const char *cache_path_(const char *folder, const char *name, ...)
       }
       len += snprintf(cache_path_buffer + len,
                       sizeof(cache_path_buffer) - len,
-                      "%s", name);
-      name = va_arg(ap, const char *);
+                      "%s", *name);
     }
     fprintf(stderr, "\n");
-    va_end(ap);
   }
 
   if (len > PATH_MAX)

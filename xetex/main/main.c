@@ -115,10 +115,7 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
   if (!f)
   {
     if (LOG)
-    {
       fprintf(stderr, "input_open: failed to open file %s\n", path);
-      fprintf(stderr, "Trying texlive provider.\n");
-    }
 
     if (use_texlive)
     {
@@ -155,7 +152,7 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
           strcpy(last_open, tmp);
       }
       if (!f && LOG)
-        fprintf(stderr, "Texlive failed to provide the file.\n");
+        fprintf(stderr, "Tectonic failed to provide the file.\n");
     }
   }
 
@@ -253,6 +250,14 @@ ttbc_output_handle_t *ttstub_output_open(char const *path, int is_gz)
   log_proc(logging, "path:%s, is_gz:%d", path, is_gz);
   if (is_gz)
     do_abortf("is_gz not supported");
+
+  if (in_initex_mode && path)
+  {
+    const char *p = path;
+    while (*p && *p != '/') p++;
+    if (!*p)
+      path = format_path(path);
+  }
 
   return file_as_output(fopen(path, "wb"));
 }
@@ -441,7 +446,10 @@ static void usage(char *argv0)
 static const char *format_path(const char *ext)
 {
   const char *prefix = use_texlive ? "texlive-" : "tectonic-";
-  return cache_path("format", prefix, format_name, ext);
+  if (!ext || (*ext == '.' || *ext == '-'))
+    return cache_path("format", prefix, format_name, ext);
+  else
+    return cache_path("format", prefix, format_name, "-", ext);
 }
 
 static bool validate_format(void)
@@ -606,7 +614,7 @@ int main(int argc, char **argv)
   else
     fprintf(stderr, "Using Tectonic.\n");
 
-  // Check if format file needs to be generated
+  // Generate format if necessary
   format_name = "xelatex.ini";
   if (!validate_format() && !bootstrap_format())
   {
@@ -624,6 +632,8 @@ int main(int argc, char **argv)
 
   in_initex_mode = false;
   primary_document = doc_path;
+
+  // Run engine.
   tt_history_t result =
       tt_run_engine("texpresso.fmt", primary_document, EXECUTION_DATE);
 
