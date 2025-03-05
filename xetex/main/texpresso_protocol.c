@@ -1,6 +1,8 @@
 #include "texpresso_protocol.h"
 #include <string.h>
 
+#define BUF_SIZE 4096
+
 struct txp_client
 {
   FILE *file;
@@ -8,7 +10,10 @@ struct txp_client
   // delta : Duration;
   uint32_t generation;
   uint32_t seen_pos;
-  txp_file_id seen;
+  txp_file_id seen_file;
+  txp_file_id write_file;
+  int write_pos, write_len;
+  char write_buf[BUF_SIZE];
 };
 
 /* QUERIES */
@@ -69,8 +74,9 @@ txp_client *txp_connect(FILE *file)
 
   client->file = file;
   client->generation = 0;
-  client->seen = -1;
+  client->seen_file = -1;
   client->seen_pos = 0;
+  client->write_len = 0;
 
   // FIXME
   // start_time : ProcessTime::now(), delta : Duration::ZERO, generation : 0,
@@ -168,21 +174,34 @@ static void txp_io_seen(txp_client *io, txp_file_id file, uint32_t pos)
   txp_io_send_u32(io, pos);
 }
 
-static void txp_flush_seen(txp_client *io)
+static void txp_flush_pending(txp_client *io)
 {
-  if (io->seen_pos == 0)
-    return;
-  txp_io_seen(io, io->seen, io->seen_pos);
-  io->seen_pos = 0;
-  io->seen = -1;
+  if (io->seen_pos != 0)
+  {
+    txp_io_seen(io, io->seen_file, io->seen_pos);
+    io->seen_pos = 0;
+    io->seen_file = -1;
+  }
+  if (io->write_len != 0)
+  {
+    txp_io_send_tag_raw(io, T_WRIT);
+    txp_io_send_u32(io, io->write_file);
+    txp_io_send_u32(io, io->write_pos);
+    txp_io_send_u32(io, io->write_len);
+    write_or_panic(io->file, io->write_buf, io->write_len);
+    txp_io_check_done(io);
+    io->write_file = -1;
+    io->write_pos = 0;
+    io->write_len = 0;
+  }
 }
 
 void txp_seen(txp_client *io, txp_file_id file, uint32_t pos)
 {
-  if (io->seen != file)
+  if (io->seen_file != file)
   {
-    txp_flush_seen(io);
-    io->seen = file;
+    txp_flush_pending(io);
+    io->seen_file = file;
   };
   if (io->seen_pos < pos)
     io->seen_pos = pos;
@@ -190,7 +209,7 @@ void txp_seen(txp_client *io, txp_file_id file, uint32_t pos)
 
 static void txp_io_send_tag(txp_client *io, enum tag t)
 {
-  txp_flush_seen(io);
+  txp_flush_pending(io);
   txp_io_send_tag_raw(io, t);
 }
 
@@ -261,8 +280,28 @@ void txp_write(txp_client *io,
                const void *buf,
                size_t len)
 {
-  if (!len)
+  if (len == 0)
     return;
+
+  if (io->write_file == file &&
+      io->write_pos + io->write_len == pos &&
+      io->write_len + len <= sizeof(io->write_buf))
+  {
+    memcpy(io->write_buf + io->write_len, buf, len);
+    io->write_len += len;
+    return;
+  }
+
+  txp_flush_pending(io);
+  if (len <= sizeof(io->write_buf))
+  {
+    io->write_file = file;
+    io->write_pos = pos;
+    io->write_len = len;
+    memcpy(io->write_buf, buf, len);
+    return;
+  }
+
   txp_io_send_tag(io, T_WRIT);
   txp_io_send_u32(io, file);
   txp_io_send_u32(io, pos);
@@ -360,7 +399,7 @@ void txp_bump_generation(txp_client *client)
 
 void txp_flush(txp_client *io)
 {
-  txp_flush_seen(io);
+  txp_flush_pending(io);
   txp_io_flush(io);
 }
 
