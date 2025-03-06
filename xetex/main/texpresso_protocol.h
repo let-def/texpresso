@@ -36,6 +36,7 @@ enum txp_file_kind
   TXP_KIND_TRUE_TYPE     = FOURCC('T','T','F', 0 ),
   TXP_KIND_TYPE1         = FOURCC('T','Y','P','1'),
   TXP_KIND_VF            = FOURCC('V','F', 0 , 0 ),
+  TXP_KIND_OTHER         = FOURCC('O','T','H','R'),
 };
 
 // Open for read or for write
