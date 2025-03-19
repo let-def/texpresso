@@ -55,4 +55,6 @@ typedef enum {
 #define FONT_FLAGS_COLORED  0x01
 #define FONT_FLAGS_VERTICAL 0x02
 
+extern int xetex_tokens;
+
 #endif /* not TECTONIC_XETEX_CORE_H */

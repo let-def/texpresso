@@ -6,8 +6,6 @@
 struct txp_client
 {
   FILE *file;
-  // start_time : ProcessTime;
-  // delta : Duration;
   uint32_t generation;
   uint32_t seen_pos;
   txp_file_id seen_file;
@@ -80,8 +78,6 @@ txp_client *txp_connect(FILE *file)
   client->append_len = 0;
   client->stdout_len = 0;
 
-  // FIXME
-  // start_time : ProcessTime::now(), delta : Duration::ZERO, generation : 0,
   return client;
 }
 
@@ -131,11 +127,13 @@ static float txp_io_recv_f32(txp_client *io)
   return x.f;
 }
 
+// FIXME
+extern int xetex_tokens;
+
 static void txp_io_send_tag_raw(txp_client *io, enum tag t)
 {
   txp_io_send_u32(io, t);
-  uint32_t time = 0; // FIXME
-  //let time = self.delta + ProcessTime::elapsed(&self.start_time);
+  uint32_t time = xetex_tokens;
   txp_io_send_u32(io, time);
 }
 
@@ -260,25 +258,29 @@ size_t txp_read(txp_client *io,
                 void *buf,
                 size_t len)
 {
-  txp_io_send_tag(io, T_READ);
-  txp_io_send_u32(io, file);
-  txp_io_send_u32(io, pos);
-  txp_io_send_u32(io, len);
-  enum tag t = txp_io_recv_tag(io);
-  switch (t)
+  while (1)
   {
-    case T_FORK:
-      return -1;
-    case T_READ:
+    txp_io_send_tag(io, T_READ);
+    txp_io_send_u32(io, file);
+    txp_io_send_u32(io, pos);
+    txp_io_send_u32(io, len);
+    enum tag t = txp_io_recv_tag(io);
+    switch (t)
     {
-      uint32_t size = txp_io_recv_u32(io);
-      if (size > len)
-        exit(1);
-      read_exact(io->file, buf, size);
-      return size;
+      case T_FORK:
+        txp_fork(io);
+        continue;
+      case T_READ:
+      {
+        uint32_t size = txp_io_recv_u32(io);
+        if (size > len)
+          exit(1);
+        read_exact(io->file, buf, size);
+        return size;
+      }
+      default:
+        panic_tag(t);
     }
-    default:
-      panic_tag(t);
   }
 }
 
@@ -341,21 +343,10 @@ pid_t txp_fork(txp_client *io)
   io->generation += 1;
   txp_flush(io);
 
-  // FIXME
-  uint32_t delta = 0;
-  // let delta = self.delta + ProcessTime::elapsed(&self.start_time);
-  // let result = texpresso_fork_with_channel(self.file.as_raw_fd(),
-  //                                          delta.as_millis() as u32);
   int fd = fileno(io->file);
   if (fd == -1)
     ppanic("fork_with_channel: fileno");
-  pid_t result = texpresso_fork_with_channel(fd, delta);
-  if (result == 0)
-  {
-    // FIXME
-    // self.delta = delta;
-    // self.start_time = ProcessTime::now();
-  };
+  pid_t result = texpresso_fork_with_channel(fd, xetex_tokens);
   return result;
 }
 

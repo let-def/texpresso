@@ -12,7 +12,7 @@
 #include "texpresso_protocol.h"
 #include "common.h"
 
-#define LOG 0
+#define LOG 1
 
 /**
  * Global definitions
@@ -124,6 +124,7 @@ typedef struct
     {
       int file_size;
       int file_pos;
+      int generation;
       int buf_pos, buf_len;
       uint8_t buffer[1024];
     };
@@ -234,6 +235,7 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
 
       input->id = id;
       input->file_size = -1;
+      input->generation = txp_generation(texpresso);
       return txp_as_input(input);
     }
   }
@@ -365,6 +367,13 @@ int ttstub_input_getc(ttbc_input_handle_t *handle)
     if (input->id == -1)
       return getc(input->file);
 
+    if (input->generation != txp_generation(texpresso))
+    {
+      input->generation = txp_generation(texpresso);
+      input->file_pos += input->buf_pos;
+      input->buf_pos = input->buf_len = 0;
+    }
+
     if (input->buf_pos >= input->buf_len)
     {
       input->file_pos += input->buf_len;
@@ -375,7 +384,9 @@ int ttstub_input_getc(ttbc_input_handle_t *handle)
         return EOF;
     }
 
-    return input->buffer[input->buf_pos++];
+    int result = input->buffer[input->buf_pos++];
+    txp_seen(texpresso, input->id, input->file_pos + input->buf_pos);
+    return result;
   }
 
   return getc(input_as_file(handle));
@@ -470,12 +481,20 @@ ssize_t ttstub_input_read(ttbc_input_handle_t *handle, char *data, size_t len)
     if (input->id == -1)
       return fread(data, 1, len, input->file);
 
+    if (input->generation != txp_generation(texpresso))
+    {
+      input->generation = txp_generation(texpresso);
+      input->file_pos += input->buf_pos;
+      input->buf_pos = input->buf_len = 0;
+    }
+
     if (input->buf_pos < input->buf_len)
     {
       if (len >= input->buf_len - input->buf_pos)
         len = input->buf_len - input->buf_pos;
       memmove(data, input->buffer + input->buf_pos, len);
       input->buf_pos += len;
+      txp_seen(texpresso, input->id, input->file_pos + input->buf_pos);
       return len;
     }
 
@@ -487,6 +506,7 @@ ssize_t ttstub_input_read(ttbc_input_handle_t *handle, char *data, size_t len)
         len = input->buf_len;
       memmove(data, input->buffer, len);
       input->buf_pos = len;
+      txp_seen(texpresso, input->id, input->file_pos + input->buf_pos);
       return len;
     }
     else
@@ -495,6 +515,7 @@ ssize_t ttstub_input_read(ttbc_input_handle_t *handle, char *data, size_t len)
       len = txp_read(texpresso, input->id, input->file_pos, input->buffer, len);
       input->file_pos += len;
       input->buf_pos = input->buf_len = 0;
+      txp_seen(texpresso, input->id, input->file_pos + input->buf_pos);
       return len;
     }
   }
@@ -778,12 +799,6 @@ int ttstub_pic_get_cached_bounds(const char *name, int type, int page, float bou
 
 void ttstub_pic_set_cached_bounds(const char *name, int type, int page, const float bounds[4])
 {
-}
-
-pid_t texpresso_fork_with_channel(int fd, uint32_t time)
-{
-  fprintf(stderr, "texpresso_fork_with_channel: TODO\n");
-  exit(1);
 }
 
 // Entry point
