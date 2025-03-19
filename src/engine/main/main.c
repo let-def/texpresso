@@ -794,11 +794,16 @@ PRINTF_FUNC(1, 2) void ttstub_issue_error(const char *format, ...)
 
 int ttstub_pic_get_cached_bounds(const char *name, int type, int page, float bounds[4])
 {
+  if (texpresso)
+    return txp_gpic(texpresso, name, type, page, bounds);
+
   return 0;
 }
 
 void ttstub_pic_set_cached_bounds(const char *name, int type, int page, const float bounds[4])
 {
+  if (texpresso)
+    txp_spic(texpresso, name, type, page, bounds);
 }
 
 // Entry point
