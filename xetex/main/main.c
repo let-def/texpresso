@@ -232,6 +232,8 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
     if (!input)
       abort();
 
+    alloc_id(id);
+
     input->id = id;
     input->file_size = -1;
     return txp_as_input(input);
@@ -334,6 +336,7 @@ int ttstub_input_close(ttbc_input_handle_t *handle)
     }
 
     txp_close(texpresso, input->id);
+    release_id(input->id);
     free(input);
     return 0;
   }
@@ -520,6 +523,7 @@ static FILE *output_as_file(ttbc_output_handle_t *h)
     abort();
   return (void *)h;
 }
+
 static ttbc_output_handle_t *file_as_output(FILE *h)
 {
   if (texpresso)
@@ -527,14 +531,41 @@ static ttbc_output_handle_t *file_as_output(FILE *h)
   return (void *)h;
 }
 
+static txp_file_id output_as_txp(ttbc_output_handle_t *p)
+{
+  uintptr_t h = (uintptr_t)p;
+  if (!texpresso || h > 1024) abort();
+  return h;
+}
+
+static ttbc_output_handle_t *txp_as_output(txp_file_id h)
+{
+  uintptr_t p = h;
+  if (!texpresso) abort();
+  return (void *)p;
+}
+
+
 int ttstub_output_flush(ttbc_output_handle_t *handle)
 {
-  return fflush(output_as_file(handle));
+  if (texpresso)
+  {
+    txp_flush(texpresso);
+    return 0;
+  }
+  else
+    return fflush(output_as_file(handle));
 }
 
 int ttstub_output_close(ttbc_output_handle_t *handle)
 {
-  return fclose(output_as_file(handle));
+  if (texpresso)
+  {
+    txp_close(texpresso, output_as_txp(handle));
+    return 0;
+  }
+  else
+    return fclose(output_as_file(handle));
 }
 
 ttbc_output_handle_t *ttstub_output_open(char const *path, int is_gz)
@@ -542,6 +573,17 @@ ttbc_output_handle_t *ttstub_output_open(char const *path, int is_gz)
   log_proc(logging, "path:%s, is_gz:%d", path, is_gz);
   if (is_gz)
     do_abortf("is_gz not supported");
+
+  if (texpresso)
+  {
+    txp_file_id id = next_id();
+    char *opath = txp_open(texpresso, id, path, TXP_KIND_OTHER, TXP_WRITE);
+    if (!opath)
+      return NULL;
+    free(opath);
+    alloc_id(id);
+    return txp_as_output(id);
+  }
 
   if (in_initex_mode && path)
   {
@@ -557,6 +599,8 @@ ttbc_output_handle_t *ttstub_output_open(char const *path, int is_gz)
 ttbc_output_handle_t *ttstub_output_open_format(char const *path, int is_gz)
 {
   log_proc(logging, "path:%s, is_gz:%d", path, is_gz);
+  if (texpresso || !in_initex_mode)
+    abort();
   path = format_path(".fmt");
   if (!path)
     return NULL;
@@ -565,6 +609,9 @@ ttbc_output_handle_t *ttstub_output_open_format(char const *path, int is_gz)
 
 ttbc_output_handle_t *ttstub_output_open_stdout(void)
 {
+  if (texpresso)
+    return ttstub_output_open("stdout", 0);
+
   return file_as_output(stdout);
 }
 
