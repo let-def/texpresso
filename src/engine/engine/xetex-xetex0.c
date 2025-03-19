@@ -11,6 +11,8 @@
 
 #define IS_LC_HEX(c) (((c) >= '0' && (c) <= '9' ) || ((c) >= 'a' && (c) <= 'f' ))
 
+int xetex_tokens = 0;
+
 static void
 int_error(int32_t n)
 {
@@ -5166,6 +5168,7 @@ get_next(void)
 
 restart:
     cur_cs = 0;
+    xetex_tokens++;
 
     if (cur_input.state != TOKEN_LIST) { /*355:*/
     texswitch:
