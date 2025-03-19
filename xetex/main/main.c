@@ -617,14 +617,26 @@ ttbc_output_handle_t *ttstub_output_open_stdout(void)
 
 int ttstub_output_putc(ttbc_output_handle_t *handle, int c)
 {
-  return putc(c, output_as_file(handle));
+  if (texpresso)
+  {
+    txp_putc(texpresso, output_as_txp(handle), c);
+    return c;
+  }
+  else
+    return putc(c, output_as_file(handle));
 }
 
 size_t ttstub_output_write(ttbc_output_handle_t *handle,
                            const char *data,
                            size_t len)
 {
-  return fwrite(data, 1, len, output_as_file(handle));
+  if (texpresso)
+  {
+    txp_append(texpresso, output_as_txp(handle), data, len);
+    return len;
+  }
+  else
+    return fwrite(data, 1, len, output_as_file(handle));
 }
 
 PRINTF_FUNC(2, 3)
