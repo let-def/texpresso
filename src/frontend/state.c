@@ -31,7 +31,7 @@
 /* Rollback log */
 
 #undef LOG
-#define LOG 1
+#define LOG 0
 
 enum log_action {
   LOG_ENTRY = 0x42,
