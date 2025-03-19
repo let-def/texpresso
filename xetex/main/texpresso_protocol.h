@@ -74,7 +74,9 @@ char *txp_open(txp_client *client, txp_file_id file, const char *path, enum txp_
 size_t txp_read(txp_client *client, txp_file_id file, uint32_t pos, void *buf, size_t len);
 
 // Write to a file
-void txp_write(txp_client *client, txp_file_id file, uint32_t pos, const void *buf, size_t len);
+void txp_append(txp_client *client, txp_file_id file, const void *buf, size_t len);
+
+void txp_putc(txp_client *client, txp_file_id file, int c);
 
 // Close a file
 void txp_close(txp_client *client, txp_file_id file);
