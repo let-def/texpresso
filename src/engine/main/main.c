@@ -8,10 +8,9 @@
 #include "formats.h"
 #include "tectonic_bridge_core.h"
 #include "tectonic_bridge_core_generated.h"
-#include "tectonic_provider.h"
-#include "texlive_provider.h"
+#include "providers.h"
 #include "texpresso_protocol.h"
-#include "utils.h"
+#include "common.h"
 
 #define LOG 0
 
@@ -219,24 +218,24 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
   {
     txp_file_id id = next_id();
 
-    char *path =
+    char *ipath =
       txp_open(texpresso, id, path, kind_of_ttbc_format(format), TXP_READ);
 
-    if (!path)
-      return NULL;
+    if (ipath)
+    {
+      strcpy(last_open, ipath);
+      free(ipath);
 
-    strcpy(last_open, path);
-    free(path);
+      txp_input *input = calloc(1, sizeof(txp_input));
+      if (!input)
+        abort();
 
-    txp_input *input = calloc(1, sizeof(txp_input));
-    if (!input)
-      abort();
+      alloc_id(id);
 
-    alloc_id(id);
-
-    input->id = id;
-    input->file_size = -1;
-    return txp_as_input(input);
+      input->id = id;
+      input->file_size = -1;
+      return txp_as_input(input);
+    }
   }
 
   FILE *f = fopen(path, "rb");
@@ -310,7 +309,21 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
     }
   }
 
-  return file_as_input(f);
+  if (texpresso)
+  {
+    if (!f)
+      return NULL;
+
+    txp_input *input = calloc(1, sizeof(txp_input_file));
+    if (!input)
+      abort();
+    input->id = -1;
+    input->file = f;
+
+    return txp_as_input((txp_input *)input);
+  }
+  else
+    return file_as_input(f);
 }
 
 ttbc_input_handle_t *ttstub_input_open_primary(void)
@@ -534,7 +547,7 @@ static ttbc_output_handle_t *file_as_output(FILE *h)
 static txp_file_id output_as_txp(ttbc_output_handle_t *p)
 {
   uintptr_t h = (uintptr_t)p;
-  if (!texpresso || h > 1024) abort();
+  if (!texpresso || (h > 1024 && h != (uintptr_t)-1)) abort();
   return h;
 }
 
@@ -610,7 +623,7 @@ ttbc_output_handle_t *ttstub_output_open_format(char const *path, int is_gz)
 ttbc_output_handle_t *ttstub_output_open_stdout(void)
 {
   if (texpresso)
-    return ttstub_output_open("stdout", 0);
+    return (void*)(uintptr_t)(-1);
 
   return file_as_output(stdout);
 }
@@ -980,7 +993,7 @@ int main(int argc, char **argv)
     int fd = 0;
     if (texpresso_fd)
       while (*texpresso_fd >= '0' && *texpresso_fd <= '9')
-        fd = fd * 10 + *texpresso_fd - '0';
+        fd = fd * 10 + *texpresso_fd++ - '0';
     if (!fd || !texpresso_fd || *texpresso_fd)
     {
       fprintf(stderr, "Flag -texpresso is for internal use only.\n");

@@ -33,7 +33,6 @@
 #include "renderer.h"
 #include "sprotocol.h"
 #include "engine.h"
-#include "logo.h"
 #include "driver.h"
 #include "synctex.h"
 #include "vstack.h"
@@ -86,9 +85,9 @@ static void find_tectonic(char tectonic_path[4096], const char *exec_path)
   uint64_t time = 0;
   if (basename)
   {
-    strcpy(basename, "texpresso-tonic");
+    strcpy(basename, "texpresso-xetex");
     if (!is_more_recent(&time, tectonic_path))
-      strcpy(tectonic_path, "texpresso-tonic");
+      strcpy(tectonic_path, "texpresso-xetex");
   }
 }
 

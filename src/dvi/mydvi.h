@@ -31,7 +31,7 @@
 #include <mupdf/pdf.h>
 
 #include "fixed.h"
-#include "../mupdf_compat.h"
+#include "mupdf_compat.h"
 
 // Forward declaration of resource manager
 typedef struct dvi_resmanager dvi_resmanager;
