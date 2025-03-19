@@ -53,7 +53,7 @@ enum query {
   Q_OPRD = PACK('O','P','R','D'),
   Q_OPWR = PACK('O','P','W','R'),
   Q_READ = PACK('R','E','A','D'),
-  Q_WRIT = PACK('W','R','I','T'),
+  Q_APND = PACK('A','P','N','D'),
   Q_CLOS = PACK('C','L','O','S'),
   Q_SIZE = PACK('S','I','Z','E'),
   Q_MTIM = PACK('M','T','I','M'),
@@ -82,9 +82,9 @@ typedef struct {
     } read;
     struct {
       file_id fid;
-      int pos, size;
+      int size;
       char *buf;
-    } writ;
+    } apnd;
     struct {
       file_id fid;
     } clos;

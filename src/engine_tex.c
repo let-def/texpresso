@@ -22,6 +22,7 @@
  * IN THE SOFTWARE.
  */
 
+#include <mupdf/fitz/buffer.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <unistd.h>
@@ -695,11 +696,11 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       channel_write_answer(self->c, p->fd, &a);
       break;
     }
-    case Q_WRIT:
+    case Q_APND:
     {
       fileentry_t *e = NULL;
 
-      if (q->writ.fid == -1)
+      if (q->apnd.fid == -1)
       {
         e = self->st.stdout.entry;
         if (e == NULL)
@@ -714,26 +715,18 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
             e->saved.level = FILE_WRITE;
           }
         }
-        if (q->writ.pos != 0)
-          mabort();
-        q->writ.pos = e->saved.data->len;
       }
       else
       {
-        check_fid(q->writ.fid);
-        e = self->st.table[q->writ.fid].entry;
+        check_fid(q->apnd.fid);
+        e = self->st.table[q->apnd.fid].entry;
       }
 
       if (e == NULL || e->saved.level != FILE_WRITE) mabort();
       log_fileentry(ctx, self->log, e);
 
-      if (q->writ.pos + q->writ.size > e->saved.data->len)
-      {
-        e->saved.data->len = q->writ.pos;
-        fz_append_data(ctx, e->saved.data, q->writ.buf, q->writ.size);
-      }
-      else
-        memmove(e->saved.data->data + q->writ.pos, q->writ.buf, q->writ.size);
+      int pos = e->saved.data->len;
+      fz_append_data(ctx, e->saved.data, q->apnd.buf, q->apnd.size);
 
       if (self->st.document.entry == e)
       {
@@ -754,9 +747,9 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
           fprintf(stderr, "[info] synctex used %d input files, is %d pages long\n", ninput, npage);
       }
       else if (self->st.log.entry == e)
-        editor_append(BUF_LOG, output_data(e), q->writ.pos);
+        editor_append(BUF_LOG, output_data(e), pos);
       else if (self->st.stdout.entry == e)
-        editor_append(BUF_OUT, output_data(e), q->writ.pos);
+        editor_append(BUF_OUT, output_data(e), pos);
       a.tag = A_DONE;
       channel_write_answer(self->c, p->fd, &a);
       break;

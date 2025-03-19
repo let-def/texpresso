@@ -211,7 +211,7 @@ const char *query_to_string(enum query q)
     CASE(Q,OPRD);
     CASE(Q,OPWR);
     CASE(Q,READ);
-    CASE(Q,WRIT);
+    CASE(Q,APND);
     CASE(Q,CLOS);
     CASE(Q,SIZE);
     CASE(Q,SEEN);
@@ -395,8 +395,8 @@ void log_query(FILE *f, query_t *r)
     case Q_READ:
       fprintf(f, "READ(%d, %d, %d)\n", r->read.fid, r->read.pos, r->read.size);
       return;
-    case Q_WRIT:
-      fprintf(f, "WRIT(%d, %d, %d)\n", r->writ.fid, r->writ.pos, r->writ.size);
+    case Q_APND:
+      fprintf(f, "APND(%d, %d)\n", r->apnd.fid, r->apnd.size);
       return;
     case Q_CLOS:
       fprintf(f, "CLOS(%d)\n", r->clos.fid);
@@ -485,14 +485,13 @@ bool channel_read_query(channel_t *t, int fd, query_t *r)
         r->read.size = read_u32(t, fd);
         break;
       }
-    case Q_WRIT:
+    case Q_APND:
       {
-        r->writ.fid = read_u32(t, fd);
-        r->writ.pos = read_u32(t, fd);
-        r->writ.size = read_u32(t, fd);
-        if (!read_bytes(t, fd, 0, r->writ.size))
+        r->apnd.fid = read_u32(t, fd);
+        r->apnd.size = read_u32(t, fd);
+        if (!read_bytes(t, fd, 0, r->apnd.size))
           return 0;
-        r->writ.buf = t->buf;
+        r->apnd.buf = t->buf;
         break;
       }
     case Q_CLOS:
