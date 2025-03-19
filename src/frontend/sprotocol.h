@@ -33,7 +33,7 @@
 typedef struct channel_s channel_t;
 typedef int file_id;
 
-#define LOG 0
+#define LOG 1
 
 #define LEN(txt) (sizeof(txt)-1)
 #define STR(X) #X
@@ -63,6 +63,34 @@ enum query {
   Q_CHLD = PACK('C','H','L','D'),
 };
 
+enum txp_file_kind
+{
+  TXP_KIND_AFM           = PACK('A','F','M', 0 ),
+  TXP_KIND_BIB           = PACK('B','I','B', 0 ),
+  TXP_KIND_BST           = PACK('B','S','T', 0 ),
+  TXP_KIND_CMAP          = PACK('C','M','A','P'),
+  TXP_KIND_CNF           = PACK('C','N','F', 0 ),
+  TXP_KIND_ENC           = PACK('E','N','C', 0 ),
+  TXP_KIND_FORMAT        = PACK('F','R','M','T'),
+  TXP_KIND_FONT_MAP      = PACK('F','M','A','P'),
+  TXP_KIND_MISC_FONTS    = PACK('M','F','N','T'),
+  TXP_KIND_OFM           = PACK('O','F','M', 0 ),
+  TXP_KIND_OPEN_TYPE     = PACK('O','T','F', 0 ),
+  TXP_KIND_OVF           = PACK('O','V','F', 0 ),
+  TXP_KIND_PICT          = PACK('P','I','C','T'),
+  TXP_KIND_PK            = PACK('P','K', 0 , 0 ),
+  TXP_KIND_PROGRAM_DATA  = PACK('P','D','A','T'),
+  TXP_KIND_SFD           = PACK('S','F','D', 0 ),
+  TXP_KIND_PRIMARY       = PACK('P','R','I','M'),
+  TXP_KIND_TEX           = PACK('T','E','X', 0 ),
+  TXP_KIND_TEX_PS_HEADER = PACK('T','P','S','H'),
+  TXP_KIND_TFM           = PACK('T','F','M', 0 ),
+  TXP_KIND_TRUE_TYPE     = PACK('T','T','F', 0 ),
+  TXP_KIND_TYPE1         = PACK('T','Y','P','1'),
+  TXP_KIND_VF            = PACK('V','F', 0 , 0 ),
+  TXP_KIND_OTHER         = PACK('O','T','H','R'),
+};
+
 struct pic_cache {
   int type, page;
   float bounds[4];
@@ -75,6 +103,7 @@ typedef struct {
     struct {
       file_id fid;
       char *path;
+      enum txp_file_kind kind;
     } open;
     struct {
       file_id fid;

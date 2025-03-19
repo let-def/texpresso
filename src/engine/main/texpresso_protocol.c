@@ -14,6 +14,8 @@ struct txp_client
   txp_file_id append_file;
   int append_len;
   char append_buf[BUF_SIZE];
+  int stdout_len;
+  char stdout_buf[BUF_SIZE];
 };
 
 /* QUERIES */
@@ -74,10 +76,9 @@ txp_client *txp_connect(FILE *file)
 
   client->file = file;
   client->generation = 0;
-  client->seen_file = -1;
   client->seen_pos = 0;
-  client->append_file = -1;
   client->append_len = 0;
+  client->stdout_len = 0;
 
   // FIXME
   // start_time : ProcessTime::now(), delta : Duration::ZERO, generation : 0,
@@ -181,7 +182,15 @@ static void txp_flush_pending(txp_client *io)
   {
     txp_io_seen(io, io->seen_file, io->seen_pos);
     io->seen_pos = 0;
-    io->seen_file = -1;
+  }
+  if (io->stdout_len != 0)
+  {
+    txp_io_send_tag_raw(io, T_APND);
+    txp_io_send_u32(io, -1);
+    txp_io_send_u32(io, io->stdout_len);
+    write_or_panic(io->file, io->stdout_buf, io->stdout_len);
+    txp_io_check_done(io);
+    io->stdout_len = 0;
   }
   if (io->append_len != 0)
   {
@@ -190,7 +199,6 @@ static void txp_flush_pending(txp_client *io)
     txp_io_send_u32(io, io->append_len);
     write_or_panic(io->file, io->append_buf, io->append_len);
     txp_io_check_done(io);
-    io->append_file = -1;
     io->append_len = 0;
   }
 }
@@ -218,6 +226,7 @@ char *txp_open(txp_client *io,
                enum txp_file_kind kind,
                enum txp_open_mode mode)
 {
+  fprintf(stderr, "txp_open(\"%s\", %s)\n", path, mode == TXP_READ ? "READ" : "WRITE");
   txp_io_send_tag(io, (mode == TXP_READ) ? T_OPRD : T_OPWR);
   txp_io_send_u32(io, file);
   txp_io_send_str(io, path);
@@ -304,12 +313,18 @@ void txp_append(txp_client *io, txp_file_id file, const void *buf, size_t len)
 
 void txp_putc(txp_client *io, txp_file_id file, int c)
 {
+  if (file == -1 && io->stdout_len < sizeof(io->append_buf))
+  {
+    io->stdout_buf[io->stdout_len++] = c;
+    return;
+  }
   if (io->append_file == file && io->append_len < sizeof(io->append_buf))
   {
     io->append_buf[io->append_len++] = c;
     return;
   }
   txp_flush_pending(io);
+  io->append_file = file;
   io->append_buf[0] = c;
   io->append_len = 1;
 }

@@ -5,7 +5,7 @@ all:
 	@echo "# build/texpresso test/simple.tex"
 
 texpresso:
-	$(MAKE) -C src texpresso
+	$(MAKE) -C src/frontend texpresso
 
 dev:
 	$(MAKE) -C src texpresso-dev
@@ -14,7 +14,7 @@ debug:
 	$(MAKE) -C src texpresso-debug texpresso-debug-proxy
 
 clean:
-	rm -rf build/objects/*
+	rm -rf build/*/*
 
 distclean:
 	rm -rf build Makefile.config
@@ -49,7 +49,7 @@ config:
 endif
 
 texpresso-xetex:
-	$(MAKE) -C xetex
+	$(MAKE) -C src/engine
 
 compile_commands.json:
 	bear -- $(MAKE) -B -k all

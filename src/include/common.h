@@ -1,5 +1,5 @@
-#ifndef UTILS_H_
-#define UTILS_H_
+#ifndef COMMON_H
+#define COMMON_H
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -70,20 +70,4 @@ void print_backtrace(void);
 #define log_result_(kind, fmt, ...) \
     do { if (kind) fprintf(stderr, " = " fmt "\n", ##__VA_ARGS__); } while(0)
 
-/**
- * Construct a cache path based on the provided folder and name.
- *
- * This function constructs a cache path by combining the folder and name with
- * a base path derived from the XDG_CACHE_HOME or HOME environment variables.
- * It ensures that the directory structure exists and is properly normalized.
- *
- * @param folder The subdirectory name within the cache path.
- * @param name The file name within the cache path.
- * @return The constructed cache path, or NULL if an error occurs.
- *         The returned buffer is managed by the function and valid until the
- *         next call.
- */
-const char *cache_path_(const char *folder, const char *name[]);
-#define cache_path(folder, ...) cache_path_(folder, (const char*[]){__VA_ARGS__, NULL})
-
-#endif // UTILS_H_
+#endif // COMMON_H

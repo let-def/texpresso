@@ -1,10 +1,10 @@
-#include "tectonic_provider.h"
+#include "common.h"
+#include "providers.h"
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include "utils.h"
 
 int *entries;
 int entries_pow = 1;

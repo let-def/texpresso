@@ -21,33 +21,33 @@ PKG_CONFIG=pkg-config
 
 ## Internal variables
 
-BUILD_DIRS=../build $(patsubst %,../build/%, $(DIRS))
+BUILD_DIRS=../../build $(patsubst %,../../build/%, $(DIRS))
 
-OBJECTS ?= $(foreach dir,$(DIRS), $(patsubst %.cpp,../build/%.o, $(patsubst %.c,../build/%.o, \
+OBJECTS ?= $(foreach dir,$(DIRS), $(patsubst %.cpp,../../build/%.o, $(patsubst %.c,../../build/%.o, \
 		$(wildcard $(dir)/*.c) \
 		$(wildcard $(dir)/*.cpp) \
 	)))
 
 ## Main targets
 
-all: ../build/$(XETEX_BIN)
+all: ../../build/$(XETEX_BIN)
 
 clean:
 	rm -f  $(OBJECTS)
 
 distclean:
-	rm -rf ../build
+	rm -rf ../../build
 
 ## Internal targets
 
-../build/$(XETEX_BIN): $(OBJECTS)
-	$(_LD) $(LDFLAGS) -o $@ $^
+../../build/$(XETEX_BIN): $(OBJECTS)
+	$(_LD) $(LDFLAGS) -o $@ $^ ../../build/common/libcommon.a
 
-../build/%.o: %.c | $(BUILD_DIRS)
-	$(_CC) $(CFLAGS) -c -o $@ $^
+../../build/%.o: %.c | $(BUILD_DIRS)
+	$(_CC) $(CFLAGS) -I../include -c -o $@ $^
 
-../build/%.o: %.cpp | $(BUILD_DIRS)
-	$(_CXX) $(CXXFLAGS) -c -o $@ $^
+../../build/%.o: %.cpp | $(BUILD_DIRS)
+	$(_CXX) $(CXXFLAGS) -I../include -c -o $@ $^
 
 $(BUILD_DIRS):
 	mkdir -p $@

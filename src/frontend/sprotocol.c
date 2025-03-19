@@ -476,6 +476,7 @@ bool channel_read_query(channel_t *t, int fd, query_t *r)
         r->open.fid = read_u32(t, fd);
         int pos_path = read_zstr(t, fd, &pos);
         r->open.path = &t->buf[pos_path];
+        r->open.kind = read_u32(t, fd);
         break;
       }
     case Q_READ:

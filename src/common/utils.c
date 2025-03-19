@@ -1,3 +1,4 @@
+#include "utils.h"
 #include <dirent.h>
 #include <errno.h>
 #include <execinfo.h>
@@ -6,7 +7,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include "utils.h"
 
 int logging = 0;
 #define BT_BUF_SIZE 100

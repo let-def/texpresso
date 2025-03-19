@@ -27,7 +27,7 @@
 
 #include <mupdf/fitz.h>
 #include <stdbool.h>
-#include "dvi/mydvi.h"
+#include "../dvi/mydvi.h"
 
 typedef struct incdvi_s incdvi_t;
 

@@ -34,6 +34,7 @@
 #include <signal.h>
 #include "engine.h"
 #include "incdvi.h"
+#include "mydvi.h"
 #include "state.h"
 #include "synctex.h"
 #include "editor.h"
@@ -181,25 +182,12 @@ static pid_t exec_xelatex_generic(char **args, int *fd)
   return pid;
 }
 
-static pid_t exec_xelatex(char *engine_path, const char *filename,
-                          int bundle_input, int bundle_output, int bundle_lock,
-                          int *fd)
+static pid_t exec_xelatex(char *engine_path, const char *filename, int *fd)
 {
-  char bundle_url[256];
-  sprintf(bundle_url, "texpresso-bundle://%d,%d,%d",
-          bundle_input, bundle_output, bundle_lock);
   char *args[] = {
     engine_path,
-    "-X",
-    "texpresso",
-    "--bundle",
-    bundle_url,
-    "--untrusted",
-    "--synctex",
-    "--outfmt",
-    "xdv",
-    "-Z",
-    "continue-on-errors",
+    "-tectonic",
+    "-texpresso",
     (char*)filename,
     NULL
   };
@@ -216,11 +204,7 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
     log_rollback(ctx, self->log, self->restart);
     self->process_count = 1;
     process_t *p = get_process(self);
-    p->pid = exec_xelatex(self->engine_path, self->name,
-                          bundle_server_input(self->bundle),
-                          bundle_server_output(self->bundle),
-                          bundle_server_lock(self->bundle),
-                          &p->fd);
+    p->pid = exec_xelatex(self->engine_path, self->name, &p->fd);
     p->trace_len = 0;
     if (!channel_handshake(self->c, p->fd))
       mabort();

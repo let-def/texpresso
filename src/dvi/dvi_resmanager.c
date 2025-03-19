@@ -26,7 +26,7 @@
 #include FT_FREETYPE_H
 #include "mydvi.h"
 #include "fz_util.h"
-#include "../mupdf_compat.h"
+#include "mupdf_compat.h"
 #include <sys/wait.h>
 #include <sys/file.h>
 #include <unistd.h>
@@ -84,12 +84,28 @@ default_hooks_free_env(fz_context *ctx, void *env)
   fz_free(ctx, env);
 }
 
+static const char* kind_to_string(dvi_reskind kind)
+{
+  switch (kind)
+  {
+#define CASE(x) case x: return #x
+    CASE(RES_PDF);
+    CASE(RES_ENC);
+    CASE(RES_MAP);
+    CASE(RES_TFM);
+    CASE(RES_VF);
+    CASE(RES_FONT);
+#undef CASE
+    default: "(unknown)";
+  }
+}
+
 static fz_stream *
 tectonic_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const char *name)
 {
   char *path = NULL;
   bool free_path = 0;
-  fprintf(stderr, "[dvi] loading %s\n", name);
+  fprintf(stderr, "[dvi] loading %s (kind %s)\n", name, kind_to_string(kind));
   switch (kind)
   {
     case RES_PDF:
@@ -169,21 +185,31 @@ tectonic_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const cha
       {
         char command[1024];
         sprintf(command, "tectonic -X bundle cat %s%s", name, *ext);
+        fprintf(stderr, "trying %s\n", command);
         FILE *f = popen(command, "r");
         if (!f)
           abort();
         fz_stream *stream = fz_open_file_ptr_no_close(ctx, f);
         fz_buffer *buffer = fz_read_all(ctx, stream, 4096);
         fz_drop_stream(ctx, stream);
-        if (pclose(f) != 0)
+        int pstatus = pclose(f);
+        if (pstatus != 0 && !(pstatus == -1 && errno == ECHILD))
         {
+          // About ECHILD:
+          // see https://stackoverflow.com/questions/15992984/pclose-on-file-descriptor-opened-with-popen-returns-errno-10-no-child-proce
+          if (pstatus == -1)
+            perror("perror: pclose");
+          else
+            fprintf(stderr, "exit code: %d (length: %d)\n", pstatus, (int)buffer->len);
           fz_drop_buffer(ctx, buffer);
           continue;
         }
         stream = fz_open_buffer(ctx, buffer);
         fz_drop_buffer(ctx, buffer);
+        fprintf(stderr, "success\n");
         return stream;
       }
+      fprintf(stderr, "failure\n");
       return NULL;
     }
     break;
@@ -469,10 +495,6 @@ bundle_server_start(fz_context *ctx,
                     const char *tectonic_path,
                     const char *document_dir)
 {
-  char buffer[4096];
-  strcpy(buffer, tectonic_path);
-  strcat(buffer, " -X bundle serve");
-
   int to_child[2], from_child[2];
 
   if (pipe(to_child) == -1)
@@ -501,7 +523,7 @@ bundle_server_start(fz_context *ctx,
     dup2(from_child[1], STDOUT_FILENO);
     close(to_child[1]);
     close(from_child[0]);
-    execlp(tectonic_path, "texpresso-tonic", "-X", "bundle", "serve", NULL);
+    execlp("texpresso-tonic", "texpresso-tonic", "-X", "bundle", "serve", NULL);
     abort();
   }
 
