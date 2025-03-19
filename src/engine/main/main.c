@@ -12,7 +12,7 @@
 #include "texpresso_protocol.h"
 #include "common.h"
 
-#define LOG 1
+#define LOG 0
 
 /**
  * Global definitions
