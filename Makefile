@@ -48,7 +48,7 @@ config:
 	echo >>Makefile.config 'CC=gcc $$(CFLAGS)'
 	echo >>Makefile.config 'LDCC=g++ $$(CFLAGS)'
 	echo >>Makefile.config "LIBS=-L$(BREW)/lib -lmupdf -lm `CC=gcc ./mupdf-config.sh -L$(BREW)/lib` -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lSDL2"
-	echo >>Makefile.config "TECTONIC_ENV=PKG_CONFIG_PATH=$(BREW_ICU4C)/lib/pkgconfig"
+	echo >>Makefile.config "TECTONIC_ENV=PKG_CONFIG_PATH=$(BREW_ICU4C)/lib/pkgconfig C_INCLUDE_PATH=$(BREW_ICU4C)/include LIBRARY_PATH=$(BREW_ICU4C)/lib"
 endif
 
 texpresso-tonic:
