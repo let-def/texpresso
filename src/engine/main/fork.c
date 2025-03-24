@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <stdlib.h>
@@ -56,14 +57,6 @@ static void send_child_fd(int chan_fd, int32_t pid, uint32_t time, int child_fd)
 
 pid_t texpresso_fork_with_channel(int fd, uint32_t time)
 {
-  // Ignore SIGCHLD to simplify process management
-  static int signal_setup = 0;
-  if (signal_setup == 0)
-  {
-    PASSERT(signal(SIGCHLD, SIG_IGN) != SIG_ERR);
-    signal_setup = 1;
-  }
-
   int sockets[2];
 
   // Create socket
@@ -82,6 +75,18 @@ pid_t texpresso_fork_with_channel(int fd, uint32_t time)
   {
     // In parent: send other end of new socket to driver
     send_child_fd(fd, child, time, sockets[0]);
+
+    // Wait for process to end
+    int status;
+    while (waitpid(child, &status, 0) == -1)
+    {
+      if (errno == EINTR)
+        continue;
+      perror("waitpid");
+      return 1;
+    }
+
+    // Resume handling
     char answer[4];
     int recvd;
     do {
