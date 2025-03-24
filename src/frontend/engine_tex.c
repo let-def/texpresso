@@ -87,7 +87,7 @@ struct tex_engine
   } rollback;
 };
 
-// Backtrackable process state & VFS representation 
+// Backtrackable process state & VFS representation
 
 static process_t *get_process(struct tex_engine *t)
 {
@@ -421,12 +421,12 @@ static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
 
   int last_time;
 
-  if (process > 0) 
+  if (process > 0)
   {
     // There is already some snapshot, stop if no new event has been traced
     if (self->processes[process].trace_len == self->processes[process-1].trace_len)
       return 0;
-      
+
     last_time = self->trace[self->processes[process-1].trace_len - 1].time;
 
     // TODO Alternative
@@ -825,7 +825,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
     case Q_GPIC:
     {
       fileentry_t *e = filesystem_lookup(self->fs, q->gpic.path);
-      if (e && e->saved.level == FILE_READ && 
+      if (e && e->saved.level == FILE_READ &&
           e->pic_cache.type == q->gpic.type &&
           e->pic_cache.page == q->gpic.page)
       {
@@ -1383,6 +1383,5 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   self->stex = synctex_new(ctx);
   self->rollback.trace_len = NOT_IN_TRANSACTION;
 
-  signal(SIGCHLD, SIG_IGN);
   return (txp_engine*)self;
 }
