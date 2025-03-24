@@ -512,7 +512,7 @@ ssize_t ttstub_input_read(ttbc_input_handle_t *handle, char *data, size_t len)
     else
     {
       input->file_pos = input->file_pos + input->buf_len;
-      len = txp_read(texpresso, input->id, input->file_pos, input->buffer, len);
+      len = txp_read(texpresso, input->id, input->file_pos, data, len);
       input->file_pos += len;
       input->buf_pos = input->buf_len = 0;
       txp_seen(texpresso, input->id, input->file_pos + input->buf_pos);
