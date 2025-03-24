@@ -11,7 +11,7 @@
 #include "providers.h"
 #include "texpresso_protocol.h"
 #include "common.h"
-
+#include "../engine/xetex-xetexd.h"
 #define LOG 0
 
 /**
@@ -1025,6 +1025,8 @@ int main(int argc, char **argv)
       fprintf(stderr, "Failed to connect to TeXpresso.\n");
       return 1;
     }
+    synctex_enabled = 1;
+    synctex_texpresso_extension = 1;
   }
 
   // Generate document
