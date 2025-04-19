@@ -9,12 +9,18 @@ void editor_set_line_output(bool line);
 
 // Receiving commands
 
+enum EDITOR_CHANGE_UNIT
+{
+  CHANGE_BYTES,
+  CHANGE_LINES,
+  CHANGE_RANGE
+};
+
 enum EDITOR_COMMAND
 {
   EDIT_OPEN,
   EDIT_CLOSE,
   EDIT_CHANGE,
-  EDIT_CHANGE_LINES,
   EDIT_THEME,
   EDIT_PREVIOUS_PAGE,
   EDIT_NEXT_PAGE,
@@ -28,7 +34,33 @@ enum EDITOR_COMMAND
   EDIT_INVERT,
 };
 
-struct editor_command {
+struct editor_change
+{
+  const char *path;
+  const char *data;
+  enum
+  {
+    BASE_BYTE,
+    BASE_LINE,
+    BASE_RANGE,
+  } base;
+  int length;
+  union
+  {
+    struct
+    {
+      int offset, remove;
+    } span;
+    struct
+    {
+      int start_line, start_char;
+      int end_line, end_char;
+    } range;
+  };
+};
+
+struct editor_command
+{
   enum EDITOR_COMMAND tag;
   union {
     struct {
@@ -41,15 +73,7 @@ struct editor_command {
       const char *path;
     } close;
 
-    struct {
-      const char *path, *data;
-      int offset, remove_length, insert_length;
-    } change;
-
-    struct {
-      const char *path, *data;
-      int offset, remove_count, insert_length;
-    } change_lines;
+    struct editor_change change;
 
     struct {
       float bg[3], fg[3];

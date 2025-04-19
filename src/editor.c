@@ -113,10 +113,14 @@ bool editor_parse(fz_context *ctx,
         .change =
             {
                 .path = val_string(ctx, stack, path),
-                .offset = val_number(ctx, offset),
-                .remove_length = val_number(ctx, length),
                 .data = val_string(ctx, stack, data),
-                .insert_length = val_string_length(ctx, stack, data),
+                .length = val_string_length(ctx, stack, data),
+                .base = BASE_BYTE,
+                .span =
+                    {
+                        .offset = val_number(ctx, offset),
+                        .remove = val_number(ctx, length),
+                    },
             },
     };
   }
@@ -133,20 +137,57 @@ bool editor_parse(fz_context *ctx,
         !val_is_string(data))
       goto arguments;
     *out = (struct editor_command){
-        .tag = EDIT_CHANGE_LINES,
-        .change_lines =
+        .tag = EDIT_CHANGE,
+        .change =
             {
                 .path = val_string(ctx, stack, path),
-                .offset = val_number(ctx, offset),
-                .remove_count = val_number(ctx, count),
                 .data = val_string(ctx, stack, data),
-                .insert_length = val_string_length(ctx, stack, data),
+                .length = val_string_length(ctx, stack, data),
+                .base = BASE_LINE,
+                .span =
+                    {
+                        .offset = val_number(ctx, offset),
+                        .remove = val_number(ctx, count),
+                    },
+            },
+    };
+  }
+  else if (strcmp(verb, "change-range") == 0)
+  {
+    if (len != 7)
+      goto arity;
+    val path = val_array_get(ctx, stack, command, 1);
+    val start_line = val_array_get(ctx, stack, command, 2);
+    val start_char = val_array_get(ctx, stack, command, 3);
+    val end_line = val_array_get(ctx, stack, command, 4);
+    val end_char = val_array_get(ctx, stack, command, 5);
+    val data = val_array_get(ctx, stack, command, 6);
+    if (!val_is_string(path) || !val_is_number(start_line) ||
+        !val_is_number(start_char) || !val_is_number(end_line) ||
+        !val_is_number(end_char) || !val_is_string(data))
+      goto arguments;
+    *out = (struct editor_command){
+        .tag = EDIT_CHANGE,
+        .change =
+            {
+                .path = val_string(ctx, stack, path),
+                .data = val_string(ctx, stack, data),
+                .length = val_string_length(ctx, stack, data),
+                .base = BASE_LINE,
+                .range =
+                    {
+                        .start_line = val_number(ctx, start_line),
+                        .start_char = val_number(ctx, start_char),
+                        .end_line = val_number(ctx, end_line),
+                        .end_char = val_number(ctx, end_char),
+                    },
             },
     };
   }
   else if (strcmp(verb, "theme") == 0)
   {
-    if (len != 3) goto arity;
+    if (len != 3)
+      goto arity;
     val bg = val_array_get(ctx, stack, command, 1);
     val fg = val_array_get(ctx, stack, command, 2);
     out->tag = EDIT_THEME;

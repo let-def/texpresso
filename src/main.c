@@ -572,17 +572,54 @@ static int find_diff(const fz_buffer *buf, const void *data, int size)
   return i;
 }
 
+int utf16_to_utf8_index(const uint8_t *utf8, size_t utf8_len, size_t utf16_pos)
+{
+  size_t utf16_count = 0;
+  for (size_t i = 0; i < utf8_len;)
+  {
+    uint8_t byte = utf8[i];
+    if ((byte & 0x80) == 0)
+    {
+      // 1-byte UTF-8 character
+      utf16_count++;
+      i++;
+    }
+    else if ((byte & 0xE0) == 0xC0)
+    {
+      // 2-byte UTF-8 character
+      utf16_count++;
+      i += 2;
+    }
+    else if ((byte & 0xF0) == 0xE0)
+    {
+      // 3-byte UTF-8 character
+      utf16_count++;
+      i += 3;
+    }
+    else if ((byte & 0xF8) == 0xF0)
+    {
+      // 4-byte UTF-8 character
+      utf16_count += 2;  // surrogate pair in UTF-16
+      i += 4;
+    }
+    if (utf16_count > utf16_pos)
+    {
+      return i - (utf16_count > utf16_pos + 1
+                      ? (utf16_count == utf16_pos + 2 ? 4 : 2)
+                      : 1);
+    }
+    if (byte == '\n')
+      return -1;
+  }
+  return -1;  // position out of bounds
+}
+
 static void realize_change(struct persistent_state *ps,
-                             ui_state *ui,
-                             const char *path,
-                             int offset,
-                             int remove,
-                             const char *data,
-                             int length,
-                             int line_based)
+                           ui_state *ui,
+                           struct editor_change *op)
 {
   int go_up = 0;
-  path = relative_path(path, ps->doc_path, &go_up);
+  const char *path = relative_path(op->path, ps->doc_path, &go_up);
   if (go_up > 0)
   {
     fprintf(stderr, "[command] change %s: file has a different root, skipping\n", path);
@@ -603,7 +640,9 @@ static void realize_change(struct persistent_state *ps,
     return;
   }
 
-  if (line_based)
+  int offset = op->span.offset, remove = op->span.remove, length = op->length;
+
+  if (op->base == BASE_LINE)
   {
     // Compute byte offsets from line offsets
     int line = offset, count = remove;
@@ -642,6 +681,67 @@ static void realize_change(struct persistent_state *ps,
 
     remove -= offset;
   }
+  else if (op->base == BASE_RANGE)
+  {
+    // Compute byte offsets from line offsets
+    int line = op->range.start_line;
+    offset = remove = 0;
+
+    uint8_t *p = b->data;
+    size_t len = b->len;
+
+    while (line > 0 && offset < len)
+    {
+      if (p[offset] == '\n')
+        line -= 1;
+      offset++;
+    }
+
+    if (line > 0)
+    {
+      fprintf(stderr, "[command] change range %s: invalid start line, skipping\n", path);
+      return;
+    }
+
+    int start_char_offset = utf16_to_utf8_index(p + offset, len - offset, op->range.start_char);
+    if (start_char_offset == -1)
+    {
+      fprintf(stderr, "[command] change range %s: invalid start char, skipping\n", path);
+      return;
+    }
+
+    remove = offset;
+    offset += start_char_offset;
+
+    line = op->range.end_line - op->range.start_line;
+    if (line < 0)
+    {
+      fprintf(stderr, "[command] change range %s: invalid end line, skipping\n", path);
+      return;
+    }
+
+    while (line > 0 && remove < len)
+    {
+      if (p[remove] == '\n')
+        line -= 1;
+      remove++;
+    }
+
+    if (line > 0)
+    {
+      fprintf(stderr, "[command] change range %s: invalid end line, skipping\n", path);
+      return;
+    }
+
+    int end_char_offset = utf16_to_utf8_index(p + remove, len - remove, op->range.end_char);
+    if (end_char_offset == -1)
+    {
+      fprintf(stderr, "[command] change range %s: invalid end char, skipping\n", path);
+      return;
+    }
+
+    remove -= offset;
+  }
 
   if (remove < 0 || offset < 0 || offset + remove > b->len)
   {
@@ -657,7 +757,7 @@ static void realize_change(struct persistent_state *ps,
 
   b->len = b->len - remove + length;
 
-  memmove(b->data + offset, data, length);
+  memmove(b->data + offset, op->data, length);
 
   fprintf(stderr, "[command] change %s: changed offset %d\n", path, offset);
   send(notify_file_changes, ui->eng, ps->ctx, e, offset);
@@ -669,11 +769,7 @@ static void realize_change(struct persistent_state *ps,
 struct {
   char buffer[BUFFERED_CHARS];
   int cursor;
-  struct delayed_op {
-    const char *path;
-    const char *data;
-    int offset, remove, length, line_based;
-  } op[BUFFERED_OPS];
+  struct editor_change op[BUFFERED_OPS];
   int count;
 } delayed_changes = {0,};
 
@@ -687,53 +783,42 @@ static void flush_changes(struct persistent_state *ps,
     delayed_changes.cursor = 0;
     for (int i = 0; i < count; ++i)
     {
-      struct delayed_op *op = &delayed_changes.op[i];
-      realize_change(ps, ui, op->path, op->offset, op->remove, op->data, 
-                     op->length, op->line_based);
+      struct editor_change *op = &delayed_changes.op[i];
+      realize_change(ps, ui, op);
     }
   }
 }
 
 static void interpret_change(struct persistent_state *ps,
                              ui_state *ui,
-                             const char *path,
-                             int offset,
-                             int remove,
-                             const char *data,
-                             int length,
-                             int line_based)
+                             struct editor_change *op)
 {
-  int plen = strlen(path);
+  int plen = strlen(op->path);
   int page_count = send(page_count, ui->eng);
   int cursor = delayed_changes.cursor;
 
   if ((page_count == ui->page - 2 || page_count == ui->page - 1) &&
       send(get_status, ui->eng) == DOC_RUNNING &&
       delayed_changes.count < BUFFERED_OPS &&
-      cursor + plen + 1 + length <= BUFFERED_CHARS)
+      cursor + plen + 1 + op->length <= BUFFERED_CHARS)
   {
     char *op_path = delayed_changes.buffer + cursor;
-    memcpy(op_path, path, plen + 1);
+    memcpy(op_path, op->path, plen + 1);
     cursor += plen + 1;
     char *op_data = delayed_changes.buffer + cursor;
-    memcpy(op_data, data, length);
-    cursor += length;
+    memcpy(op_data, op->data, op->length);
+    cursor += op->length;
     delayed_changes.cursor = cursor;
 
-    delayed_changes.op[delayed_changes.count] = (struct delayed_op){
-      .path = op_path,
-      .data = op_data,
-      .offset = offset,
-      .remove = remove,
-      .length = length,
-      .line_based = line_based,
-    };
+    delayed_changes.op[delayed_changes.count] = *op;
+    delayed_changes.op[delayed_changes.count].path = op_path;
+    delayed_changes.op[delayed_changes.count].data = op_data;
     delayed_changes.count += 1;
   }
   else
   {
     flush_changes(ps, ui);
-    realize_change(ps, ui, path, offset, remove, data, length, line_based);
+    realize_change(ps, ui, op);
   }
 }
 
@@ -877,15 +962,7 @@ static void interpret_command(struct persistent_state *ps,
       break;
 
     case EDIT_CHANGE:
-      interpret_change(ps, ui, cmd.change.path, cmd.change.offset,
-                       cmd.change.remove_length, cmd.change.data,
-                       cmd.change.insert_length, 0);
-      break;
-
-    case EDIT_CHANGE_LINES:
-      interpret_change(ps, ui, cmd.change.path, cmd.change.offset,
-                       cmd.change.remove_length, cmd.change.data,
-                       cmd.change.insert_length, 1);
+      interpret_change(ps, ui, &cmd.change);
       break;
 
     case EDIT_THEME:
