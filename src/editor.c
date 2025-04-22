@@ -173,7 +173,7 @@ bool editor_parse(fz_context *ctx,
                 .path = val_string(ctx, stack, path),
                 .data = val_string(ctx, stack, data),
                 .length = val_string_length(ctx, stack, data),
-                .base = BASE_LINE,
+                .base = BASE_RANGE,
                 .range =
                     {
                         .start_line = val_number(ctx, start_line),
