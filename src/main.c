@@ -740,6 +740,7 @@ static void realize_change(struct persistent_state *ps,
       return;
     }
 
+    remove += end_char_offset;
     remove -= offset;
   }
 
