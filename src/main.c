@@ -572,7 +572,7 @@ static int find_diff(const fz_buffer *buf, const void *data, int size)
   return i;
 }
 
-int utf16_to_utf8_index(const uint8_t *utf8, size_t utf8_len, size_t utf16_pos)
+static int utf16_to_utf8_index(const uint8_t *utf8, size_t utf8_len, size_t utf16_pos)
 {
   size_t utf16_count = 0;
   for (size_t i = 0; i < utf8_len;)
@@ -612,6 +612,41 @@ int utf16_to_utf8_index(const uint8_t *utf8, size_t utf8_len, size_t utf16_pos)
       return -1;
   }
   return -1;  // position out of bounds
+}
+
+static int utf8_index_to_offset(const uint8_t *utf8, size_t boundary_offset, size_t utf8_pos)
+{
+  size_t utf16_count = 0;
+  size_t offset = 0;
+  for (size_t i = 0; i < utf8_pos; ++i)
+  {
+    uint8_t byte = utf8[offset];
+    if ((byte & 0x80) == 0)
+    {
+      // 1-byte UTF-8 character
+      offset++;
+    }
+    else if ((byte & 0xE0) == 0xC0)
+    {
+      // 2-byte UTF-8 character
+      offset += 2;
+    }
+    else if ((byte & 0xF0) == 0xE0)
+    {
+      // 3-byte UTF-8 character
+      offset += 3;
+    }
+    else if ((byte & 0xF8) == 0xF0)
+    {
+      // 4-byte UTF-8 character
+      offset += 4;
+    }
+    if (byte == '\n')
+      return -1; // these operations are intended to only run on a single line
+    if (offset >= boundary_offset)
+      return -1; // out of bounds
+  }
+  return offset;
 }
 
 static void realize_change(struct persistent_state *ps,
@@ -703,7 +738,7 @@ static void realize_change(struct persistent_state *ps,
       return;
     }
 
-    int start_char_offset = utf16_to_utf8_index(p + offset, len - offset, op->range.start_char);
+    int start_char_offset = utf8_index_to_offset(p + offset, len - offset, op->range.start_char);
     if (start_char_offset == -1)
     {
       fprintf(stderr, "[command] change range %s: invalid start char, skipping\n", path);
@@ -733,7 +768,7 @@ static void realize_change(struct persistent_state *ps,
       return;
     }
 
-    int end_char_offset = utf16_to_utf8_index(p + remove, len - remove, op->range.end_char);
+    int end_char_offset = utf8_index_to_offset(p + remove, len - remove, op->range.end_char);
     if (end_char_offset == -1)
     {
       fprintf(stderr, "[command] change range %s: invalid end char, skipping\n", path);
