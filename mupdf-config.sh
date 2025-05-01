@@ -26,7 +26,7 @@ link_if_possible()
   done
 }
 
-link_if_possible -lmupdf-third -lleptonica -ltesseract -lmujs -lgumbo
+link_if_possible -lmupdf-third -lleptonica -ltesseract -lmujs -lgumbo -ljbig2dec -lopenjp2
 
 if [ -n "$LINKING" ]; then
   echo >&2 "Linking$LINKING"

@@ -1,8 +1,10 @@
 all:
-	$(MAKE) texpresso
-	$(MAKE) texpresso-xetex
+	$(MAKE) common texpresso texpresso-xetex
 	@echo "# Build succeeded. Try running:"
 	@echo "# build/texpresso test/simple.tex"
+
+common:
+	$(MAKE) -C src/common
 
 texpresso:
 	$(MAKE) -C src/frontend texpresso
@@ -34,7 +36,7 @@ config:
 	echo >Makefile.config "CFLAGS=-O2 -ggdb -I. -fPIC"
 	echo >>Makefile.config 'CC=gcc $$(CFLAGS)'
 	echo >>Makefile.config 'LDCC=g++ $$(CFLAGS)'
-	echo >>Makefile.config "LIBS=-lmupdf -lm `CC=gcc ./mupdf-config.sh` -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2"
+	echo >>Makefile.config "LIBS=-lmupdf -lm `CC=gcc ./mupdf-config.sh` -lz -ljpeg -lharfbuzz -lfreetype -lgumbo -lSDL2"
 endif
 
 ifeq ($(UNAME), Darwin)
@@ -54,4 +56,4 @@ texpresso-xetex:
 compile_commands.json:
 	bear -- $(MAKE) -B -k all
 
-.PHONY: all dev clean config texpresso-xetex re2c compile_commands.json
+.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json
