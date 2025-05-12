@@ -11,3 +11,4 @@ texpresso-dev
 texpresso
 compile_commands.json
 Makefile.config
+.DS_Store
