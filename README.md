@@ -1,7 +1,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/let-def/texpresso">
-    <img width=256 height=256 src="doc/texpresso_logo_v2.svg", alt="texpresso">
+    <img width=256 height=256 src="doc/texpresso_logo_v2.png", alt="texpresso">
   </a>
   <h1>
     <strong>
