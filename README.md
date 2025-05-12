@@ -1,8 +1,19 @@
-# TeXpresso: live rendering and error reporting for LaTeX
+<br />
+<div align="center">
+  <a href="https://github.com/let-def/texpresso">
+    <img width=256 height=256 src="doc/texpresso_logo_v2.svg", alt="texpresso">
+  </a>
+  <h1>
+    <strong>
+      TeXpresso: live rendering and error reporting for LaTeX
+    </strong>
+  </h1>
+</div>
 
-<img align="right" width=128 height=128 src="doc/texpresso_logo.svg">
 
-_Note: TeXpresso is still in an early development phase. Changes and bug fixes are happening frequently, check the [CHANGELOG.md](CHANGELOG.md)._
+> [!Note]
+> TeXpresso is still in an early development phase.
+> Changes and bug fixes are happening frequently, check the [CHANGELOG.md](CHANGELOG.md).
 
 **Important: this repository uses submodules. Clone using `git clone --recurse-submodules`.**
 
