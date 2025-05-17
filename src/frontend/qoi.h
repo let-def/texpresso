@@ -427,7 +427,7 @@ void *qoi_encode(const void *data, const qoi_desc *desc, int *out_len) {
 				run = 0;
 			}
 
-			index_pos = QOI_COLOR_HASH(px) % 64;
+			index_pos = QOI_COLOR_HASH(px) & (64 - 1);
 
 			if (index[index_pos].v == px.v) {
 				bytes[p++] = QOI_OP_INDEX | index_pos;
@@ -574,7 +574,7 @@ void *qoi_decode(const void *data, int size, qoi_desc *desc, int channels) {
 				run = (b1 & 0x3f);
 			}
 
-			index[QOI_COLOR_HASH(px) % 64] = px;
+			index[QOI_COLOR_HASH(px) & (64 - 1)] = px;
 		}
 
 		pixels[px_pos + 0] = px.rgba.r;
@@ -594,7 +594,7 @@ void *qoi_decode(const void *data, int size, qoi_desc *desc, int channels) {
 
 int qoi_write(const char *filename, const void *data, const qoi_desc *desc) {
 	FILE *f = fopen(filename, "wb");
-	int size;
+	int size, err;
 	void *encoded;
 
 	if (!f) {
@@ -608,10 +608,12 @@ int qoi_write(const char *filename, const void *data, const qoi_desc *desc) {
 	}
 
 	fwrite(encoded, 1, size, f);
+	fflush(f);
+	err = ferror(f);
 	fclose(f);
 
 	QOI_FREE(encoded);
-	return size;
+	return err ? 0 : size;
 }
 
 void *qoi_read(const char *filename, qoi_desc *desc, int channels) {
@@ -625,11 +627,10 @@ void *qoi_read(const char *filename, qoi_desc *desc, int channels) {
 
 	fseek(f, 0, SEEK_END);
 	size = ftell(f);
-	if (size <= 0) {
+	if (size <= 0 || fseek(f, 0, SEEK_SET) != 0) {
 		fclose(f);
 		return NULL;
 	}
-	fseek(f, 0, SEEK_SET);
 
 	data = QOI_MALLOC(size);
 	if (!data) {
@@ -639,8 +640,7 @@ void *qoi_read(const char *filename, qoi_desc *desc, int channels) {
 
 	bytes_read = fread(data, 1, size, f);
 	fclose(f);
-
-	pixels = qoi_decode(data, bytes_read, desc, channels);
+	pixels = (bytes_read != size) ? NULL : qoi_decode(data, bytes_read, desc, channels);
 	QOI_FREE(data);
 	return pixels;
 }
