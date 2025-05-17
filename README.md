@@ -126,3 +126,10 @@ https://github.com/let-def/texpresso.vim/assets/1048096/a072181b-82d3-42df-9683-
 **Emacs integration.** Here is a sample recording of me editing and browsing @fabiensanglard [Game Engine Black Book: Doom](https://github.com/fabiensanglard/gebbdoom) in TeXpresso (using my emacs theme):
 
 https://user-images.githubusercontent.com/1048096/235424858-a5a2900b-fb48-40b7-a167-d0b71af39034.mp4
+
+## Credits
+
+Thanks to [@DominikPeters](https://github.com/DominikPeters) for contributing the VS Code extension.
+Thanks to [@merv1n34k](https://github.com/merv1n34k) for contributing the logo.
+
+Thanks our many contributors, [@gasche](https://github.com/gasche), [@haselwarter](https://github.com/haselwarter), [@alerque](https://github.com/alerque), [@sandersantema](https://github.com/sandersantema), [@t4ccer](https://github.com/t4ccer), [@schnell18](https://github.com/schnell18), and [@bowentan](https://github.com/bowentan) for improving features, portability and compatibility with many platforms.
