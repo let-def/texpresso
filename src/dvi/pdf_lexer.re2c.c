@@ -410,7 +410,7 @@ pdf_parse_command(fz_context *ctx, vstack *t, cursor_t *cur, cursor_t lim)
       continue;
     }
 
-    @p0 nat ws+ @p1 nat ws+ "R"
+    @p0 nat ws+ @p1 nat ws+ "R" ws
     {
       vstack_push_ref(ctx, t, pnat(p0, lim), pnat(p1, lim));
       continue;
