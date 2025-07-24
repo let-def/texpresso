@@ -72,19 +72,19 @@ static void set_more_recent(uint64_t *time, char **result, char *candidate)
     *result = candidate;
 }
 
-static void find_tectonic(char tectonic_path[4096], const char *exec_path)
+static void find_engine(char engine_path[4096], const char *exec_path)
 {
-  strcpy(tectonic_path, exec_path);
+  strcpy(engine_path, exec_path);
   char *basename = NULL;
-  for (int i = 0; i < 4096 && tectonic_path[i]; ++i)
-    if (tectonic_path[i] == '/')
-      basename = tectonic_path + i + 1;
+  for (int i = 0; i < 4096 && engine_path[i]; ++i)
+    if (engine_path[i] == '/')
+      basename = engine_path + i + 1;
   uint64_t time = 0;
   if (basename)
   {
     strcpy(basename, "texpresso-xetex");
-    if (!is_more_recent(&time, tectonic_path))
-      strcpy(tectonic_path, "texpresso-xetex");
+    if (!is_more_recent(&time, engine_path))
+      strcpy(engine_path, "texpresso-xetex");
   }
 }
 
@@ -1007,17 +1007,17 @@ bool texpresso_main(struct persistent_state *ps)
     if (*ptr == '.')
       doc_ext = ptr + 1;
 
-  char tectonic_path[4096];
-  find_tectonic(tectonic_path, ps->exe_path);
-  fprintf(stderr, "[info] tectonic path: %s\n", tectonic_path);
+  char engine_path[4096];
+  find_engine(engine_path, ps->exe_path);
+  fprintf(stderr, "[info] engine path: %s\n", engine_path);
 
   if (doc_ext && strcmp(doc_ext, "pdf") == 0)
     ui->eng = txp_create_pdf_engine(ps->ctx, ps->doc_name);
   else if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
-    ui->eng = txp_create_dvi_engine(ps->ctx, tectonic_path, ps->doc_path, ps->doc_name);
+    ui->eng = txp_create_dvi_engine(ps->ctx, ps->doc_path, ps->doc_name);
   else
-    ui->eng = txp_create_tex_engine(ps->ctx, tectonic_path,
-                                    ps->inclusion_path, ps->doc_path, ps->doc_name);
+    ui->eng = txp_create_tex_engine(ps->ctx, engine_path, ps->inclusion_path,
+                                    ps->doc_path, ps->doc_name);
 
   ui->sdl_renderer = ps->renderer;
   ui->doc_renderer = txp_renderer_new(ps->ctx, ui->sdl_renderer);

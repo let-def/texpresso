@@ -45,7 +45,6 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
 txp_engine *txp_create_pdf_engine(fz_context *ctx, const char *pdf_path);
 
 txp_engine *txp_create_dvi_engine(fz_context *ctx,
-                                  const char *engine_path,
                                   const char *dvi_dir,
                                   const char *dvi_path);
 
