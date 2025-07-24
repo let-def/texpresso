@@ -8,6 +8,12 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifdef __APPLE__
+# include <sys/syslimits.h>
+#else
+# include <linux/limits.h>
+#endif
+
 int logging = 0;
 #define BT_BUF_SIZE 100
 
