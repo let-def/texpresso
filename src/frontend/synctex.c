@@ -27,7 +27,6 @@
 #include "synctex.h"
 #include "editor.h"
 #include "myabort.h"
-#include "mupdf_compat.h"
 
 struct int_buffer
 {

@@ -26,7 +26,7 @@
 #define GENERIC_ENGINE_H_
 
 #include "state.h"
-#include "incdvi.h"
+#include <mupdf/fitz/display-list.h>
 #include "synctex.h"
 
 #define send(method, ...) \

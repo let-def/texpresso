@@ -25,7 +25,6 @@
 #include <stdlib.h>
 #include "state.h"
 #include "string.h"
-#include "mupdf_compat.h"
 #include "fz_util.h"
 
 /* Rollback log */

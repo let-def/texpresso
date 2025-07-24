@@ -24,7 +24,6 @@
 
 #include <string.h>
 #include "state.h"
-#include "mupdf_compat.h"
 #include "fz_util.h"
 
 static unsigned long
