@@ -1291,7 +1291,7 @@ Converter::Converter(const Byte* inTable, UInt32 inTableSize, bool inForward,
 		const FileHeader*	fh = reinterpret_cast<const FileHeader*>(inTable);
 		if (READ(fh->type) == kMagicNumberCmp) {
 			// the table is compressed; allocate a new buffer and decompress
-			uint64_t uncompressedLen = READ(fh->version);
+			unsigned long uncompressedLen = READ(fh->version);
 
 			table = static_cast<Byte*>(malloc(uncompressedLen));
 			if (table == 0) {
@@ -2106,7 +2106,7 @@ TECkit_GetMappingFlags(
 		FileHeader			header;
 		if (READ(fh->type) == kMagicNumberCmp) {
 			// compressed mapping, so we need to decompress enough of it to read the flags
-			uint64_t uncompressedLen = sizeof(FileHeader);
+			unsigned long uncompressedLen = sizeof(FileHeader);
 
 			if (tectonic_flate_decompress(
 						reinterpret_cast<Byte*>(&header), &uncompressedLen,
@@ -2151,7 +2151,7 @@ TECkit_GetMappingName(
 		if (READ(fh->type) == kMagicNumberCmp) {
 			// compressed mapping, so we need to decompress the fixed header to read the headerLength field,
 			// and then decompress the complete header to get the names
-			uint64_t uncompressedLen = sizeof(FileHeader);
+			unsigned long uncompressedLen = sizeof(FileHeader);
 
 			if (tectonic_flate_decompress(
 						reinterpret_cast<Byte*>(&header), &uncompressedLen,
