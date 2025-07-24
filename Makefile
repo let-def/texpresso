@@ -58,5 +58,6 @@ compile_commands.json:
 
 fill-tectonic-cache:
 	tectonic --outfmt fmt test/format.tex
+	tectonic --outfmt xdv test/simple.tex
 
 .PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache
