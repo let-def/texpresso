@@ -1,4 +1,7 @@
-#include <linux/limits.h>
+#ifndef XETEX_MAC
+# include <linux/limits.h>
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
