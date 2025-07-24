@@ -1,4 +1,6 @@
-#ifndef XETEX_MAC
+#ifdef __APPLE__
+# include <sys/syslimits.h>
+#else
 # include <linux/limits.h>
 #endif
 
