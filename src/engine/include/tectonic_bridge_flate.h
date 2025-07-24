@@ -60,7 +60,7 @@ FlateResult tectonic_flate_compress(uint8_t *output_ptr,
  * This is a C API function, so it is unsafe.
  */
 FlateResult tectonic_flate_decompress(uint8_t *output_ptr,
-                                      uint64_t *output_len,
+                                      unsigned long *output_len,
                                       const uint8_t *input_ptr,
                                       uint64_t input_len);
 

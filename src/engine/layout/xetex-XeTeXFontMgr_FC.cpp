@@ -30,6 +30,8 @@ use or other dealings in this Software without prior written
 authorization from the copyright holders.
 \****************************************************************************/
 
+#ifndef XETEX_MAC
+
 #include "tectonic_bridge_core.h"
 
 #include "xetex-XeTeXFontMgr_FC.h"
@@ -380,3 +382,5 @@ XeTeXFontMgr_FC::getPlatformFontDesc(PlatformFontRef font) const
         path = "[unknown]";
     return path;
 }
+
+#endif
