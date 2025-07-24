@@ -29,16 +29,13 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
-#include "incdvi.h"
 #include "renderer.h"
-#include "sprotocol.h"
 #include "engine.h"
 #include "driver.h"
 #include "synctex.h"
 #include "vstack.h"
 #include "prot_parser.h"
 #include "editor.h"
-#include "mupdf_compat.h"
 
 struct persistent_state *pstate;
 
