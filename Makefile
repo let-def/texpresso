@@ -1,7 +1,15 @@
 all:
 	$(MAKE) common texpresso texpresso-xetex
-	@echo "# Build succeeded. Try running:"
-	@echo "# build/texpresso test/simple.tex"
+	@echo "# Build succeeded."
+	@echo "# First time launch needs to download many files and can be slow."
+	@echo "# You can speed-up this process using:"
+	@echo "#"
+	@echo "#   make fill-tectonic-cache"
+	@echo "#"
+	@echo "# After, you can try texpresso by running:"
+	@echo "#"
+	@echo "#   build/texpresso test/simple.tex"
+	@echo "#"
 
 common:
 	$(MAKE) -C src/common
