@@ -56,4 +56,7 @@ texpresso-xetex:
 compile_commands.json:
 	bear -- $(MAKE) -B -k all
 
-.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json
+fill-tectonic-cache:
+	tectonic --outfmt fmt test/format.tex
+
+.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache
