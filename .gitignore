@@ -12,3 +12,5 @@ texpresso
 compile_commands.json
 Makefile.config
 .DS_Store
+test/*.xdv
+test/*.fmt
