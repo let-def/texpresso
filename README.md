@@ -1,7 +1,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/let-def/texpresso">
-    <img width=256 height=256 src="doc/texpresso_logo_v2.png", alt="texpresso">
+    <img width=256 height=256 src="doc/texpresso_logo_v3.png", alt="texpresso">
   </a>
   <h1>
     <strong>
@@ -14,8 +14,6 @@
 > [!Note]
 > TeXpresso is still in an early development phase.
 > Changes and bug fixes are happening frequently, check the [CHANGELOG.md](CHANGELOG.md).
-
-**Important: this repository uses submodules. Clone using `git clone --recurse-submodules`.**
 
 ## About
 
@@ -34,9 +32,7 @@ TeXpresso has been tested on Linux and macOS and should work with both AMD64 and
 The TeXpresso system is built of the following parts:
 
 1. A TeX engine that renders LaTeX documents into PDF;
-   we use a modified version of the [Tectonic](https://tectonic-typesetting.github.io/en-US/) engine, modified to interact with the TeXpresso driver.
-
-   This is in the [tectonic/](tectonic/) git-submodule, and it produces the `texpresso-tonic` helper binary
+   we use a modified version of the `XeTeX` engine, modified to interact with the TeXpresso driver.
 
 2. A PDF renderer that renders PDF documents into images.
    We use [MuPDF](https://mupdf.com/).
@@ -82,7 +78,7 @@ It will try to start the `texpresso` command. If it is not possible, it will ope
 `(customize-variable 'texpresso-binary)` to let you set the path to texpresso
 binary (`<where you cloned the repository>/build/texpresso`).
 
-To work correctly, `texpresso` needs `texpresso-tonic` helper; when copying them, make sure they are both in the same directory.
+To work correctly, `texpresso` needs `texpresso-xetex` helper; when copying them, make sure they are both in the same directory.
 
 `M-x texpresso-display-output` will open a small window listing TeX warnings and errors on the current page.
 Use `M-x texpresso-next-page` and `M-x texpresso-previous-page` to move between pages without leaving Emacs.
