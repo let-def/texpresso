@@ -1,7 +1,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/let-def/texpresso">
-    <img width=256 height=256 src="doc/texpresso_logo_v3.png", alt="texpresso">
+    <img width=256 height=256 src="doc/texpresso_logo_v3.svg", alt="texpresso">
   </a>
   <h1>
     <strong>
@@ -9,7 +9,6 @@
     </strong>
   </h1>
 </div>
-
 
 > [!Note]
 > TeXpresso is still in an early development phase.
