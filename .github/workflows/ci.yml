@@ -1,0 +1,73 @@
+name: CI C Build & Test
+
+on:
+  push:
+    branches:
+      - detectonic
+
+jobs:
+  ubuntu:
+    name: Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt -y install build-essential libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev libssl-dev libfontconfig-dev libleptonica-dev libharfbuzz-dev mupdf snapd texlive
+      - run: sudo snap install tectonic
+      - run: make all
+      - run: make fill-tectonic-cache
+      - name: Run tests and check output
+        run: |
+          output-texlive=$(make test-texlive)
+          output-tectonic=$(make test-tectonic)
+          echo "$output-texlive" | grep -q "Spotless execution"
+          echo "$output-tectonic" | grep -q "Spotless execution"
+
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install gcc mupdf-tools SDL2 tectonic || true
+      - run: make all
+      - run: make fill-tectonic-cache
+      - name: Run tests and check output
+        run: |
+          output-texlive=$(make test-texlive)
+          output-tectonic=$(make test-tectonic)
+          echo "$output-texlive" | grep -q "Spotless execution"
+          echo "$output-tectonic" | grep -q "Spotless execution"
+
+  arch:
+    name: Arch Linux
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pacman -Sy --noconfirm tectonic base-devel fontconfig freetype2 gcc-libs glibc graphite gumbo-parser harfbuzz icu jbig2dec libjpeg-turbo libmupdf libpng openjpeg2 openssl sdl2 zlib cargo git libmupdf
+      - run: make all
+      - run: make fill-tectonic-cache
+      - name: Run tests and check output
+        run: |
+          output-texlive=$(make test-texlive)
+          output-tectonic=$(make test-tectonic)
+          echo "$output-texlive" | grep -q "Spotless execution"
+          echo "$output-tectonic" | grep -q "Spotless execution"
+
+  fedora:
+    name: Fedora
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: dnf install -y snap make gcc mupdf-devel SDL2-devel  g++ freetype2-devel libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel gumbo-parser-devel tesseract-devel leptonica-devel cargo openssl-devel fontconfig-devel
+      - run: sudo snap install tectonic
+      - run: make all
+      - run: make fill-tectonic-cache
+      - name: Run tests and check output
+        run: |
+          output-texlive=$(make test-texlive)
+          output-tectonic=$(make test-tectonic)
+          echo "$output-texlive" | grep -q "Spotless execution"
+          echo "$output-tectonic" | grep -q "Spotless execution"
+
+
