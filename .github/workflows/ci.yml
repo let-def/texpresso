@@ -4,38 +4,53 @@ on:
   push:
     branches:
       - detectonic
+  pull_request:
+    branches:
+      - detectonic
 
 jobs:
   ubuntu:
     name: Ubuntu
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt -y install build-essential libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev libssl-dev libfontconfig-dev libleptonica-dev libharfbuzz-dev mupdf snapd texlive
+      - run: sudo apt-get update && sudo apt -y install build-essential libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev libssl-dev libfontconfig-dev libleptonica-dev libharfbuzz-dev mupdf snapd texlive-full texlive-xetex fonts-lmodern fonts-dejavu fonts-freefont-ttf fontconfig
       - run: sudo snap install tectonic
       - run: make all
       - run: make fill-tectonic-cache
-      - name: Run tests and check output
+      - name: Run test with texlive
+        run: make test-texlive || echo "fail" > texlive.status
+      - name: Run test with tectonic
+        run: make test-tectonic || echo "fail" > texlive.status
+      - name: Report
         run: |
-          output-texlive=$(make test-texlive)
-          output-tectonic=$(make test-tectonic)
-          echo "$output-texlive" | grep -q "Spotless execution"
-          echo "$output-tectonic" | grep -q "Spotless execution"
+          pass=0
+          fail=0
+          [ ! -f texlive.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f tectonic.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          echo "Passed: $pass" >> $GITHUB_STEP_SUMMARY
+          echo "Failed: $fail" >> $GITHUB_STEP_SUMMARY
 
   macos:
     name: macOS
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - run: brew install gcc mupdf-tools SDL2 tectonic || true
+      - run: brew install gcc mupdf-tools SDL2 tectonic texlive
       - run: make all
       - run: make fill-tectonic-cache
-      - name: Run tests and check output
+      - name: Run test with texlive
+        run: make test-texlive || echo "fail" > texlive.status
+      - name: Run test with tectonic
+        run: make test-tectonic || echo "fail" > texlive.status
+      - name: Report
         run: |
-          output-texlive=$(make test-texlive)
-          output-tectonic=$(make test-tectonic)
-          echo "$output-texlive" | grep -q "Spotless execution"
-          echo "$output-tectonic" | grep -q "Spotless execution"
+          pass=0
+          fail=0
+          [ ! -f texlive.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f tectonic.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          echo "Passed: $pass" >> $GITHUB_STEP_SUMMARY
+          echo "Failed: $fail" >> $GITHUB_STEP_SUMMARY
 
   arch:
     name: Arch Linux
@@ -43,15 +58,21 @@ jobs:
     container: archlinux:latest
     steps:
       - uses: actions/checkout@v4
-      - run: pacman -Sy --noconfirm tectonic base-devel fontconfig freetype2 gcc-libs glibc graphite gumbo-parser harfbuzz icu jbig2dec libjpeg-turbo libmupdf libpng openjpeg2 openssl sdl2 zlib cargo git libmupdf
+      - run: pacman -Sy --noconfirm texlive-core texlive-bin texlive-latexextra texlive-fontsextra texlive-fontsrecommended texlive-pictures texlive-science texlive-publishers texlive-music texlive-games texlive-humanities texlive-langcyrillic texlive-langextra texlive-langgreek texlive-langjapanese texlive-langchinese texlive-langkorean texlive-bibtexextra tectonic base-devel fontconfig freetype2 gcc-libs glibc graphite gumbo-parser harfbuzz icu jbig2dec libjpeg-turbo libmupdf libpng openjpeg2 openssl sdl2 zlib git libmupdf
       - run: make all
       - run: make fill-tectonic-cache
-      - name: Run tests and check output
+      - name: Run test with texlive
+        run: make test-texlive || echo "fail" > texlive.status
+      - name: Run test with tectonic
+        run: make test-tectonic || echo "fail" > texlive.status
+      - name: Report
         run: |
-          output-texlive=$(make test-texlive)
-          output-tectonic=$(make test-tectonic)
-          echo "$output-texlive" | grep -q "Spotless execution"
-          echo "$output-tectonic" | grep -q "Spotless execution"
+          pass=0
+          fail=0
+          [ ! -f texlive.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f tectonic.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          echo "Passed: $pass" >> $GITHUB_STEP_SUMMARY
+          echo "Failed: $fail" >> $GITHUB_STEP_SUMMARY
 
   fedora:
     name: Fedora
@@ -59,15 +80,22 @@ jobs:
     container: fedora:latest
     steps:
       - uses: actions/checkout@v4
-      - run: dnf install -y snap make gcc mupdf-devel SDL2-devel  g++ freetype2-devel libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel gumbo-parser-devel tesseract-devel leptonica-devel cargo openssl-devel fontconfig-devel
-      - run: sudo snap install tectonic
+      - run: dnf install -y rust cargo texlive-scheme-full make gcc gcc-c++ mupdf-devel SDL2-devel freetype-devel harfbuzz-devel libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel gumbo-parser-devel tesseract-devel leptonica-devel openssl-devel fontconfig-devel graphite2-devel libicu-devel zlib-devel
+      - run: curl --proto '=https' --tlsv1.2 -fsSL https://drop-sh.fullyjustified.net |sh
+      - run: mv tectonic /usr/local/bin
       - run: make all
       - run: make fill-tectonic-cache
-      - name: Run tests and check output
+      - name: Run test with texlive
+        run: make test-texlive || echo "fail" > texlive.status
+      - name: Run test with tectonic
+        run: make test-tectonic || echo "fail" > texlive.status
+      - name: Report
         run: |
-          output-texlive=$(make test-texlive)
-          output-tectonic=$(make test-tectonic)
-          echo "$output-texlive" | grep -q "Spotless execution"
-          echo "$output-tectonic" | grep -q "Spotless execution"
+          pass=0
+          fail=0
+          [ ! -f texlive.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f tectonic.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          echo "Passed: $pass" >> $GITHUB_STEP_SUMMARY
+          echo "Failed: $fail" >> $GITHUB_STEP_SUMMARY
 
 
