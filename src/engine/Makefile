@@ -65,7 +65,7 @@ distclean:
 ## Internal targets
 
 ../../build/$(XETEX_BIN): $(OBJECTS)
-	$(_LD) $(LDFLAGS) -o $@ $^ ../../build/common/libcommon.a
+	$(_LD) -o $@ $^ ../../build/common/libcommon.a $(LDFLAGS)
 
 ../../build/%.o: %.c | $(BUILD_DIRS)
 	$(_CC) $(CFLAGS) -I../include -c -o $@ $^
