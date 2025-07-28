@@ -16,7 +16,7 @@
 
 ## About
 
-TeXpresso provides a "live rendering" experience when editing LaTeX documents in a supported editor: change something in the .tex file, the render window will update almost immediately with your change. Write something invalid, you get an error message immediately.
+TeXpresso provides a *"live rendering"* experience when editing LaTeX documents in a supported editor: change something in the `.tex` file, the render window will update almost immediately with your change. Write something invalid, you get an error message immediately.
 
 This can radically improve the LaTeX editing experience compared to the usual rebuild-and-wait-for-viewer-to-update experience, especially for large documents.
 
@@ -40,7 +40,7 @@ The TeXpresso system is built of the following parts:
 
 4. A driver program that talks to the editor to be notified of changes to the LaTeX document, maintains an incremental view of the document and the rendering process (supporting incrementality, rollback, error recovery, etc.), talks to the LaTeX engine to re-render the modified portions of the document, and synchronizes with the viewer.
 
-   The driver is where the "live" magic lives. It is the `texpresso` binary, whose sources are in this repository.
+   The driver is where the *"live"* magic lives. It is the `texpresso` binary, whose sources are in this repository.
 
 The driver sends information between the editor and the renderer in both directions. In particular, it is possible to ask the editor to jump to a specific place in the LaTeX document by clicking on the viewer window or, conversely, to refresh the viewer window to display the document at the editor position.
 
