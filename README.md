@@ -14,6 +14,8 @@
 > TeXpresso is still in an early development phase.
 > Changes and bug fixes are happening frequently, check the [CHANGELOG.md](CHANGELOG.md).
 
+[![CI C Build & Test](https://github.com/merv1n34k/texpresso/actions/workflows/ci.yml/badge.svg)](https://github.com/merv1n34k/texpresso/actions/workflows/ci.yml)
+
 ## About
 
 TeXpresso provides a *"live rendering"* experience when editing LaTeX documents in a supported editor: change something in the `.tex` file, the render window will update almost immediately with your change. Write something invalid, you get an error message immediately.
