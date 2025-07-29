@@ -22,11 +22,11 @@
  * IN THE SOFTWARE.
  */
 
-#include <unistd.h>
-#include <signal.h>
-#include <mupdf/fitz.h>
-#include "logo.h"
 #include "driver.h"
+#include <mupdf/fitz.h>
+#include <signal.h>
+#include <unistd.h>
+#include "logo.h"
 
 #ifdef __APPLE__
 #include <sys/syslimits.h>
@@ -40,7 +40,9 @@ Uint32 custom_event = 0;
 
 void schedule_event(enum custom_events ev)
 {
-  static char scheduled[EVENT_COUNT] = {0,};
+  static char scheduled[EVENT_COUNT] = {
+      0,
+  };
 
   char *sched = scheduled + ev;
   if (!*sched)
@@ -126,6 +128,7 @@ int main(int argc, const char **argv)
   const char *doc_arg = NULL;
   enum editor_protocol protocol = EDITOR_SEXP;
   bool line_output = 0;
+  bool initialize_only = 0;
 
   int inclusion_path_size = 1;
   for (int i = 1; i < argc; i++)
@@ -134,11 +137,8 @@ int main(int argc, const char **argv)
 
     if (arg[0] == '-')
     {
-      if (arg[1] == 'j' &&
-        arg[2] == 's' &&
-        arg[3] == 'o' &&
-        arg[4] == 'n' &&
-        arg[5] == '\0')
+      if (arg[1] == 'j' && arg[2] == 's' && arg[3] == 'o' && arg[4] == 'n' &&
+          arg[5] == '\0')
       {
         protocol = EDITOR_JSON;
       }
@@ -152,14 +152,17 @@ int main(int argc, const char **argv)
         }
         inclusion_path_size += 1 + strlen(argv[i]);
       }
-      else if (arg[1] == 'l' &&
-        arg[2] == 'i' &&
-        arg[3] == 'n' &&
-        arg[4] == 'e' &&
-        arg[5] == 's' &&
-        arg[6] == '\0')
+      else if (arg[1] == 'l' && arg[2] == 'i' && arg[3] == 'n' &&
+               arg[4] == 'e' && arg[5] == 's' && arg[6] == '\0')
       {
         line_output = 1;
+      }
+      else if (arg[1] == 'i' && arg[2] == 'n' && arg[3] == 'i' &&
+               arg[4] == 't' && arg[5] == 'i' && arg[6] == 'a' &&
+               arg[7] == 'l' && arg[8] == 'i' && arg[9] == 'z' &&
+               arg[10] == 'e' && arg[11] == '\0')
+      {
+        initialize_only = 1;
       }
       else
       {
@@ -176,19 +179,23 @@ int main(int argc, const char **argv)
       continue;
     }
 
-    fprintf(stderr, "[error] Expecting a single document argument, got %s and %s\n",
+    fprintf(stderr,
+            "[error] Expecting a single document argument, got %s and %s\n",
             doc_arg, arg);
     exit(1);
   }
 
   if (doc_arg == NULL)
   {
-    fprintf(stderr, "Usage: texpresso [-I path]* [-json] root_file.tex\n");
+    fprintf(
+        stderr,
+        "Usage: texpresso [-I path]* [-json] [-initialize] root_file.tex\n");
     exit(1);
   }
 
   char *inclusion_path = malloc(inclusion_path_size);
-  if (!inclusion_path) abort();
+  if (!inclusion_path)
+    abort();
 
   char *p = inclusion_path;
   for (int i = 1; i < argc; i++)
@@ -210,7 +217,8 @@ int main(int argc, const char **argv)
   }
 
   char *doc_name = last_index(doc_path, '/');
-  if (doc_path == doc_name) abort();
+  if (doc_path == doc_name)
+    abort();
   doc_name[-1] = '\x00';
 
   fprintf(stderr, "[info] document path: %s\n", doc_path);
@@ -227,17 +235,18 @@ int main(int argc, const char **argv)
 
   bool init = 0;
 
-  //Initialize SDL
+  // Initialize SDL
   if (init == 0 && SDL_Init(SDL_INIT_VIDEO) < 0)
   {
-    fprintf(stderr, "SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
+    fprintf(stderr, "SDL could not initialize! SDL_Error: %s\n",
+            SDL_GetError());
     abort();
   }
 
   custom_event = SDL_RegisterEvents(1);
   signal(SIGUSR1, signal_usr1);
 
-  //Create window
+  // Create window
   char window_title[128] = "TeXpresso ";
   strcat(window_title, doc_name);
 
@@ -246,15 +255,14 @@ int main(int argc, const char **argv)
 #endif
 
   SDL_Window *window;
-  window = SDL_CreateWindow(window_title,
-    SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-    700, 900,
-    SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
-  );
+  window = SDL_CreateWindow(
+      window_title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 700, 900,
+      SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
 
   if (window == NULL)
   {
-    fprintf(stderr, "Window could not be created! SDL_Error: %s\n", SDL_GetError() );
+    fprintf(stderr, "Window could not be created! SDL_Error: %s\n",
+            SDL_GetError());
     abort();
   }
 
@@ -264,10 +272,14 @@ int main(int argc, const char **argv)
   SDL_FreeSurface(logo);
 
   SDL_Renderer *renderer;
-  renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
+  renderer = SDL_CreateRenderer(
+      window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
 
   struct persistent_state pstate = {
-      .initial = {0,},
+      .initial =
+          {
+              0,
+          },
       .protocol = protocol,
       .line_output = line_output,
       .window = window,
@@ -280,14 +292,26 @@ int main(int argc, const char **argv)
       .custom_event = custom_event,
       .schedule_event = &schedule_event,
       .should_reload_binary = &should_reload_binary,
-  };
+      .initialize_only = initialize_only};
 
-  while (texpresso_main(&pstate));
+  int exit_code = 0;
+
+  if (initialize_only)
+  {
+    exit_code = texpresso_main(&pstate);
+
+    fprintf(stderr, "[info] Initialize mode: test completed\n");
+  }
+  else
+  {
+    while (texpresso_main(&pstate))
+      ;
+  }
 
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
   SDL_Quit();
   fz_drop_context(ctx);
 
-  return 0;
+  return exit_code;
 }
