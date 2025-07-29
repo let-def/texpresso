@@ -21,13 +21,16 @@ jobs:
       - name: Run test with texlive
         run: make test-texlive || echo "fail" > texlive.status
       - name: Run test with tectonic
-        run: make test-tectonic || echo "fail" > texlive.status
+        run: make test-tectonic || echo "fail" > tectonic.status
+      - name: Run test with texpresso
+        run: make test-texpresso || echo "fail" > texpresso.status
       - name: Report
         run: |
           pass=0
           fail=0
           [ ! -f texlive.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f tectonic.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f texpresso.status ] && pass=$((pass+1)) || fail=$((fail+1))
           echo "Passed: $pass" >> $GITHUB_STEP_SUMMARY
           echo "Failed: $fail" >> $GITHUB_STEP_SUMMARY
 
@@ -42,13 +45,16 @@ jobs:
       - name: Run test with texlive
         run: make test-texlive || echo "fail" > texlive.status
       - name: Run test with tectonic
-        run: make test-tectonic || echo "fail" > texlive.status
+        run: make test-tectonic || echo "fail" > tectonic.status
+      - name: Run test with texpresso
+        run: make test-texpresso || echo "fail" > texpresso.status
       - name: Report
         run: |
           pass=0
           fail=0
           [ ! -f texlive.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f tectonic.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f texpresso.status ] && pass=$((pass+1)) || fail=$((fail+1))
           echo "Passed: $pass" >> $GITHUB_STEP_SUMMARY
           echo "Failed: $fail" >> $GITHUB_STEP_SUMMARY
 
@@ -64,13 +70,16 @@ jobs:
       - name: Run test with texlive
         run: make test-texlive || echo "fail" > texlive.status
       - name: Run test with tectonic
-        run: make test-tectonic || echo "fail" > texlive.status
+        run: make test-tectonic || echo "fail" > tectonic.status
+      - name: Run test with texpresso
+        run: make test-texpresso || echo "fail" > texpresso.status
       - name: Report
         run: |
           pass=0
           fail=0
           [ ! -f texlive.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f tectonic.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f texpresso.status ] && pass=$((pass+1)) || fail=$((fail+1))
           echo "Passed: $pass" >> $GITHUB_STEP_SUMMARY
           echo "Failed: $fail" >> $GITHUB_STEP_SUMMARY
 
@@ -88,13 +97,16 @@ jobs:
       - name: Run test with texlive
         run: make test-texlive || echo "fail" > texlive.status
       - name: Run test with tectonic
-        run: make test-tectonic || echo "fail" > texlive.status
+        run: make test-tectonic || echo "fail" > tectonic.status
+      - name: Run test with texpresso
+        run: make test-texpresso || echo "fail" > texpresso.status
       - name: Report
         run: |
           pass=0
           fail=0
           [ ! -f texlive.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f tectonic.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f texpresso.status ] && pass=$((pass+1)) || fail=$((fail+1))
           echo "Passed: $pass" >> $GITHUB_STEP_SUMMARY
           echo "Failed: $fail" >> $GITHUB_STEP_SUMMARY
 
