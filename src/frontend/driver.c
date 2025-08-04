@@ -157,10 +157,12 @@ int main(int argc, const char **argv)
       {
         line_output = 1;
       }
-      else if (arg[1] == 'i' && arg[2] == 'n' && arg[3] == 'i' &&
-               arg[4] == 't' && arg[5] == 'i' && arg[6] == 'a' &&
-               arg[7] == 'l' && arg[8] == 'i' && arg[9] == 'z' &&
-               arg[10] == 'e' && arg[11] == '\0')
+      else if (arg[1] == 't' && arg[2] == 'e' && arg[3] == 's' &&
+               arg[4] == 't' && arg[5] == '-' && arg[6] == 'i' &&
+               arg[7] == 'n' && arg[8] == 'i' && arg[9] == 't' &&
+               arg[10] == 'i' && arg[11] == 'a' && arg[12] == 'l' &&
+               arg[13] == 'i' && arg[14] == 'z' && arg[15] == 'e' &&
+               arg[16] == '\0')
       {
         initialize_only = 1;
       }
@@ -187,9 +189,9 @@ int main(int argc, const char **argv)
 
   if (doc_arg == NULL)
   {
-    fprintf(
-        stderr,
-        "Usage: texpresso [-I path]* [-json] [-initialize] root_file.tex\n");
+    fprintf(stderr,
+            "Usage: texpresso [-I path]* [-json] [-test-initialize] "
+            "root_file.tex\n");
     exit(1);
   }
 

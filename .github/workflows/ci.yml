@@ -43,7 +43,7 @@ jobs:
                 sdl2 mupdf \
                 texlive-bin texlive-core texlive-latexextra \
                 texlive-fontsextra texlive-latexrecommended \
-                tectonic texlive-fontsrecommended
+                tectonic texlive-fontsrecommended texlive-xetex
 
           - label: fedora
             os: ubuntu-latest
