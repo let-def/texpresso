@@ -14,7 +14,7 @@
 > TeXpresso is still in an early development phase.
 > Changes and bug fixes are happening frequently, check the [CHANGELOG.md](CHANGELOG.md).
 
-[![CI C Build & Test](https://github.com/merv1n34k/texpresso/actions/workflows/ci.yml/badge.svg)](https://github.com/merv1n34k/texpresso/actions/workflows/ci.yml)
+[![CI TeXpresso Build & Test](https://github.com/let-def/texpresso/actions/workflows/ci.yml/badge.svg)](https://github.com/let-def/texpresso/actions/workflows/ci.yml)
 
 ## About
 
