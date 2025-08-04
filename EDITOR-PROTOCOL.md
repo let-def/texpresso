@@ -3,7 +3,7 @@
 The process should be started from the editor passing the root TeX file as argument:
 
 ```
-texpressso [-I path]* [-json] [-lines] <some-dir>/root.tex
+texpressso [-I path]* [-json] [-lines] [-test-initialize] <some-dir>/root.tex
 ```
 
 The rest of the communication will happen on stdin/stdout:
@@ -13,6 +13,7 @@ The rest of the communication will happen on stdin/stdout:
 Description of the arguments:
 - `-json`: use a JSON syntax rather than SEXP syntax for communication
 - `-lines`: update output buffers line-by-line rather than by chunks of bytes (using `append-lines`/`truncate-lines` rather than `append`/`truncate` messages)
+- `-test-initialize`: run a single cycle, used only for initialization test.
 - `-I path`: populate an "include path" in which files should be looked up in priority
 
 The include path is useful if one uses a build system that puts auxiliary files in a dedicated build directory, while the TeX sources are in a separate source directory. In this case, TeXpresso can be started using `texpresso -I build/ source/main.tex`.
@@ -23,7 +24,7 @@ The include path is useful if one uses a build system that puts auxiliary files 
 
 It is not a query/answer protocol (e.g. request something on stdin, read the answer from stdout): stdin and stdout are processed independently.
 
-The editor should just write a line on stdin when it needs to communicate something to TeXpresso. 
+The editor should just write a line on stdin when it needs to communicate something to TeXpresso.
 
 Conversely, it can interpret the messages it is interested in; ignoring the others should be safe.
 
@@ -45,7 +46,7 @@ When looking for a file, TeXpresso checks in its VFS first and then fallbacks to
 
 LaTeX consumes files as a stream of bytes (8-bit integers). TeXpresso makes no assumption on the encoding, it just shares the raw contents stored on disk.
 
-However, this might not be the case for the content communicated by the editor. 
+However, this might not be the case for the content communicated by the editor.
 JSON strings, for instance, are serialized sequences of unicode codepoints. TeXpresso will convert it to an UTF-8 encoded byte string before sharing with LaTeX.
 Offsets specified in byte-based delta commands (`change`) should therefore refer to byte offsets of the UTF-8 representation.
 Alternatively, one can use line-based communication (using `change-lines` for editor->TeXpresso communication, and by passing `-lines` argument for TeXpresso->editor messages). Lines are numbered by counting '\n'.
