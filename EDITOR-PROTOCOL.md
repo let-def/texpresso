@@ -177,3 +177,19 @@ SyncTeX backward synchronisation: the user clicked on text produced by LaTeX sou
 
 Output by TeXpresso when the contents of its VFS has been lost. The editor should re-`open` any file before sharing `change`s.
 Not urgent: this notification is used mainly when debugging TeXpresso, it should not happen during normal use.
+
+### Files used by the document
+
+```
+(input-file index "path")
+```
+
+Output by TeXpresso when a new source file is read by the document.
+
+During a single run `index` is a unique, monotonous integer. When a new `input-file` message is produced with a lower index, it means that the process backtracked and all files with a higher index are no longer monitored. (Though this is very likely to be temporary, it is better to batch the changes and update the editor state only from time to time).
+
+The paths are printed relative to the root file. They might be non-existent on the file-system (for instance if they exist only in TeXpresso's overlay, that is the case for the intermediate files produced by beamer), so editor plugins should not make any assumptions and validate the path themselves.
+
+Right now, this is implemented by hooking into SyncTeX:
+- only text files are tracked (not graphics)
+- the indices printed are the SyncTex input indices; they should be attributed no other meaning than being monotonic and useful to detect backtracking occurrences
