@@ -304,33 +304,76 @@ static void output_json_string(FILE *f, const char *ptr, int len)
   for (const char *lim = ptr + len; ptr < lim; ptr++)
   {
     unsigned char c = *ptr;
-    if (c < 32)
+    if (c < 0x80)
     {
-      switch (c)
+      if (c < 0x32)
       {
-        case '\b': c = 'b'; break;
-        case '\f': c = 'f'; break;
-        case '\n': c = 'n'; break;
-        case '\r': c = 'r'; break;
-        case '\t': c = 't'; break;
-        default:
-          fprintf(f, "\\u%04X", c);
-          continue;
+        switch (c)
+        {
+          case '\b': c = 'b'; break;
+          case '\f': c = 'f'; break;
+          case '\n': c = 'n'; break;
+          case '\r': c = 'r'; break;
+          case '\t': c = 't'; break;
+          default:
+            fprintf(f, "\\u%04X", c);
+            continue;
+        }
+        putc_unlocked('\\', f);
       }
-      putc_unlocked('\\', f);
+      else
+      {
+        switch (c)
+        {
+          case '"': case '\\': case '/':
+            putc_unlocked('\\', f);
+            break;
+        }
+      }
+      putc_unlocked(c, f);
+    }
+    else if ((c & 0xe0) == 0xc0)
+    {
+      // 2-byte sequence
+      if (ptr + 1 < lim && (ptr[1] & 0xc0) == 0x80)
+      {
+        putc_unlocked(c, f);
+        putc_unlocked(ptr[1], f);
+      }
+      else
+        putc_unlocked('?', f);  // Invalid UTF-8
+      ptr += 1;
+    }
+    else if ((c & 0xf0) == 0xe0)
+    {
+      // 3-byte sequence
+      if (ptr + 2 < lim && (ptr[1] & 0xc0) == 0x80 && (ptr[2] & 0xc0) == 0x80)
+      {
+        putc_unlocked(c, f);
+        putc_unlocked(ptr[1], f);
+        putc_unlocked(ptr[2], f);
+      }
+      else
+        putc_unlocked('?', f);  // Invalid UTF-8
+      ptr += 2;
+    }
+    else if ((c & 0xf8) == 0xf0)
+    {
+      // 4-byte sequence
+      if (ptr + 3 < lim && (ptr[1] & 0xc0) == 0x80 && (ptr[2] & 0xc0) == 0x80 &&
+          (ptr[3] & 0xc0) == 0x80)
+      {
+        putc_unlocked(c, f);
+        putc_unlocked(ptr[1], f);
+        putc_unlocked(ptr[2], f);
+        putc_unlocked(ptr[3], f);
+      }
+      else
+        putc_unlocked('?', f);  // Invalid UTF-8
+      ptr += 3;
     }
     else
-    {
-      switch (c)
-      {
-        case '"':
-        case '\\':
-        case '/':
-          putc_unlocked('\\', f);
-          break;
-      }
-    }
-    putc_unlocked(c, f);
+      putc_unlocked('?', f);  // Invalid UTF-8 start byte
   }
 }
 
