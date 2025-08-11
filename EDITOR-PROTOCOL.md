@@ -80,6 +80,12 @@ Line numbering starts at 0 and line count is defined as the number of '\n'.
 To insert multiple lines, separate them with '\n' in data. Note that if data ends with '\n', it will insert a new empty-line at the end.
 
 ```scheme
+(change-range "path" start-line start-column end-line end-column "replacement-text")
+```
+
+Update file at "path" in VFS (it should have been `open`ed before), by replacing the characters in range starting from line `start-line` at column `start-column` (implemented by counting the number of UTF-16 code units, with 0 being the beginning of the line) up to line `end-line` at column `end-column`. This is designed to be compatible with [LSP position encoding](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#positionEncodingKind) using the default 'utf-16' encoding.
+
+```scheme
 (theme (bg_r bg_g bg_b) (fg_r fg_g fg_b))
 ```
 
