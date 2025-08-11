@@ -712,17 +712,16 @@ static void drop_path(fz_context *ctx, dvi_context *dc)
   }
 }
 
-static fz_stroke_state get_stroke_state(fz_context *ctx, dvi_state *st)
+static void get_stroke_state(fz_context *ctx, dvi_state *st, fz_stroke_state *stst)
 {
-  fz_stroke_state stst = fz_default_stroke_state;
-  stst.linewidth = st->gs.line_width;
-  stst.linejoin = (int)st->gs.line_join;
-  stst.miterlimit = (int)st->gs.miter_limit;
-  stst.dash_cap = stst.start_cap = stst.end_cap = (int)st->gs.line_caps;
-  stst.dash_len = st->gs.dash_len;
-  memcpy(stst.dash_list, st->gs.dash, sizeof(float) * st->gs.dash_len);
-  stst.dash_phase = st->gs.dash_phase;
-  return stst;
+  *stst = fz_default_stroke_state;
+  stst->linewidth = st->gs.line_width;
+  stst->linejoin = (int)st->gs.line_join;
+  stst->miterlimit = (int)st->gs.miter_limit;
+  stst->dash_cap = stst->start_cap = stst->end_cap = (int)st->gs.line_caps;
+  stst->dash_len = st->gs.dash_len;
+  memcpy(stst->dash_list, st->gs.dash, sizeof(float) * st->gs.dash_len);
+  stst->dash_phase = st->gs.dash_phase;
 }
 
 static bool
@@ -874,7 +873,8 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
-            fz_stroke_state stst = get_stroke_state(ctx, st);
+            fz_stroke_state stst;
+            get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_closepath(ctx, path);
             fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
@@ -889,7 +889,8 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
-            fz_stroke_state stst = get_stroke_state(ctx, st);
+            fz_stroke_state stst;
+            get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_closepath(ctx, path);
             fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
@@ -904,7 +905,8 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
-            fz_stroke_state stst = get_stroke_state(ctx, st);
+            fz_stroke_state stst;
+            get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
                          st->gs.colors.fill, 1.0, color_params);
@@ -918,7 +920,8 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
-            fz_stroke_state stst = get_stroke_state(ctx, st);
+            fz_stroke_state stst;
+            get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
                          st->gs.colors.fill, 1.0, color_params);
@@ -955,7 +958,8 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
-            fz_stroke_state stst = get_stroke_state(ctx, st);
+            fz_stroke_state stst;
+            get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
                            st->gs.colors.line, 1.0, color_params);
@@ -967,7 +971,8 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
-            fz_stroke_state stst = get_stroke_state(ctx, st);
+            fz_stroke_state stst;
+            get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_closepath(ctx, path);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
