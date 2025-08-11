@@ -1,5 +1,7 @@
-# Next version
+# v0.1 Mon 11 Aug 14:42:38 JST 2025
 
+Hopefully the last release still relying on a custom build of tectonic:
+    
 - Re-enable SyncTeX (accidentally disabled during a rebase)
 - Fix a crash when the same file was opened multiple times
 - Disable compositor bypass (#50, report by @adamkruszewski)
@@ -14,6 +16,11 @@
 - Remove gumbo dependencies on macOS (change in homebrew packaging of mupdf)
 - On Linux, try Wayland video driver first to solve HIDPI issues
 - PDF engine: reload document on filesystem changes
+- Add `(input-file)` message to let editor track source files (#
+- Add `(change-range)` command to support change specified as UTF-16 code unit ranges, following LSP protocol (with help from @lnay)
+- New logo (contributed by @merv1n34k)
+- Build fixes for different platforms (various contributors)
+- PDF: fix parsing of indirect references, improve support for dashes in stroking operators (reported by @gasche)
 
 # v0.0 Fri Apr  5 06:52:52 JST 2024
 
