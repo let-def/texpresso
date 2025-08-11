@@ -12,3 +12,4 @@ texpresso
 compile_commands.json
 Makefile.config
 .DS_Store
+test/test_utf_mapping
