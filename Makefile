@@ -24,8 +24,9 @@ re2c:
 	$(MAKE) -C src $@
 
 test-utfmapping:
-	gcc -g -o test/test_utf_mapping test/test_utf_mapping.c
-	test/test_utf_mapping &> test/test_utf_mapping.output
+	mkdir -p build
+	gcc -g -o build/test_utf_mapping test/test_utf_mapping.c
+	build/test_utf_mapping &> test/test_utf_mapping.output
 	git diff --exit-code test/test_utf_mapping.output
 
 UNAME := $(shell uname)
