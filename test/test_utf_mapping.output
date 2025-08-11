@@ -1,0 +1,124 @@
+# Test 1. test_ascii: Basic ASCII (1-byte UTF-8, 1 UTF-16 code unit)
+
+| H  | e  | l  | l  | o  | 0A |
+  ^    ^    ^    ^    ^    ^
+[error] Invalid UTF-16 range: pointing past end of line
+
+# Test 2. test_2byte: Single 2-byte UTF-8 (é) - valid, should advance 1 UTF-16 unit
+
+| c  | a  | f  | C3 | A9 | 0A |
+  ^    ^    ^    ^         ^_
+[error] Invalid UTF-16 range: pointing past end of line
+[error] Invalid UTF-16 range: pointing past end of line
+
+# Test 3. test_3byte: Single 3-byte UTF-8 (€) - valid, should advance 1 UTF-16 unit
+
+| c  | a  | f  | E2 | 82 | AC | 0A |
+  ^    ^    ^    ^              ^__
+[error] Invalid UTF-16 range: pointing in the middle of a surrogate pair
+[error] Invalid UTF-16 range: pointing past end of line
+[error] Invalid UTF-16 range: pointing past end of line
+
+# Test 4. test_4byte: Single 4-byte UTF-8 (🌈) - valid, should advance 2 UTF-16 units
+
+| c  | a  | f  | F0 | 9F | 8C | 88 | 0A |
+  ^    ^    ^    ^_                  ^__
+[error] Invalid UTF-16 range: pointing in the middle of a surrogate pair
+[error] Invalid UTF-16 range: pointing past end of line
+[error] Invalid UTF-16 range: pointing past end of line
+[error] Invalid UTF-16 range: pointing past end of line
+[error] Invalid UTF-16 range: pointing past end of line
+[error] Invalid UTF-16 range: pointing past end of line
+
+# Test 5. test_mixed: Mixed: 1-byte + 2-byte + 3-byte + 4-byte
+
+| A  | C3 | A9 | E2 | 82 | AC | F0 | 9F | 8C | 88 | 0A |
+  ^    ^         ^              ^_                  ^_____
+[warning] UTF-16 range: unexpected continuation byte
+[error] Invalid UTF-16 range: pointing past end of line
+[warning] UTF-16 range: unexpected continuation byte
+[error] Invalid UTF-16 range: pointing past end of line
+[warning] UTF-16 range: unexpected continuation byte
+[error] Invalid UTF-16 range: pointing past end of line
+
+# Test 6. test_invalid_continuation: Invalid continuation byte (no leading byte)
+
+| 80 | 81 | 82 | 0A |
+  ^___
+[error] Invalid UTF-16 range: pointing past end of line
+[error] Invalid UTF-16 range: pointing past end of line
+
+# Test 7. test_overlong: Overlong encoding (e.g., 2-byte for U+0000)
+
+| C0 | 80 | C1 | BF | 0A |
+  ^         ^         ^__
+[error] Invalid UTF-16 range: pointing past end of line
+[error] Invalid UTF-16 range: pointing past end of line
+
+# Test 8. test_surrogate: Surrogate pair in UTF-8 (invalid, should trigger error, U+D800)
+
+| ED | A0 | 80 | 0A |
+  ^              ^__
+[error] Invalid UTF-16 range: pointing past end of line
+[error] Invalid UTF-16 range: pointing past end of line
+[error] Invalid UTF-16 range: pointing past end of line
+[error] Invalid UTF-16 range: pointing past end of line
+
+# Test 9. test_surrogate_pair: Surrogate pair (U+D800 + U+DFFF)
+
+| ED | A0 | 80 | ED | AF | BF | 0A |
+  ^              ^              ^____
+[error] Invalid UTF-16 range: pointing past end of buffer
+
+# Test 10. test_nl_in_middle_2byte: Line feed in the middle of a codepoint (should fail)
+
+| c  | a  | E9 | 0A |
+  ^    ^    ^_
+[error] Broken UTF-8 encoding: line return in the middle of a codepoint
+[error] Broken UTF-8 encoding: line return in the middle of a codepoint
+
+# Test 11. test_nl_in_middle_3byte: \xE2\x82 is incomplete 3-byte
+
+| c  | a  | E2 | 82 | 0A |
+  ^    ^    ^__
+[error] Broken UTF-8 encoding: line return in the middle of a codepoint
+[error] Broken UTF-8 encoding: line return in the middle of a codepoint
+[error] Broken UTF-8 encoding: line return in the middle of a codepoint
+
+# Test 12. test_nl_in_middle_4byte: incomplete 4-byte
+
+| c  | a  | F0 | 90 | 8C | 0A |
+  ^    ^    ^___
+[error] Broken UTF-8 encoding: line return in the middle of a codepoint
+[error] Broken UTF-8 encoding: line return in the middle of a codepoint
+
+# Test 13. test_nl_after_surrogate: Line feed after partial surrogate pair (high surrogate, then \n)
+
+| ED | A0 | 0A |
+  ^__
+[warning] UTF-16 range: unexpected continuation byte
+[error] Invalid UTF-16 range: pointing past end of line
+[warning] UTF-16 range: unexpected continuation byte
+[error] Invalid UTF-16 range: pointing past end of line
+[warning] UTF-16 range: unexpected continuation byte
+[error] Invalid UTF-16 range: pointing past end of line
+[warning] UTF-16 range: unexpected continuation byte
+[error] Invalid UTF-16 range: pointing past end of line
+
+# Test 14. test_trailing_continuation: Trailing continuation bytes (no leading byte)
+
+| 80 | 81 | 82 | 83 | 0A |
+  ^____
+[error] Invalid UTF-16 range: pointing past end of buffer
+[error] Invalid UTF-16 range: pointing past end of buffer
+
+# Test 15. test_end_mid_4byte: incomplete 4-byte
+
+| c  | a  | f  | C3 | A9 | F0 | 90 | 8C |
+  ^    ^    ^    ^         ^___
+
+# Test 16. test_middle_surrogate: Pointing in middle of surrogate pair (should fail, U+D800 not followed by low surrogate)
+
+| ED | A0 | 80 |
+  ^              ^_
+

@@ -23,6 +23,11 @@ distclean:
 re2c:
 	$(MAKE) -C src $@
 
+test-utfmapping:
+	gcc -g -o test/test_utf_mapping test/test_utf_mapping.c
+	test/test_utf_mapping &> test/test_utf_mapping.output
+	git diff --exit-code test/test_utf_mapping.output
+
 UNAME := $(shell uname)
 
 Makefile.config: Makefile
