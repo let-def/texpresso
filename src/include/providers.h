@@ -29,6 +29,14 @@ bool tectonic_has_file(const char *name);
 FILE *tectonic_get_file(const char *name);
 
 /**
+ * Get the path to a cached copy of a Tectonic file.
+ * @param name The name of the file to get.
+ * @return The path to the file, or NULL if the file is not found or not
+ *         available.
+ */
+const char *tectonic_get_file_path(const char *name);
+
+/**
  * Record the version of Tectonic (as a hash).
  * @param f The file pointer where the version will be recorded.
  */

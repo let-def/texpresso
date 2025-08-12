@@ -33,6 +33,7 @@
 #include "editor.h"
 #include "engine.h"
 #include "prot_parser.h"
+#include "providers.h"
 #include "renderer.h"
 #include "synctex.h"
 #include "vstack.h"
@@ -1037,6 +1038,14 @@ bool texpresso_main(struct persistent_state *ps)
   ui_state raw_ui, *ui = &raw_ui;
 
   ui->window = ps->window;
+
+  if (!tectonic_available())
+  {
+    fprintf(stderr,
+            "[fatal] cannot find tectonic "
+            "(please make sure it is installed and visible in PATH)\n");
+    return 0;
+  }
 
   const char *doc_ext = NULL;
 
