@@ -9,7 +9,7 @@ TARGETS=texpresso texpresso-dev texpresso-debug-proxy texpresso.so
 all: $(TARGETS)
 
 texpresso: $(BUILD)/texpresso
-$(BUILD)/texpresso: $(DIR)/driver.o $(DIR)/main.o $(DIR)/logo.o $(DIR_OBJECTS) $(DIR)/libmydvi.a
+$(BUILD)/texpresso: $(DIR)/driver.o $(DIR)/main.o $(DIR)/logo.o $(DIR_OBJECTS) $(DIR)/libmydvi.a $(BUILD)/common/libcommon.a
 	$(LDCC) -o $@ $^ $(LIBS)
 
 texpresso-dev: $(BUILD)/texpresso-dev
@@ -29,6 +29,9 @@ $(BUILD)/texpresso-debug-proxy: proxy.c
 texpresso-debug: $(BUILD)/texpresso-debug
 $(BUILD)/texpresso-debug: ../../scripts/texpresso-debug
 	cp $< $@
+
+$(BUILD)/common/libcommon.a:
+	$(MAKE) -C ../common
 
 re2c:
 	$(MAKE) -C ../dvi $@
