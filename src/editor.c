@@ -533,7 +533,7 @@ void editor_notify_file_opened(int index, const char *path, int len)
       fprintf(stdout, "(input-file %d \"", index);
       break;
     case EDITOR_JSON:
-      fprintf(stdout, "[input-file\", %d, \"", index);
+      fprintf(stdout, "[\"input-file\", %d, \"", index);
       break;
   }
   output_data_string(stdout, path, len);
