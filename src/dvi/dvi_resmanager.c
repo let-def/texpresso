@@ -23,6 +23,9 @@
  */
 
 #include <ft2build.h>
+#include <mupdf/fitz/stream.h>
+#include <string.h>
+#include "providers.h"
 #include FT_FREETYPE_H
 #include "mydvi.h"
 #include "fz_util.h"
@@ -149,7 +152,8 @@ tectonic_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const cha
     case RES_VF:
     {
       const char *ext0 = name;
-      while (*ext0 && *ext0 != '.') ext0++;
+      while (*ext0 && *ext0 != '.')
+        ext0++;
       const char *exts[5] = {ext0, NULL};
       if (!*ext0)
       {
@@ -180,33 +184,18 @@ tectonic_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const cha
       else
         exts[0] = "";
 
+      char name_with_ext[1024];
+      char *pext = stpcpy(name_with_ext, name);
       for (const char **ext = exts; *ext; ++ext)
       {
-        char command[1024];
-        sprintf(command, "tectonic -X bundle cat %s%s", name, *ext);
-        fprintf(stderr, "trying %s\n", command);
-        FILE *f = popen(command, "r");
-        if (!f)
-          abort();
-        fz_stream *stream = fz_open_file_ptr_no_close(ctx, f);
-        fz_buffer *buffer = fz_read_all(ctx, stream, 4096);
-        fz_drop_stream(ctx, stream);
-        int pstatus = pclose(f);
-        if (pstatus != 0 && !(pstatus == -1 && errno == ECHILD) || buffer->len == 0)
+        stpcpy(pext, *ext);
+        const char *path = tectonic_get_file_path(name_with_ext);
+        if (path)
         {
-          // About ECHILD:
-          // see https://stackoverflow.com/questions/15992984/pclose-on-file-descriptor-opened-with-popen-returns-errno-10-no-child-proce
-          if (pstatus == -1)
-            perror("perror: pclose");
-          else
-            fprintf(stderr, "exit code: %d (length: %d)\n", pstatus, (int)buffer->len);
-          fz_drop_buffer(ctx, buffer);
-          continue;
+          fz_stream *stream = fz_open_file(ctx, path);
+          if (stream)
+            return stream;
         }
-        stream = fz_open_buffer(ctx, buffer);
-        fprintf(stderr, "success (length: %d)\n", (int)buffer->len);
-        fz_drop_buffer(ctx, buffer);
-        return stream;
       }
       fprintf(stderr, "failure\n");
       return NULL;

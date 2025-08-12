@@ -214,16 +214,16 @@ bool tectonic_has_file(const char *name)
   return (entries[index] != -1);
 }
 
-FILE *tectonic_get_file(const char *name)
+const char *tectonic_get_file_path(const char *name)
 {
   if (!tectonic_has_file(name))
     return NULL;
 
   const char *cached = cache_path("tectonic", name);
-  FILE *f = fopen(cached, "rb");
-  if (f)
-    return f;
-  f = fopen(cached, "wb");
+  if (access(cached, R_OK) == 0)
+    return cached;
+
+  FILE *f = fopen(cached, "wb");
   if (!f)
     return NULL;
 
@@ -248,7 +248,16 @@ FILE *tectonic_get_file(const char *name)
   pclose(p);
   fclose(f);
 
-  return fopen(cached, "rb");
+  return cached;
+}
+
+FILE *tectonic_get_file(const char *name)
+{
+  const char *path = tectonic_get_file_path(name);
+  if (path)
+    return fopen(path, "rb");
+  else
+    return NULL;
 }
 
 void tectonic_record_version(FILE *fr)
