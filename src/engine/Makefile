@@ -14,7 +14,7 @@ BREW_ICU4C=$(shell brew --prefix icu4c)
 CSYSFLAGS=-DXETEX_MAC -I $(BREW)/include -I $(BREW_ICU4C)/include -fno-common
 LDSYSFLAGS=-L $(BREW_ICU4C)/lib -licuuc -framework Foundation -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework AppKit
 PKGSYS=
-OBJSYS=../../build/layout/xetex-XeTeXFontMgr_Mac.o
+OBJSYS=$(BUILD)/layout/xetex-XeTeXFontMgr_Mac.o
 
 else
 
@@ -45,36 +45,40 @@ DIRS=engine layout dpx main
 
 ## Internal variables
 
-BUILD_DIRS=../../build $(patsubst %,../../build/%, $(DIRS))
+BUILD=../../build
+BUILD_DIRS=$(BUILD) $(patsubst %,$(BUILD)/%, $(DIRS))
 
-OBJECTS ?= $(foreach dir,$(DIRS), $(patsubst %.cpp,../../build/%.o, $(patsubst %.c,../../build/%.o, \
+OBJECTS ?= $(foreach dir,$(DIRS), $(patsubst %.cpp,$(BUILD)/%.o, $(patsubst %.c,$(BUILD)/%.o, \
 		$(wildcard $(dir)/*.c) \
 		$(wildcard $(dir)/*.cpp) \
 	))) $(OBJSYS)
 
 ## Main targets
 
-all: ../../build/$(XETEX_BIN)
+all: $(BUILD)/$(XETEX_BIN)
 
 clean:
 	rm -f  $(OBJECTS)
 
 distclean:
-	rm -rf ../../build
+	rm -rf $(BUILD)
 
 ## Internal targets
 
-../../build/$(XETEX_BIN): $(OBJECTS)
-	$(_LD) -o $@ $^ ../../build/common/libcommon.a $(LDFLAGS)
+$(BUILD)/$(XETEX_BIN): $(OBJECTS) $(BUILD)/common/libcommon.a
+	$(_LD) -o $@ $^ $(LDFLAGS)
 
-../../build/%.o: %.c | $(BUILD_DIRS)
+$(BUILD)/%.o: %.c | $(BUILD_DIRS)
 	$(_CC) $(CFLAGS) -I../include -c -o $@ $^
 
-../../build/%.o: %.cpp | $(BUILD_DIRS)
+$(BUILD)/%.o: %.cpp | $(BUILD_DIRS)
 	$(_CXX) $(CXXFLAGS) -I../include -c -o $@ $^
 
-../../build/%.o: %.mm | $(BUILD_DIRS)
+$(BUILD)/%.o: %.mm | $(BUILD_DIRS)
 	$(_CXX) $(CXXFLAGS) -I../include -c -o $@ $^
+
+$(BUILD)/common/libcommon.a:
+	$(MAKE) -C ../common
 
 $(BUILD_DIRS):
 	mkdir -p $@
