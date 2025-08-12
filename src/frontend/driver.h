@@ -25,12 +25,13 @@
 #ifndef DRIVER_H_
 #define DRIVER_H_
 
-#include <stdbool.h>
 #include <SDL2/SDL.h>
 #include <mupdf/fitz/context.h>
+#include <stdbool.h>
 #include "renderer.h"
 
-enum custom_events {
+enum custom_events
+{
   SCAN_EVENT,
   RENDER_EVENT,
   RELOAD_EVENT,
@@ -55,7 +56,8 @@ enum editor_protocol
   EDITOR_JSON,
 };
 
-struct persistent_state {
+struct persistent_state
+{
   struct initial_state initial;
   enum editor_protocol protocol;
   int line_output;
@@ -69,8 +71,9 @@ struct persistent_state {
   fz_context *ctx;
 
   const char *exe_path, *doc_path, *doc_name, *inclusion_path;
+  bool initialize_only;
 };
 
 bool texpresso_main(struct persistent_state *ps);
 
-#endif // DRIVER_H_
+#endif  // DRIVER_H_

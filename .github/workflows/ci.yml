@@ -1,0 +1,98 @@
+name: CI TeXpresso – build & test
+
+on:
+  push:
+    branches: [detectonic]
+  pull_request:
+    branches: [detectonic]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: ubuntu
+            os: ubuntu-24.04
+            container: ''
+            install: |
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends \
+                build-essential libsdl2-dev libmupdf-dev libmujs-dev \
+                libfreetype-dev libgumbo-dev libjbig2dec0-dev libjpeg-dev \
+                libopenjp2-7-dev libssl-dev libfontconfig-dev libleptonica-dev \
+                libharfbuzz-dev mupdf snapd \
+                texlive-xetex texlive-latex-recommended texlive-extra-utils
+              sudo snap install tectonic
+
+          - label: macos
+            os: macos-14
+            container: ''
+            install: |
+              brew update
+              brew install gcc mupdf-tools sdl2 tectonic texlive
+
+          - label: arch
+            os: ubuntu-latest
+            container: archlinux:latest
+            install: |
+              pacman -Sy --noconfirm --needed \
+                base-devel gcc git \
+                freetype2 harfbuzz icu libjpeg-turbo openjpeg2 libpng \
+                gumbo-parser tesseract leptonica openssl zlib \
+                sdl2 mupdf \
+                texlive-bin texlive-core texlive-latexextra \
+                texlive-fontsextra texlive-latexrecommended \
+                tectonic texlive-fontsrecommended texlive-xetex
+
+          - label: fedora
+            os: ubuntu-latest
+            container: fedora:latest
+            install: |
+              dnf install -y gcc gcc-c++ make rust cargo clang \
+                mupdf-devel SDL2-devel freetype-devel harfbuzz-devel \
+                libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel \
+                gumbo-parser-devel tesseract-devel leptonica-devel \
+                openssl-devel fontconfig-devel graphite2-devel \
+                libicu-devel zlib-devel \
+                texlive-scheme-basic texlive-collection-latexrecommended \
+                texlive-xetex
+              curl -fsSL https://drop-sh.fullyjustified.net | sh
+              mv tectonic /usr/local/bin
+
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tool-chain
+        run: ${{ matrix.install }}
+
+      - name: Build project
+        run: make all
+
+      - name: Generate Tectonic cache
+        run: make fill-tectonic-cache
+
+      - name: Run test – TeX Live
+        run: make test-texlive   || echo "fail" > texlive.status
+
+      - name: Run tests – Tectonic
+        run: make test-tectonic  || echo "fail" > tectonic.status
+
+      - name: Run tests – Texpresso
+        run: make test-texpresso || echo "fail" > texpresso.status
+
+      - name: Report summary
+        if: always()
+        run: |
+          pass=0; fail=0
+          [ ! -f texlive.status ]   && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f tectonic.status ]  && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f texpresso.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          echo "Passed: $pass" >> "$GITHUB_STEP_SUMMARY"
+          echo "Failed: $fail"  >> "$GITHUB_STEP_SUMMARY"
+          [ $fail -eq 0 ]
+

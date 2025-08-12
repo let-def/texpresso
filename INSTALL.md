@@ -1,17 +1,17 @@
 # Building and installing TeXpresso
 
-If all dependencies are installed and out-of-the-box configuration works, `make all` should be sufficient to build both `texpresso` and `texpresso-tonic` in `build/` directory.
+If all dependencies are installed and out-of-the-box configuration works, `make all` should be sufficient to build both `texpresso` and `texpresso-xetex` in `build/` directory.
 
-## Supported systems
+## Supported Systems
 
 TeXpresso is in an early stage of development and its configuration logic is a rough hand-made script.
 So far it has only been tested the following systems, where we expect it to work:
 
-- OSX
-- Fedora 39
+- macOS Sonoma (14.0)
+- Fedora 40
 - Arch Linux: [a PKGBUILD is available in the AUR](https://aur.archlinux.org/packages/texpresso-git) that builds from the latest Git HEAD on installation.
-- Debian 12
-- Ubuntu 22.04
+- Ubuntu 24.04
+- Debian 12 (not tested, for now)
 
 On other systems you may observe build failures that require modifying the Makefile. Let us know if it works on a system not listed above, or if you can tweak the configuration/build code to support your system without breaking others.
 
@@ -19,20 +19,23 @@ On other systems you may observe build failures that require modifying the Makef
 
 ### Ubuntu
 
-(Tested with Ubuntu 22.04 ARM64 and Ubuntu 20.04)
+(Tested with Ubuntu 24.04 ARM64/x86_64)
 
 Install all needed dependencies with:
 ```sh
-apt install build-essential libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev cargo libssl-dev libfontconfig-dev libleptonica-dev libharfbuzz-dev
+sudo apt update && sudo apt install build-essential libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev libssl-dev libfontconfig-dev libleptonica-dev libharfbuzz-dev mupdf snapd texlive-full texlive-xetex fonts-lmodern fonts-dejavu fonts-freefont-ttf fontconfig
+sudo snap install tectonic
 ```
 
 Details:
 - `build-essential` install the compiler (GCC) and basic build tools (GNU Make)
 - `libsdl2-dev`: SDL2 library
 - `libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev`: libmupdf and its dependencies
-- `cargo libssl-dev libfontconfig-dev`: rust package manager, and dependencies needed by texpresso-tonic rust code
+- `snapd` is another package manager, required for tectonic
+- `tectonic` is a new `TeX` render engine, required for running `texpresso`
+- `texlive-*` and `font*` are required for alternative `texpresso` mode
 
-### Debian 12
+### Debian (Currently untested)
 
 Debian 12 is quite similar to Ubuntu with the added difficulty that the rust version is too old for TeXpresso to build out of the box.
 
@@ -41,8 +44,6 @@ You can install the other dependencies:
 ```sh
 sudo apt install build-essential libsdl2-dev libmupdf-dev libfreetype-dev libjpeg-dev libjbig2dec0-dev libharfbuzz-dev libopenjp2-7-dev libgumbo-dev libmujs-dev libssl-dev libfontconfig-dev
 ```
-
-A workaround for rust is to install [rustup](https://rustup.rs). Make sure that curl is installed and setup rustup:
 
 ```sh
 sudo apt install curl
@@ -59,50 +60,78 @@ source $HOME/.cargo/env
 Dependencies are listed in the PKGBUILD, but if you need to install them manually:
 
 ```sh
-pacman -S base-devel fontconfig freetype2 gcc-libs glibc graphite gumbo-parser harfbuzz icu jbig2dec libjpeg-turbo libmupdf libpng openjpeg2 openssl sdl2 zlib cargo git libmupdf
+pacman -Sy --noconfirm texlive-core texlive-bin texlive-latexextra texlive-fontsextra texlive-fontsrecommended texlive-pictures texlive-science texlive-publishers texlive-music texlive-games texlive-humanities texlive-langcyrillic texlive-langextra texlive-langgreek texlive-langjapanese texlive-langchinese texlive-langkorean texlive-bibtexextra tectonic base-devel fontconfig freetype2 gcc-libs glibc graphite gumbo-parser harfbuzz icu jbig2dec libjpeg-turbo libmupdf libpng openjpeg2 openssl sdl2 zlib git libmupdf
 ```
 
 ### Fedora
 
-(Tested on Fedora 38 ARM64)
+(Tested on Fedora 40 x86_64)
 
 Install all dependencies:
 
 ```sh
-sudo dnf install make gcc mupdf-devel SDL2-devel  g++ freetype2-devel libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel gumbo-parser-devel tesseract-devel leptonica-devel cargo openssl-devel fontconfig-devel
+sudo dnf install rust cargo texlive-scheme-full make gcc gcc-c++ mupdf-devel SDL2-devel freetype-devel harfbuzz-devel libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel gumbo-parser-devel tesseract-devel leptonica-devel openssl-devel fontconfig-devel graphite2-devel libicu-devel zlib-devel
 ```
 
-### OSX
+Install `tectonic` with official script:
 
-(Tested on Ventura Intel and Sonoma Apple Sillicon)
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL https://drop-sh.fullyjustified.net |sh
+mv tectonic /usr/local/bin # to make tectonic available in the $PATH
+```
+
+### macOS
+
+(Tested Sonoma (14.0) Apple Silicon)
 
 Install the following dependencies with homebrew:
 
 ```sh
-brew install rust mupdf-tools SDL2
+brew install gcc mupdf-tools SDL2 tectonic texlive
 ```
 
-Note: `mupdf-tools` can be replaced by `mupdf`, either is fine.
+> [!Note]
+> `mupdf-tools` can be replaced by `mupdf`, either is fine.
+
+> [!Note]
+> Also, for macOS Sequoia (15.0) you may need to reinstall `gcc`, see [this](https://discussions.apple.com/thread/256033797?sortBy=rank) issue.
 
 ## Download
 
-Simply clone the git repository (and its submodules) using one of the following commands:
+Simply clone the git repository using one of the following commands:
 
+> [!Note]
+> As of now the working branch is `detectonic`, which will be merge with `main`
+> soon, so you need to use only `detectonic` branch.
+
+```sh
+# cloning by HTTP
+git clone --single-branch --branch detectonic https://github.com/let-def/texpresso.git
+# cloning by SSH
+git clone --single-branch --branch detectonic git@github.com:let-def/texpresso.git
 ```
-git clone --recurse-submodules https://github.com/let-def/texpresso.git   # cloning by HTTP
-git clone --recurse-submodules git@github.com:let-def/texpresso.git       # cloning by SSH
-```
-
-(You may want to adjust the URL if you are looking at a different fork.)
-
-Note that while TeXpresso itself (the driver/viewer program) is small (less than 2MiB of sources, about 40MiB once built), the `tectonic` LaTeX engine that we include as a submodule is large -- 120MiB of sources, most of it from its `harfbuzz` dependency, and about 1.2GiB once built.
 
 ## Build TeXpresso
 
-First make sure the dependencies are available: `pkg-config`, `SDL2`, `mupdf` (and its own dependencies: `libjpeg`, `libpng`, `freetype2`, `gumbo`, `jbig2dec`... and possibly `leptonica`, `tesseract` and `mujs` depending on the mupdf version).
-Under macOS, `brew` is also used to find local files.
+Make sure you have all the dependencies installed, see Supported Systems above.
 
-If it succeeds, `make texpresso` produces `build/texpresso`.
+To build the whole project use the following `make` targets:
+
+```sh
+make all
+make fill-tectonic-cache # for faster file render
+```
+
+That's all! Now you can try render the test file:
+
+```sh
+build/texpresso test/simple.tex
+```
+
+This should open window with rendered `tex` file. If TeXpresso window does not display the document, please report an issue.
+
+> [!Note]
+> Expect first run to be quite slow, due to initial packages compilation
 
 Other targets are:
 - `config` to generate configuration in `Makefile.config` (automatically called during first build)
@@ -110,32 +139,9 @@ Other targets are:
 - `debug` produces debugging tools in `build/`
 - `clean` to remove intermediate build files
 - `distclean` to remove all build files (`build/` and `Makefile.config`)
+- `test[-texlive | -tectonic]` test TeXpresso engine (aka headless mode).
 
 If the build fails, try tweaking the configuration flags in `Makefile.config`.
-
-## Build TeXpresso-tonic (Tectonic)
-
-First you need an environment that is able to build Tectonic: a functional rust
-and cargo installation, etc. Check tectonic documentation.
-
-Then make sure that the git submodule has been initialized (in the `tectonic` directory):
-
-```sh
-git submodule update --init --recursive
-```
-
-Then `make texpresso-tonic` should work.
-
-## Testing TeXpresso
-
-If both commands built successfully, you can try TeXpresso using:
-
-```sh
-build/texpresso test/simple.tex
-```
-
-This is just a minimal test to make sure that TeXpresso is installed correctly.
-If TeXpresso window does not display the document, please report an issue.
 
 ## Using TeXpresso
 

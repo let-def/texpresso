@@ -23,20 +23,20 @@
  */
 
 #include <SDL2/SDL.h>
-#include <string.h>
-#include <time.h>
+#include <errno.h>
 #include <poll.h>
 #include <stdio.h>
+#include <string.h>
+#include <time.h>
 #include <unistd.h>
-#include <errno.h>
+#include "driver.h"
+#include "editor.h"
+#include "engine.h"
+#include "prot_parser.h"
 #include "providers.h"
 #include "renderer.h"
-#include "engine.h"
-#include "driver.h"
 #include "synctex.h"
 #include "vstack.h"
-#include "prot_parser.h"
-#include "editor.h"
 
 struct persistent_state *pstate;
 
@@ -51,9 +51,9 @@ static bool should_reload_binary(void)
 }
 
 #ifdef __APPLE__
-# define st_time(a) st_##a##timespec
+#define st_time(a) st_##a##timespec
 #else
-# define st_time(a) st_##a##tim
+#define st_time(a) st_##a##tim
 #endif
 
 static bool is_more_recent(uint64_t *time, char *candidate)
@@ -91,13 +91,15 @@ static void find_engine(char engine_path[4096], const char *exec_path)
 
 /* UI state */
 
-enum ui_mouse_status {
+enum ui_mouse_status
+{
   UI_MOUSE_NONE,
   UI_MOUSE_SELECT,
   UI_MOUSE_MOVE,
 };
 
-typedef struct {
+typedef struct
+{
   txp_engine *eng;
   txp_renderer *doc_renderer;
   SDL_Renderer *sdl_renderer;
@@ -157,9 +159,8 @@ static bool need_advance(fz_context *ctx, ui_state *ui)
   {
     fz_buffer *buf;
     synctex_t *stx = send(synctex, ui->eng, &buf);
-    need =
-      (ui->need_synctex && synctex_page_count(stx) <= ui->page) ||
-      synctex_has_target(stx);
+    need = (ui->need_synctex && synctex_page_count(stx) <= ui->page) ||
+           synctex_has_target(stx);
   }
 
   return (need && send(get_status, ui->eng) == DOC_RUNNING);
@@ -193,9 +194,8 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
       struct timespec curr;
       clock_gettime(CLOCK_MONOTONIC, &curr);
 
-      int delta =
-        (curr.tv_sec - start.tv_sec) * 1000 * 1000 * 1000 +
-        (curr.tv_nsec - start.tv_nsec);
+      int delta = (curr.tv_sec - start.tv_sec) * 1000 * 1000 * 1000 +
+                  (curr.tv_nsec - start.tv_nsec);
 
       if (delta > 5000000)
         break;
@@ -221,7 +221,11 @@ static fz_point get_scale_factor(SDL_Window *window)
 
 /* UI events */
 
-static void ui_mouse_down(struct persistent_state *ps, ui_state *ui, int x, int y, bool ctrl)
+static void ui_mouse_down(struct persistent_state *ps,
+                          ui_state *ui,
+                          int x,
+                          int y,
+                          bool ctrl)
 {
   if (ctrl)
     ui->mouse_status = UI_MOUSE_MOVE;
@@ -234,7 +238,8 @@ static void ui_mouse_down(struct persistent_state *ps, ui_state *ui, int x, int 
     uint32_t ticks = SDL_GetTicks();
 
     bool double_click = ticks - ui->last_click_ticks < 500 &&
-                        abs(ui->last_mouse_x - x) < 30 && abs(ui->last_mouse_y - y) < 30;
+                        abs(ui->last_mouse_x - x) < 30 &&
+                        abs(ui->last_mouse_y - y) < 30;
 
     bool diff;
 
@@ -252,13 +257,15 @@ static void ui_mouse_down(struct persistent_state *ps, ui_state *ui, int x, int 
       synctex_t *stx = send(synctex, ui->eng, &buf);
       if (stx && buf)
       {
-        fz_point pt = txp_renderer_screen_to_document(ps->ctx, ui->doc_renderer, p);
+        fz_point pt =
+            txp_renderer_screen_to_document(ps->ctx, ui->doc_renderer, p);
         float f = 1 / send(scale_factor, ui->eng);
         // pt.x -= 72;
         // pt.y -= 72;
-        fprintf(stderr, "click: (%f,%f) mapped:(%f,%f)\n",
-                pt.x, pt.y, f * pt.x, f * pt.y);
-        synctex_scan(ps->ctx, stx, buf, ps->doc_path, ui->page, f * pt.x, f * pt.y);
+        fprintf(stderr, "click: (%f,%f) mapped:(%f,%f)\n", pt.x, pt.y, f * pt.x,
+                f * pt.y);
+        synctex_scan(ps->ctx, stx, buf, ps->doc_path, ui->page, f * pt.x,
+                     f * pt.y);
       }
     }
 
@@ -294,7 +301,8 @@ static void ui_mouse_move(fz_context *ctx, ui_state *ui, int x, int y)
 
     case UI_MOUSE_MOVE:
     {
-      txp_renderer_config *config = txp_renderer_get_config(ctx, ui->doc_renderer);
+      txp_renderer_config *config =
+          txp_renderer_get_config(ctx, ui->doc_renderer);
       int dx = x - ui->last_mouse_x;
       int dy = y - ui->last_mouse_y;
       if (dx != 0 || dy != 0)
@@ -310,7 +318,14 @@ static void ui_mouse_move(fz_context *ctx, ui_state *ui, int x, int y)
   }
 }
 
-static void ui_mouse_wheel(fz_context *ctx, ui_state *ui, float dx, float dy, int mousex, int mousey, bool ctrl, int timestamp)
+static void ui_mouse_wheel(fz_context *ctx,
+                           ui_state *ui,
+                           float dx,
+                           float dy,
+                           int mousex,
+                           int mousey,
+                           bool ctrl,
+                           int timestamp)
 {
   fz_point scale = get_scale_factor(ui->window);
 
@@ -322,7 +337,8 @@ static void ui_mouse_wheel(fz_context *ctx, ui_state *ui, float dx, float dy, in
   if (ctrl)
   {
     SDL_FRect rect;
-    if (dy != 0 && txp_renderer_page_position(ctx, ui->doc_renderer, &rect, NULL, NULL))
+    if (dy != 0 &&
+        txp_renderer_page_position(ctx, ui->doc_renderer, &rect, NULL, NULL))
     {
       ui->zoom = fz_maxi(ui->zoom + dy * 100, 0);
       int ww, wh;
@@ -343,7 +359,8 @@ static void ui_mouse_wheel(fz_context *ctx, ui_state *ui, float dx, float dy, in
     float y = scale.y * dy * 5;
     config->pan.x -= x;
     config->pan.y += y;
-    // fprintf(stderr, "wheel pan: (%.02f, %.02f) raw:(%.02f, %.02f)\n", x, y, dx, dy);
+    // fprintf(stderr, "wheel pan: (%.02f, %.02f) raw:(%.02f, %.02f)\n", x, y,
+    // dx, dy);
     schedule_event(RENDER_EVENT);
   }
 }
@@ -424,13 +441,18 @@ static void wakeup_poll_thread(int poll_stdin_pipe[2], char c)
 
 /* Command interpreter */
 
-enum pan_to { PAN_TO_TOP, PAN_TO_BOTTOM };
+enum pan_to
+{
+  PAN_TO_TOP,
+  PAN_TO_BOTTOM
+};
 static void pan_to(fz_context *ctx, ui_state *ui, enum pan_to to)
 {
   txp_renderer_config *config = txp_renderer_get_config(ctx, ui->doc_renderer);
   txp_renderer_bounds bounds;
   if (txp_renderer_page_bounds(ctx, ui->doc_renderer, &bounds))
-    config->pan.y = (to == PAN_TO_TOP) ? bounds.pan_interval.y : -bounds.pan_interval.y;
+    config->pan.y =
+        (to == PAN_TO_TOP) ? bounds.pan_interval.y : -bounds.pan_interval.y;
   // a helper function for other UI actions, so no event scheduled
 }
 
@@ -480,8 +502,9 @@ static void ui_pan(fz_context *ctx, ui_state *ui, float factor)
   float delta = bounds.window_size.y * scale.y * factor;
   float range = bounds.pan_interval.y < 0 ? 0 : bounds.pan_interval.y;
 
-  //fprintf(stderr, "ui_pan: factor:%.02f delta:%.02f current:%.02f range:%.02f\n",
-  //        factor, delta, config->pan.y, range);
+  // fprintf(stderr, "ui_pan: factor:%.02f delta:%.02f current:%.02f
+  // range:%.02f\n",
+  //         factor, delta, config->pan.y, range);
 
   if (config->pan.y == -range && factor < 0)
   {
@@ -508,8 +531,10 @@ static const char *relative_path(const char *path, const char *dir, int *go_up)
   {
     if (*rel_path == '/')
     {
-      while (*rel_path == '/') rel_path += 1;
-      while (*dir_path == '/') dir_path += 1;
+      while (*rel_path == '/')
+        rel_path += 1;
+      while (*dir_path == '/')
+        dir_path += 1;
     }
     else
     {
@@ -530,7 +555,8 @@ static const char *relative_path(const char *path, const char *dir, int *go_up)
     }
     if (*rel_path == '/')
     {
-      if (*dir_path != '/') abort();
+      if (*dir_path != '/')
+        abort();
       rel_path += 1;
       dir_path += 1;
     }
@@ -564,25 +590,27 @@ static int find_diff(const fz_buffer *buf, const void *data, int size)
 {
   const unsigned char *ptr = data;
   int i, len = fz_mini(buf->len, size);
-  for (i = 0; i < len && buf->data[i] == ptr[i]; ++i);
+  for (i = 0; i < len && buf->data[i] == ptr[i]; ++i)
+    ;
   fprintf(stderr, "i:%d len:%d size:%d\n", i, (int)buf->len, size);
   return i;
 }
 
 static void realize_change(struct persistent_state *ps,
-                             ui_state *ui,
-                             const char *path,
-                             int offset,
-                             int remove,
-                             const char *data,
-                             int length,
-                             int line_based)
+                           ui_state *ui,
+                           const char *path,
+                           int offset,
+                           int remove,
+                           const char *data,
+                           int length,
+                           int line_based)
 {
   int go_up = 0;
   path = relative_path(path, ps->doc_path, &go_up);
   if (go_up > 0)
   {
-    fprintf(stderr, "[command] change %s: file has a different root, skipping\n", path);
+    fprintf(stderr,
+            "[command] change %s: file has a different root, skipping\n", path);
     return;
   }
 
@@ -619,7 +647,9 @@ static void realize_change(struct persistent_state *ps,
 
     if (line > 0)
     {
-      fprintf(stderr, "[command] change line %s: invalid line number, skipping\n", path);
+      fprintf(stderr,
+              "[command] change line %s: invalid line number, skipping\n",
+              path);
       return;
     }
 
@@ -633,7 +663,8 @@ static void realize_change(struct persistent_state *ps,
 
     if (count > 1)
     {
-      fprintf(stderr, "[command] change line %s: invalid line count, skipping\n", path);
+      fprintf(stderr,
+              "[command] change line %s: invalid line count, skipping\n", path);
       return;
     }
 
@@ -663,19 +694,22 @@ static void realize_change(struct persistent_state *ps,
 #define BUFFERED_OPS 64
 #define BUFFERED_CHARS 4096
 
-struct {
+struct
+{
   char buffer[BUFFERED_CHARS];
   int cursor;
-  struct delayed_op {
+  struct delayed_op
+  {
     const char *path;
     const char *data;
     int offset, remove, length, line_based;
   } op[BUFFERED_OPS];
   int count;
-} delayed_changes = {0,};
+} delayed_changes = {
+    0,
+};
 
-static void flush_changes(struct persistent_state *ps,
-                          ui_state *ui)
+static void flush_changes(struct persistent_state *ps, ui_state *ui)
 {
   int count = delayed_changes.count;
   if (count)
@@ -685,7 +719,7 @@ static void flush_changes(struct persistent_state *ps,
     for (int i = 0; i < count; ++i)
     {
       struct delayed_op *op = &delayed_changes.op[i];
-      realize_change(ps, ui, op->path, op->offset, op->remove, op->data, 
+      realize_change(ps, ui, op->path, op->offset, op->remove, op->data,
                      op->length, op->line_based);
     }
   }
@@ -718,12 +752,12 @@ static void interpret_change(struct persistent_state *ps,
     delayed_changes.cursor = cursor;
 
     delayed_changes.op[delayed_changes.count] = (struct delayed_op){
-      .path = op_path,
-      .data = op_data,
-      .offset = offset,
-      .remove = remove,
-      .length = length,
-      .line_based = line_based,
+        .path = op_path,
+        .data = op_data,
+        .offset = offset,
+        .remove = remove,
+        .length = length,
+        .line_based = line_based,
     };
     delayed_changes.count += 1;
   }
@@ -744,7 +778,8 @@ static void interpret_open(struct persistent_state *ps,
   path = relative_path(path, ps->doc_path, &go_up);
   if (go_up > 0)
   {
-    fprintf(stderr, "[command] open %s: file has a different root, skipping\n", path);
+    fprintf(stderr, "[command] open %s: file has a different root, skipping\n",
+            path);
     return;
   }
 
@@ -791,7 +826,8 @@ static void interpret_close(struct persistent_state *ps,
   path = relative_path(path, ps->doc_path, &go_up);
   if (go_up > 0)
   {
-    fprintf(stderr, "[command] close %s: file has a different root, skipping\n", path);
+    fprintf(stderr, "[command] close %s: file has a different root, skipping\n",
+            path);
     return;
   }
 
@@ -843,16 +879,15 @@ static void display_page(struct persistent_state *ps, ui_state *ui)
 }
 
 #if !SDL_VERSION_ATLEAST(2, 0, 16)
-static void
-SDL_SetWindowAlwaysOnTop(SDL_Window *window, SDL_bool state)
+static void SDL_SetWindowAlwaysOnTop(SDL_Window *window, SDL_bool state)
 {
   (void)window;
   (void)state;
-  fprintf(stderr, "[info] stay-on-top feature is not available with "
-                  "SDL older than 2.16.0\n");
+  fprintf(stderr,
+          "[info] stay-on-top feature is not available with "
+          "SDL older than 2.16.0\n");
 }
 #endif
-
 
 static void interpret_command(struct persistent_state *ps,
                               ui_state *ui,
@@ -893,8 +928,8 @@ static void interpret_command(struct persistent_state *ps,
       config->foreground_color = convert_color(ps->ctx, stack, cmd.theme.fg);
       config->themed_color = 1;
       schedule_event(RENDER_EVENT);
-      fprintf(stderr, "[command] theme %x %x\n",
-              config->background_color, config->foreground_color);
+      fprintf(stderr, "[command] theme %x %x\n", config->background_color,
+              config->foreground_color);
     }
     break;
 
@@ -908,29 +943,29 @@ static void interpret_command(struct persistent_state *ps,
 
     case EDIT_MOVE_WINDOW:
     {
-      float x = cmd.move_window.x, y = cmd.move_window.y,
-            w = cmd.move_window.w, h = cmd.move_window.h;
+      float x = cmd.move_window.x, y = cmd.move_window.y, w = cmd.move_window.w,
+            h = cmd.move_window.h;
       int x0 = x, y0 = y;
       SDL_SetWindowPosition(ui->window, x, y);
       SDL_GetWindowPosition(ui->window, &x0, &y0);
       SDL_SetWindowSize(ui->window, w + x - x0, h + y - y0);
-      fprintf(stderr, "[command] move-window %f %f %f %f (pos: %d %d)\n",
-              x, y, w, h, x0, y0);
+      fprintf(stderr, "[command] move-window %f %f %f %f (pos: %d %d)\n", x, y,
+              w, h, x0, y0);
     }
     break;
 
     case EDIT_MAP_WINDOW:
     {
-      float x = cmd.move_window.x, y = cmd.move_window.y,
-            w = cmd.move_window.w, h = cmd.move_window.h;
+      float x = cmd.move_window.x, y = cmd.move_window.y, w = cmd.move_window.w,
+            h = cmd.move_window.h;
       int x0 = x, y0 = y;
       SDL_SetWindowBordered(ui->window, SDL_FALSE);
       SDL_SetWindowAlwaysOnTop(ui->window, SDL_TRUE);
       SDL_SetWindowPosition(ui->window, x, y);
       SDL_GetWindowPosition(ui->window, &x0, &y0);
       SDL_SetWindowSize(ui->window, w + x - x0, h + y - y0);
-      fprintf(stderr, "[command] map-window %f %f %f %f (pos: %d %d)\n",
-              x, y, w, h, x0, y0);
+      fprintf(stderr, "[command] map-window %f %f %f %f (pos: %d %d)\n", x, y,
+              w, h, x0, y0);
     }
     break;
 
@@ -956,11 +991,13 @@ static void interpret_command(struct persistent_state *ps,
       fz_buffer *buf;
       synctex_t *stx = send(synctex, ui->eng, &buf);
       int go_up = 0;
-      const char *path = relative_path(cmd.synctex_forward.path, ps->doc_path, &go_up);
+      const char *path =
+          relative_path(cmd.synctex_forward.path, ps->doc_path, &go_up);
       if (go_up > 0)
       {
         fprintf(stderr,
-                "[command] synctex-forward %s: file has a different root, skipping\n",
+                "[command] synctex-forward %s: file has a different root, "
+                "skipping\n",
                 path);
       }
       else
@@ -1022,7 +1059,8 @@ bool texpresso_main(struct persistent_state *ps)
 
   if (doc_ext && strcmp(doc_ext, "pdf") == 0)
     ui->eng = txp_create_pdf_engine(ps->ctx, ps->doc_name);
-  else if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
+  else if (doc_ext &&
+           (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
     ui->eng = txp_create_dvi_engine(ps->ctx, ps->doc_path, ps->doc_name);
   else
     ui->eng = txp_create_tex_engine(ps->ctx, engine_path, ps->inclusion_path,
@@ -1037,7 +1075,8 @@ bool texpresso_main(struct persistent_state *ps)
     ui->zoom = ps->initial.zoom;
     ui->need_synctex = ps->initial.need_synctex;
     *txp_renderer_get_config(ps->ctx, ui->doc_renderer) = ps->initial.config;
-    txp_renderer_set_contents(ps->ctx, ui->doc_renderer, ps->initial.display_list);
+    txp_renderer_set_contents(ps->ctx, ui->doc_renderer,
+                              ps->initial.display_list);
     editor_reset_sync();
   }
   else
@@ -1057,7 +1096,8 @@ bool texpresso_main(struct persistent_state *ps)
   render(ps->ctx, ui);
   schedule_event(RELOAD_EVENT);
 
-  struct repaint_on_resize_env repaint_on_resize_env = {.ctx = ps->ctx, .ui = ui};
+  struct repaint_on_resize_env repaint_on_resize_env = {.ctx = ps->ctx,
+                                                        .ui = ui};
   SDL_AddEventWatch(repaint_on_resize, &repaint_on_resize_env);
 
   vstack *cmd_stack = vstack_new(ps->ctx);
@@ -1072,8 +1112,8 @@ bool texpresso_main(struct persistent_state *ps)
     abort();
   }
 
-  SDL_Thread *poll_stdin_thread =
-    SDL_CreateThread(poll_stdin_thread_main, "poll_stdin_thread", poll_stdin_pipe);
+  SDL_Thread *poll_stdin_thread = SDL_CreateThread(
+      poll_stdin_thread_main, "poll_stdin_thread", poll_stdin_pipe);
   bool stdin_eof = 0;
 
   while (!quit)
@@ -1085,7 +1125,8 @@ bool texpresso_main(struct persistent_state *ps)
     send(begin_changes, ui->eng, ps->ctx);
     char buffer[4096];
     int n = -1;
-    while (!stdin_eof && poll_stdin() && (n = read(STDIN_FILENO, buffer, 4096)) != 0)
+    while (!stdin_eof && poll_stdin() &&
+           (n = read(STDIN_FILENO, buffer, 4096)) != 0)
     {
       if (n == -1)
       {
@@ -1119,7 +1160,8 @@ bool texpresso_main(struct persistent_state *ps)
         prot_reinitialize(&cmd_parser);
       }
     }
-    if (n == 0) stdin_eof = 1;
+    if (n == 0)
+      stdin_eof = 1;
 
     if (send(end_changes, ui->eng, ps->ctx))
     {
@@ -1156,7 +1198,8 @@ bool texpresso_main(struct persistent_state *ps)
       int page = -1, x = -1, y = -1;
       if (synctex_find_target(ps->ctx, stx, buf, &page, &x, &y))
       {
-        fprintf(stderr, "[synctex forward] sync: hit page %d, coordinates (%d, %d)\n",
+        fprintf(stderr,
+                "[synctex forward] sync: hit page %d, coordinates (%d, %d)\n",
                 page, x, y);
 
         if (page != ui->page)
@@ -1168,9 +1211,11 @@ bool texpresso_main(struct persistent_state *ps)
         // FIXME: Scroll to point
         float f = send(scale_factor, ui->eng);
         fz_point p = fz_make_point(f * x, f * y);
-        fz_point pt = txp_renderer_document_to_screen(ps->ctx, ui->doc_renderer, p);
-        fprintf(stderr, "[synctex forward] position on screen: (%.02f, %.02f)\n",
-                pt.x, pt.y);
+        fz_point pt =
+            txp_renderer_document_to_screen(ps->ctx, ui->doc_renderer, p);
+        fprintf(stderr,
+                "[synctex forward] position on screen: (%.02f, %.02f)\n", pt.x,
+                pt.y);
         int w, h;
         txp_renderer_screen_size(ps->ctx, ui->doc_renderer, &w, &h);
         float margin_lo = h / 4.0;
@@ -1181,7 +1226,7 @@ bool texpresso_main(struct persistent_state *ps)
 
         float delta = 0.0;
         if (pt.y < margin_lo)
-          delta = - pt.y + margin_hi;
+          delta = -pt.y + margin_hi;
         else if (pt.y >= h - margin_lo)
           delta = h - pt.y - margin_hi;
         fprintf(stderr, "[synctex forward] pan.y = %.02f + %.02f = %.02f\n",
@@ -1213,11 +1258,11 @@ bool texpresso_main(struct persistent_state *ps)
             break;
 
           case SDLK_UP:
-            ui_pan(ps->ctx, ui, 2.0/3.0);
+            ui_pan(ps->ctx, ui, 2.0 / 3.0);
             break;
 
           case SDLK_DOWN:
-            ui_pan(ps->ctx, ui, -2.0/3.0);
+            ui_pan(ps->ctx, ui, -2.0 / 3.0);
             break;
 
           case SDLK_RIGHT:
@@ -1274,26 +1319,26 @@ bool texpresso_main(struct persistent_state *ps)
         break;
 
       case SDL_MOUSEWHEEL:
-        {
-           int mx = 0, my = 0;
-           float px = 0, py = 0;
+      {
+        int mx = 0, my = 0;
+        float px = 0, py = 0;
 #if SDL_VERSION_ATLEAST(2, 0, 260)
-           mx = e.wheel.mouseX;
-           my = e.wheel.mouseY;
+        mx = e.wheel.mouseX;
+        my = e.wheel.mouseY;
 #else
-           SDL_GetMouseState(&mx, &my);
+        SDL_GetMouseState(&mx, &my);
 #endif
 #if SDL_VERSION_ATLEAST(2, 0, 18)
-          px = e.wheel.preciseX;
-          py = e.wheel.preciseY;
+        px = e.wheel.preciseX;
+        py = e.wheel.preciseY;
 #else
-          px = e.wheel.x;
-          py = e.wheel.y;
+        px = e.wheel.x;
+        py = e.wheel.y;
 #endif
-          bool ctrl = !!(SDL_GetModState() & KMOD_CTRL);
-          ui_mouse_wheel(ps->ctx, ui, px, py, mx, my, ctrl, e.wheel.timestamp);
-        }
-        break;
+        bool ctrl = !!(SDL_GetModState() & KMOD_CTRL);
+        ui_mouse_wheel(ps->ctx, ui, px, py, mx, my, ctrl, e.wheel.timestamp);
+      }
+      break;
 
       case SDL_MOUSEBUTTONDOWN:
         ui_mouse_down(ps, ui, e.button.x, e.button.y,
@@ -1369,6 +1414,11 @@ bool texpresso_main(struct persistent_state *ps)
           break;
       }
     }
+    if (ps->initialize_only)
+    {
+      fprintf(stderr, "[info] Initialize mode: terminating engine process\n");
+      quit = 1;
+    }
   }
 
   {
@@ -1388,7 +1438,8 @@ bool texpresso_main(struct persistent_state *ps)
   ps->initial.need_synctex = ui->need_synctex;
   ps->initial.zoom = ui->zoom;
   ps->initial.config = *txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-  ps->initial.display_list = txp_renderer_get_contents(ps->ctx, ui->doc_renderer);
+  ps->initial.display_list =
+      txp_renderer_get_contents(ps->ctx, ui->doc_renderer);
   if (ps->initial.display_list)
     fz_keep_display_list(ps->ctx, ps->initial.display_list);
 
