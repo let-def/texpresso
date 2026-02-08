@@ -1042,7 +1042,7 @@ bool texpresso_main(struct persistent_state *ps)
   ui->window = ps->window;
 
   bool using_texlive = 0;
-  
+
   if (ps->use_texlive)
   {
     if (!texlive_available())
@@ -1054,7 +1054,7 @@ bool texpresso_main(struct persistent_state *ps)
     }
     using_texlive = 1;
   }
-  else if (ps->use_tectonic) 
+  else if (ps->use_tectonic)
   {
     if (!tectonic_available())
     {

@@ -59,7 +59,11 @@ Install the following dependencies with homebrew:
 brew install mupdf-tools SDL2
 ```
 
-Note: `mupdf-tools` can be replaced by `mupdf`, either is fine.
+>[!Note]
+>`mupdf-tools` can be replaced by `mupdf`, either is fine.
+
+> [!Note]
+> Also, for macOS Sequoia (15.0) you may need to reinstall `gcc`, see [this](https://discussions.apple.com/thread/256033797?sortBy=rank) issue.
 
 ## Download
 
@@ -115,6 +119,9 @@ to select a specific distribution.
 
 This is just a minimal test to make sure that TeXpresso is installed correctly.
 If TeXpresso window does not display the document, please report an issue.
+
+> [!Note]
+> Expect first run to be quite slow, due to initial packages compilation
 
 ### Tectonic initialization
 

@@ -26,7 +26,7 @@ The include path is useful if one uses a build system that puts auxiliary files 
 
 It is not a query/answer protocol (e.g. request something on stdin, read the answer from stdout): stdin and stdout are processed independently.
 
-The editor should just write a line on stdin when it needs to communicate something to TeXpresso. 
+The editor should just write a line on stdin when it needs to communicate something to TeXpresso.
 
 Conversely, it can interpret the messages it is interested in; ignoring the others should be safe.
 
@@ -48,7 +48,7 @@ When looking for a file, TeXpresso checks in its VFS first and then fallbacks to
 
 LaTeX consumes files as a stream of bytes (8-bit integers). TeXpresso makes no assumption on the encoding, it just shares the raw contents stored on disk.
 
-However, this might not be the case for the content communicated by the editor. 
+However, this might not be the case for the content communicated by the editor.
 JSON strings, for instance, are serialized sequences of unicode codepoints. TeXpresso will convert it to an UTF-8 encoded byte string before sharing with LaTeX.
 Offsets specified in byte-based delta commands (`change`) should therefore refer to byte offsets of the UTF-8 representation.
 Alternatively, one can use line-based communication (using `change-lines` for editor->TeXpresso communication, and by passing `-lines` argument for TeXpresso->editor messages). Lines are numbered by counting '\n'.

@@ -225,7 +225,7 @@ int main(int argc, const char **argv)
     usage();
     exit(1);
   }
-    
+
   char *inclusion_path = malloc(inclusion_path_size);
   if (!inclusion_path) abort();
 
