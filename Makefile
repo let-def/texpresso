@@ -1,7 +1,12 @@
 all:
 	$(MAKE) common texpresso texpresso-xetex
 	@echo "# Build succeeded."
-	@echo "# First time launch needs to download many files and can be slow."
+	@echo "# TeXpresso detects package providers (TeXlive or Tectonic) by looking in PATH:"
+	@echo "# - it defaults to Tectonic if the 'tectonic' command is available"
+	@echo "# - it falls back to TeXlive if the 'kpsewhich' command is available"
+	@echo "# A provider can be selected manually by passing the '-texlive' or '-tectonic' flags."
+	@echo "#"
+	@echo "# When using tectonic, first time launch needs to download many files and can be slow."
 	@echo "# You can speed-up this process using:"
 	@echo "#"
 	@echo "#   make fill-tectonic-cache"
@@ -9,6 +14,10 @@ all:
 	@echo "# After, you can try texpresso by running:"
 	@echo "#"
 	@echo "#   build/texpresso test/simple.tex"
+	@echo "#"
+	@echo "# Or:"
+	@echo "#   build/texpresso -texlive test/simple.tex"
+	@echo "#   build/texpresso -tectonic test/simple.tex"
 	@echo "#"
 
 common:
