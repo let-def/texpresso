@@ -2,9 +2,9 @@ name: CI TeXpresso – build & test
 
 on:
   push:
-    branches: [detectonic]
+    branches: [detectonic, main, detectonic-ci]
   pull_request:
-    branches: [detectonic]
+    branches: [detectonic, main, detectonic-ci]
 
 jobs:
   test:
