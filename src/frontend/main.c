@@ -1441,6 +1441,11 @@ bool texpresso_main(struct persistent_state *ps)
           break;
       }
     }
+    if (ps->initialize_only)
+    {
+      fprintf(stderr, "[info] Initialize mode: terminating engine process\n");
+      quit = 1;
+    }
   }
 
   {
