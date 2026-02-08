@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
+#include "mydvi.h"
 #include "providers.h"
 #include "renderer.h"
 #include "engine.h"
@@ -1040,11 +1041,34 @@ bool texpresso_main(struct persistent_state *ps)
 
   ui->window = ps->window;
 
-  if (!tectonic_available())
+  bool using_texlive = 0;
+  
+  if (ps->use_texlive)
+  {
+    if (!texlive_available())
+    {
+      fprintf(stderr,
+              "[fatal] cannot find kpsewhich command for texlive integration "
+              "(please make sure it is installed and visible in PATH)\n");
+      return 0;
+    }
+    using_texlive = 1;
+  }
+  else if (ps->use_tectonic) 
+  {
+    if (!tectonic_available())
+    {
+      fprintf(stderr,
+              "[fatal] cannot find tectonic "
+              "(please make sure it is installed and visible in PATH)\n");
+      return 0;
+    }
+  }
+  else if (!tectonic_available() || !(using_texlive = texlive_available()))
   {
     fprintf(stderr,
-            "[fatal] cannot find tectonic "
-            "(please make sure it is installed and visible in PATH)\n");
+            "[fatal] cannot find tectonic nor kpsewhich (texlive)"
+            "(please make sure at least one of them is installed and visible in PATH)\n");
     return 0;
   }
 
@@ -1060,11 +1084,20 @@ bool texpresso_main(struct persistent_state *ps)
 
   if (doc_ext && strcmp(doc_ext, "pdf") == 0)
     ui->eng = txp_create_pdf_engine(ps->ctx, ps->doc_name);
-  else if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
-    ui->eng = txp_create_dvi_engine(ps->ctx, ps->doc_path, ps->doc_name);
   else
-    ui->eng = txp_create_tex_engine(ps->ctx, engine_path, ps->inclusion_path,
-                                    ps->doc_path, ps->doc_name);
+  {
+    dvi_reshooks hooks;
+    if (using_texlive)
+      hooks = dvi_texlive_hooks(ps->ctx, ps->doc_path);
+    else
+      hooks = dvi_tectonic_hooks(ps->ctx, ps->doc_path);
+
+    if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
+      ui->eng = txp_create_dvi_engine(ps->ctx, ps->doc_name, hooks);
+    else
+      ui->eng = txp_create_tex_engine(ps->ctx, engine_path, using_texlive,
+                                      ps->inclusion_path, ps->doc_name, hooks);
+  }
 
   ui->sdl_renderer = ps->renderer;
   ui->doc_renderer = txp_renderer_new(ps->ctx, ui->sdl_renderer);
@@ -1075,7 +1108,8 @@ bool texpresso_main(struct persistent_state *ps)
     ui->zoom = ps->initial.zoom;
     ui->need_synctex = ps->initial.need_synctex;
     *txp_renderer_get_config(ps->ctx, ui->doc_renderer) = ps->initial.config;
-    txp_renderer_set_contents(ps->ctx, ui->doc_renderer, ps->initial.display_list);
+    txp_renderer_set_contents(ps->ctx, ui->doc_renderer,
+                              ps->initial.display_list);
     editor_reset_sync();
   }
   else

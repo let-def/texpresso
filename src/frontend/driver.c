@@ -102,6 +102,27 @@ static bool should_reload_binary(void)
   return 0;
 }
 
+static void usage(void)
+{
+  fprintf(stderr,
+          "Usage: texpresso [-I path]* [-json] [-lines] [-texlive] [-tectonic] "
+          "root_file.tex\n");
+  fprintf(stderr,
+          " -I path    Add a path to included directories. \n"
+          "    Files are looked up relative to document directory and all "
+          "included paths\n");
+  fprintf(stderr,
+          " -json      Use json rather than s-exp communication protocol\n");
+  fprintf(stderr,
+          " -lines     Use line-based rather than byte-based synchronization\n");
+  fprintf(stderr,
+          " -texlive   Load TeX packages from TeXlive installation (using "
+          "kpsewhich command)\n");
+  fprintf(stderr,
+          " -tectonic  Load TeX packages from tectoni installation (using "
+          "tectonic command)\n");
+}
+
 int main(int argc, const char **argv)
 {
   char work_dir[PATH_MAX];
@@ -126,6 +147,8 @@ int main(int argc, const char **argv)
   const char *doc_arg = NULL;
   enum editor_protocol protocol = EDITOR_SEXP;
   bool line_output = 0;
+  bool use_tectonic = 0;
+  bool use_texlive = 0;
 
   int inclusion_path_size = 1;
   for (int i = 1; i < argc; i++)
@@ -134,36 +157,37 @@ int main(int argc, const char **argv)
 
     if (arg[0] == '-')
     {
-      if (arg[1] == 'j' &&
-        arg[2] == 's' &&
-        arg[3] == 'o' &&
-        arg[4] == 'n' &&
-        arg[5] == '\0')
+      if (strcmp(arg, "-json") == 0)
       {
         protocol = EDITOR_JSON;
       }
-      else if (arg[1] == 'I' && arg[2] == '\0')
+      else if (strcmp(arg, "-I") == 0)
       {
         i += 1;
         if (i == argc)
         {
           fprintf(stderr, "[error] Expecting a path after -I\n");
+          usage();
           exit(1);
         }
         inclusion_path_size += 1 + strlen(argv[i]);
       }
-      else if (arg[1] == 'l' &&
-        arg[2] == 'i' &&
-        arg[3] == 'n' &&
-        arg[4] == 'e' &&
-        arg[5] == 's' &&
-        arg[6] == '\0')
+      else if (strcmp(arg, "-lines") == 0)
       {
         line_output = 1;
+      }
+      else if (strcmp(arg, "-tectonic") == 0)
+      {
+        use_tectonic = 1;
+      }
+      else if (strcmp(arg, "-texlive") == 0)
+      {
+        use_texlive = 1;
       }
       else
       {
         fprintf(stderr, "[error] Unknown option %s\n", arg);
+        usage();
         exit(1);
       }
 
@@ -178,15 +202,23 @@ int main(int argc, const char **argv)
 
     fprintf(stderr, "[error] Expecting a single document argument, got %s and %s\n",
             doc_arg, arg);
+    usage();
     exit(1);
   }
 
   if (doc_arg == NULL)
   {
-    fprintf(stderr, "Usage: texpresso [-I path]* [-json] root_file.tex\n");
+    usage();
     exit(1);
   }
 
+  if (use_tectonic && use_texlive)
+  {
+    fprintf(stderr, "[error] -texlive and -tectonic are mutually exclusive.\n");
+    usage();
+    exit(1);
+  }
+    
   char *inclusion_path = malloc(inclusion_path_size);
   if (!inclusion_path) abort();
 
@@ -269,7 +301,6 @@ int main(int argc, const char **argv)
   struct persistent_state pstate = {
       .initial = {0,},
       .protocol = protocol,
-      .line_output = line_output,
       .window = window,
       .renderer = renderer,
       .ctx = ctx,
@@ -280,6 +311,10 @@ int main(int argc, const char **argv)
       .custom_event = custom_event,
       .schedule_event = &schedule_event,
       .should_reload_binary = &should_reload_binary,
+
+      .line_output = line_output,
+      .use_tectonic = use_tectonic,
+      .use_texlive = use_texlive,
   };
 
   while (texpresso_main(&pstate));

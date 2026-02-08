@@ -28,6 +28,7 @@
 #include "state.h"
 #include <mupdf/fitz/display-list.h>
 #include "synctex.h"
+#include "mydvi.h"
 
 #define send(method, ...) \
   (send__extract_first(__VA_ARGS__, NULL)->_class->method((txp_engine*)__VA_ARGS__))
@@ -37,16 +38,17 @@
 typedef struct txp_engine_s txp_engine;
 
 txp_engine *txp_create_tex_engine(fz_context *ctx,
-                                  const char *tectonic_path,
+                                  const char *engine_path,
+                                  bool use_texlive,
                                   const char *inclusion_path,
-                                  const char *tex_dir,
-                                  const char *tex_name);
+                                  const char *tex_name,
+                                  dvi_reshooks hooks);
 
 txp_engine *txp_create_pdf_engine(fz_context *ctx, const char *pdf_path);
 
 txp_engine *txp_create_dvi_engine(fz_context *ctx,
-                                  const char *dvi_dir,
-                                  const char *dvi_path);
+                                  const char *dvi_path,
+                                  dvi_reshooks hooks);
 
 typedef enum {
   DOC_RUNNING,

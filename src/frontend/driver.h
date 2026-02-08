@@ -58,7 +58,6 @@ enum editor_protocol
 struct persistent_state {
   struct initial_state initial;
   enum editor_protocol protocol;
-  int line_output;
   Uint32 custom_event;
 
   void (*schedule_event)(enum custom_events ev);
@@ -69,6 +68,8 @@ struct persistent_state {
   fz_context *ctx;
 
   const char *exe_path, *doc_path, *doc_name, *inclusion_path;
+
+  bool line_output, use_tectonic, use_texlive;
 };
 
 bool texpresso_main(struct persistent_state *ps);

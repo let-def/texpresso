@@ -65,6 +65,8 @@ struct tex_engine
   char *name;
   char *engine_path;
   char *inclusion_path;
+  bool use_texlive;
+
   filesystem_t *fs;
   state_t st;
   log_t *log;
@@ -169,11 +171,11 @@ static pid_t exec_xelatex_generic(char **args, int *fd)
   return pid;
 }
 
-static pid_t exec_xelatex(char *engine_path, const char *filename, int *fd)
+static pid_t exec_xelatex(char *engine_path, bool use_texlive, const char *filename, int *fd)
 {
   char *args[] = {
     engine_path,
-    "-tectonic",
+    (use_texlive ? "-texlive" : "-tectonic"),
     "-texpresso",
     (char*)filename,
     NULL
@@ -191,7 +193,7 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
     log_rollback(ctx, self->log, self->restart);
     self->process_count = 1;
     process_t *p = get_process(self);
-    p->pid = exec_xelatex(self->engine_path, self->name, &p->fd);
+    p->pid = exec_xelatex(self->engine_path, self->use_texlive, self->name, &p->fd);
     p->trace_len = 0;
     if (!channel_handshake(self->c, p->fd))
       mabort();
@@ -1358,9 +1360,10 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
 
 txp_engine *txp_create_tex_engine(fz_context *ctx,
                                   const char *engine_path,
+                                  bool use_texlive,
                                   const char *inclusion_path,
-                                  const char *tex_dir,
-                                  const char *tex_name)
+                                  const char *tex_name,
+                                  dvi_reshooks hooks)
 {
   struct tex_engine *self = fz_malloc_struct(ctx, struct tex_engine);
   self->_class = &_class;
@@ -1378,7 +1381,8 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   self->c = channel_new();
   self->process_count = 0;
 
-  self->dvi = incdvi_new(ctx, dvi_tectonic_hooks(ctx, tex_dir));
+  self->dvi = incdvi_new(ctx, hooks);
+  self->use_texlive = use_texlive;
 
   self->stex = synctex_new(ctx);
   self->rollback.trace_len = NOT_IN_TRANSACTION;

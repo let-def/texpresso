@@ -32,7 +32,6 @@
 #include <sys/wait.h>
 #include <sys/file.h>
 #include <unistd.h>
-#include <errno.h>
 
 typedef struct cell_dvi_font cell_dvi_font;
 typedef struct cell_tex_enc cell_tex_enc;
@@ -241,6 +240,148 @@ dvi_reshooks dvi_tectonic_hooks(fz_context *ctx, const char *document_dir)
     .env = path,
     .free_env = default_hooks_free_env,
     .open_file = tectonic_hooks_open_file,
+  };
+}
+
+static fz_stream *
+texlive_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const char *name)
+{
+  char *path = NULL;
+  bool free_path = 0;
+  fprintf(stderr, "[dvi] loading %s (kind %s)\n", name, kind_to_string(kind));
+  switch (kind)
+  {
+    case RES_PDF:
+      if (name[0] == '/')
+        path = (char*)name;
+      else
+      {
+        char *root = env;
+        int root_len = strlen(root);
+        int name_len = strlen(name);
+        int len = root_len + name_len;
+        int need_slash = (root_len > 0 && root[root_len - 1] != '/');
+
+        if (need_slash)
+          len += 1;
+
+        path = malloc(len + 1);
+        if (!path) abort();
+        free_path = 1;
+
+        memcpy(path, root, root_len);
+        if (need_slash)
+        {
+          path[root_len] = '/';
+          memcpy(path + root_len + 1, name, name_len);
+        }
+        else
+          memcpy(path + root_len, name, name_len);
+        path[len] = 0;
+      }
+      break;
+
+    case RES_FONT:
+      if (name[0] == '/' || name[0] == '.')
+      {
+        path = (char *)name;
+        break;
+      }
+    case RES_ENC:
+    case RES_MAP:
+    case RES_TFM:
+    case RES_VF:
+    {
+      const char *ext0 = name;
+      while (*ext0 && *ext0 != '.')
+        ext0++;
+      const char *exts[5] = {ext0, NULL};
+      if (!*ext0)
+      {
+        switch (kind)
+        {
+          case RES_ENC:
+            exts[0] = ".enc";
+            break;
+          case RES_MAP:
+            exts[0] = ".map";
+            break;
+          case RES_TFM:
+            exts[0] = ".tfm";
+            break;
+          case RES_VF:
+            exts[0] = ".vf";
+            break;
+          case RES_FONT:
+            exts[0] = ".pfb";
+            exts[1] = ".otf";
+            exts[2] = ".ttf";
+            exts[3] = NULL;
+            break;
+          default:
+            exts[0] = "";
+        }
+      }
+      else
+        exts[0] = "";
+
+      char name_with_ext[1024];
+      char *pext = stpcpy(name_with_ext, name);
+      for (const char **ext = exts; *ext; ++ext)
+      {
+        stpcpy(pext, *ext);
+        const char *path = texlive_file_path(name_with_ext, NULL);
+        if (path)
+        {
+          fz_stream *stream = fz_open_file(ctx, path);
+          if (stream)
+            return stream;
+        }
+      }
+      fprintf(stderr, "failure\n");
+      return NULL;
+    }
+    break;
+
+    default:
+      abort();
+  }
+
+  fz_ptr(fz_stream, result);
+
+  if (path == NULL)
+  {
+    fprintf(stderr, "dvi_resmanager_open_file(%s): no path found\n", name);
+    return NULL;
+  }
+
+  fz_try(ctx)
+  {
+    result = fz_open_file(ctx, path);
+  }
+  fz_catch(ctx)
+  {
+    fz_warn(
+      ctx,
+      "dvi_resmanager_open_file(%s): %s",
+      name,
+      fz_caught_message(ctx)
+    );
+  };
+
+  if (free_path)
+    free(path);
+
+  return result;
+}
+
+dvi_reshooks dvi_texlive_hooks(fz_context *ctx, const char *document_dir)
+{
+  char *path = fz_strdup(ctx, document_dir ? document_dir : "");
+  return (dvi_reshooks){
+    .env = path,
+    .free_env = default_hooks_free_env,
+    .open_file = texlive_hooks_open_file,
   };
 }
 

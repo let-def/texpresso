@@ -26,7 +26,6 @@
 #include <mupdf/fitz.h>
 #include "engine.h"
 #include "incdvi.h"
-#include "mydvi.h"
 
 struct dvi_engine
 {
@@ -119,13 +118,13 @@ static void engine_notify_file_changes(txp_engine *_self,
 {
 }
 
-txp_engine *txp_create_dvi_engine(fz_context *ctx, const char *dvi_dir, const char *dvi_path)
+txp_engine *txp_create_dvi_engine(fz_context *ctx, const char *dvi_path, dvi_reshooks hooks)
 {
   fz_buffer *buffer = fz_read_file(ctx, dvi_path);
   struct dvi_engine *self = fz_malloc_struct(ctx, struct dvi_engine);
   self->_class = &_class;
   self->buffer = buffer;
-  self->dvi = incdvi_new(ctx, dvi_tectonic_hooks(ctx, dvi_dir));
+  self->dvi = incdvi_new(ctx, hooks);
   incdvi_update(ctx, self->dvi, buffer);
   return (txp_engine*)self;
 }
