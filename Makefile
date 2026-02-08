@@ -39,7 +39,7 @@ distclean:
 	rm -rf build Makefile.config
 
 re2c:
-	$(MAKE) -C src $@
+	$(MAKE) -C src/dvi $@
 
 test-utfmapping:
 	mkdir -p build
