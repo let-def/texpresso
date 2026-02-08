@@ -3,7 +3,7 @@
 The process should be started from the editor passing the root TeX file as argument:
 
 ```
-texpressso [-I path]* [-json] [-lines] [-texlive] [-tectonic] <some-dir>/root.tex
+texpressso [-I path]* [-json] [-lines] [-texlive] [-tectonic] [-test-initialize] <some-dir>/root.tex
 ```
 
 The rest of the communication will happen on stdin/stdout:
@@ -15,6 +15,7 @@ Description of the arguments:
 - `-lines`: update output buffers line-by-line rather than by chunks of bytes (using `append-lines`/`truncate-lines` rather than `append`/`truncate` messages)
 - `-texlive`: use TeXlive as TeX distribution.
 - `-tectonic`: use Tectonic as TeX distribution.
+- `-test-initialize`: run a single cycle, used only for initialization test.
 - `-I path`: populate an "include path" in which files should be looked up in priority
 
 The include path is useful if one uses a build system that puts auxiliary files in a dedicated build directory, while the TeX sources are in a separate source directory. In this case, TeXpresso can be started using `texpresso -I build/ source/main.tex`.
