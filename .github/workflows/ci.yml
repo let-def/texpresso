@@ -85,6 +85,12 @@ jobs:
       - name: Run tests – Texpresso
         run: make test-texpresso || echo "fail" > texpresso.status
 
+      - name: Run tests – TeXpresso with TeX Live
+        run: make test-texpresso-texlive || echo "fail" > texpresso-texlive.status
+
+      - name: Run tests – TeXpresso with Tectonic
+        run: make test-texpresso-tectonic || echo "fail" > texpresso-tectonic.status
+
       - name: Report summary
         if: always()
         run: |
@@ -92,6 +98,8 @@ jobs:
           [ ! -f texlive.status ]   && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f tectonic.status ]  && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f texpresso.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f texpresso-texlive.status ]  && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f texpresso-tectonic.status ] && pass=$((pass+1)) || fail=$((fail+1))
           echo "Passed: $pass" >> "$GITHUB_STEP_SUMMARY"
           echo "Failed: $fail"  >> "$GITHUB_STEP_SUMMARY"
           [ $fail -eq 0 ]

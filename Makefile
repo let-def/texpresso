@@ -94,4 +94,10 @@ test-tectonic:
 test-texpresso:
 	SDL_VIDEODRIVER=dummy build/texpresso -test-initialize test/simple.tex
 
+test-texpresso-texlive:
+	SDL_VIDEODRIVER=dummy build/texpresso -texlive -test-initialize test/simple.tex
+
+test-texpresso-tectonic:
+	SDL_VIDEODRIVER=dummy build/texpresso -tectonic -test-initialize test/simple.tex
+
 .PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso
