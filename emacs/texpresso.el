@@ -28,6 +28,20 @@
   :type '(choice (file :tag "Path")
                  (const :tag "Auto" nil)))
 
+(defcustom texpresso-arguments nil
+  "List of extra command‑line arguments to pass to TeXpresso.
+Each element should be a separate string, e.g. `(\"-texlive\")`."
+  :type '(repeat string)
+  :group 'tex)
+
+(defcustom texpresso-distribution 'auto
+  "Select the TeX distribution to be used by TeXpresso."
+  :type '(choice
+          (const :tag "Auto"      auto)
+          (const :tag "TeXlive"   texlive)
+          (const :tag "Tectonic"  tectonic))
+  :group 'tex)
+
 (defcustom texpresso-follow-edition nil
   "If true, TeXpresso scrolls the view to the code being edited."
   :group 'tex
@@ -346,6 +360,8 @@ remainder."
 
 (defun texpresso--make-process (&rest command)
   "Create and setup a new TeXpresso process with given COMMAND."
+  (when (consp (car-safe command))
+    (setq command (apply #'append command)))
   (when (process-live-p texpresso--process)
     (kill-process texpresso--process))
   (let ((texpresso-stderr (get-buffer-create "*texpresso-stderr*")))
@@ -387,8 +403,8 @@ it, even though the process was still sending its stderr to Emacs."
 (defun texpresso (&optional filename)
   "Start a new TeXpresso process using FILENAME as the master TeX file.
 When called interactively with a prefix argument, ask for the file.
-If FILENAME is nil, use `TeX-master' from AUCTeX or `buffer-file-name'."
-  (interactive "P")
+If FILENAME is nil, use `TeX-master' from AUCTeX or variable `buffer-file-name'."
+       (interactive "P")
   (unless texpresso-mode
     (texpresso-mode 1))
 
@@ -401,11 +417,19 @@ If FILENAME is nil, use `TeX-master' from AUCTeX or `buffer-file-name'."
       ;; called interactively without prefix or from lisp, fall back
       (unless filename (setq filename tm-fn)))
 
-    (unless filename (error "TeXpresso: no valid TeX root file available.")))
+    (unless filename (error "TeXpresso: no valid TeX root file available")))
 
   (condition-case err
-      (texpresso--make-process (or texpresso-binary "texpresso")
-                               (expand-file-name filename))
+      (texpresso--make-process (list (or texpresso-binary "texpresso"))
+                               (pcase texpresso-distribution
+                                 ('texlive '("-texlive"))
+                                 ('tectonic '("-tectonic"))
+                                 ('auto          nil)
+                                 (_ (message "Error: invalid texpresso-distribution %S" texpresso-distribution)
+                                    nil))
+                               texpresso-distribution
+                               texpresso-arguments
+                               (list (expand-file-name filename)))
     ((file-missing)
      (customize-variable 'texpresso-binary)
      (message "Cannot launch TeXpresso. Please select the executable file and try again. (error: %S)"
