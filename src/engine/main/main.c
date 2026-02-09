@@ -893,7 +893,10 @@ static bool bootstrap_format(void)
   primary_document = NULL;
 
   if (dependency_tape)
+  {
     fclose(dependency_tape);
+    dependency_tape = NULL;
+  }
 
   fprintf(stderr, "Format generation: ");
   switch (result)
