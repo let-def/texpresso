@@ -1,3 +1,5 @@
+include ../../Makefile.config
+
 ## Target name
 
 XETEX_BIN?=texpresso-xetex
@@ -39,7 +41,7 @@ PKG_CONFIG=pkg-config
 PKG=freetype2 harfbuzz graphite2 fontconfig libpng $(PKGSYS)
 CFLAGS = -Iinclude -Ilayout -Idpx $(shell $(PKG_CONFIG) $(PKG) --cflags) $(_CFLAGS) $(_FLAGS) $(CSYSFLAGS)
 CXXFLAGS = -std=c++17 $(CFLAGS) $(_CXXFLAGS)
-LDFLAGS = -lm -lz $(shell $(PKG_CONFIG) $(PKG) --libs) $(_LDFLAGS) $(_FLAGS) $(LDSYSFLAGS)
+LDFLAGS = $(_LDFLAGS) -lm -lz $(shell $(PKG_CONFIG) $(PKG) --libs) $(_LDFLAGS) $(_FLAGS) $(LDSYSFLAGS)
 DIRS=engine layout dpx main
 
 
