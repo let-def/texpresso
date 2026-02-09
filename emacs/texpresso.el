@@ -422,12 +422,11 @@ If FILENAME is nil, use `TeX-master' from AUCTeX or variable `buffer-file-name'.
   (condition-case err
       (texpresso--make-process (list (or texpresso-binary "texpresso"))
                                (pcase texpresso-distribution
-                                 ('texlive '("-texlive"))
+                                 ('texlive  '("-texlive"))
                                  ('tectonic '("-tectonic"))
                                  ('auto          nil)
                                  (_ (message "Error: invalid texpresso-distribution %S" texpresso-distribution)
                                     nil))
-                               texpresso-distribution
                                texpresso-arguments
                                (list (expand-file-name filename)))
     ((file-missing)
