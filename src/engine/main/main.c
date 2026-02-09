@@ -39,6 +39,9 @@ bool use_texlive = 0;
 bool use_texpresso = 0;
 txp_client *texpresso = NULL;
 
+// Generate a new format file
+bool regenerate_format = 0;
+
 // A file in which dependencies are recorded (or NULL if not necessary)
 FILE *dependency_tape;
 
@@ -817,13 +820,15 @@ static void usage(char *argv0)
 {
   fprintf(
       stderr,
-      "Usage: %s [-texlive] [-tectonic] [-texpresso] <path.tex>\n"
+      "Usage: %s [-texlive] [-tectonic] [-texpresso] [-regenerate-format] "
+      "<path.tex>\n"
       "Run XeTeX engine on <path.tex> using packages from a TeX distribution.\n"
       "\n"
-      "Supported TeX distributions:\n"
+      "Options:\n"
       "  -texlive     Use TeXlive packages (need kpsewhich command)\n"
       "  -tectonic    Use Tectonic packages (need tectonic command)\n"
       "  -texpresso   Internal (route I/O through TeXpresso)\n"
+      "  -regenerate-format  Force generation of a fresh format file\n"
       "Default: try TeXlive first, then Tectonic, then fails\n",
       argv0);
 }
@@ -843,6 +848,9 @@ static const char *format_path(const char *ext)
 
 static bool validate_format(void)
 {
+  if (regenerate_format)
+    return 0;
+
   const char *path;
 
   path = format_path(".fmt");
@@ -936,6 +944,8 @@ int main(int argc, char **argv)
         use_texlive = 1;
       else if (strcmp(argv[i], "-texpresso") == 0)
         use_texpresso = 1;
+      else if (strcmp(argv[i], "-regenerate-format") == 0)
+        regenerate_format = 1;
       else if (strcmp(argv[i], "--") == 0)
         dashdash = 1;
       else
