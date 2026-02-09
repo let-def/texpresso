@@ -1064,7 +1064,7 @@ bool texpresso_main(struct persistent_state *ps)
       return 0;
     }
   }
-  else if (!tectonic_available() || !(using_texlive = texlive_available()))
+  else if (!(using_texlive = texlive_available()) || !tectonic_available())
   {
     fprintf(stderr,
             "[fatal] cannot find tectonic nor kpsewhich (texlive)"
