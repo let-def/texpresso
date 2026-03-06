@@ -5,7 +5,7 @@ OBJECTS= \
   vstack.o pdf_lexer.o
 
 BUILD=../../build
-DIR=$(BUILD)/objects
+DIR=$(BUILD)/frontend
 
 DIR_OBJECTS=$(foreach OBJ,$(OBJECTS),$(DIR)/$(OBJ))
 
@@ -15,13 +15,13 @@ $(DIR)/libmydvi.a: $(DIR_OBJECTS)
 	ar cr $@ $^
 
 $(DIR)/dvi_resmanager.o: dvi_resmanager.c
-	$(CC) $(shell pkg-config --cflags freetype2) -c -o $@ $<
+	$(CC) -I../include $(shell pkg-config --cflags freetype2) -c -o $@ $<
 
 $(DIR)/%.o: %.c
-	$(CC) -c -o $@ $<
+	$(CC) -I../include -c -o $@ $<
 
 $(DIR)/%.o: $(DIR)/%.c
-	$(CC) -c -o $@ $<
+	$(CC) -I../include -c -o $@ $<
 
 %.c: %.re2c.c
 	@ if test $@ -ot $^; then \

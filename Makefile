@@ -1,11 +1,30 @@
 all:
-	$(MAKE) texpresso
-	$(MAKE) texpresso-tonic
-	@echo "# Build succeeded. Try running:"
-	@echo "# build/texpresso test/simple.tex"
+	$(MAKE) common texpresso texpresso-xetex
+	@echo "# Build succeeded."
+	@echo "# TeXpresso detects package providers (TeXlive or Tectonic) by looking in PATH:"
+	@echo "# - it defaults to Tectonic if the 'tectonic' command is available"
+	@echo "# - it falls back to TeXlive if the 'kpsewhich' command is available"
+	@echo "# A provider can be selected manually by passing the '-texlive' or '-tectonic' flags."
+	@echo "#"
+	@echo "# When using tectonic, first time launch needs to download many files and can be slow."
+	@echo "# You can speed-up this process using:"
+	@echo "#"
+	@echo "#   make fill-tectonic-cache"
+	@echo "#"
+	@echo "# After, you can try texpresso by running:"
+	@echo "#"
+	@echo "#   build/texpresso test/simple.tex"
+	@echo "#"
+	@echo "# Or:"
+	@echo "#   build/texpresso -texlive test/simple.tex"
+	@echo "#   build/texpresso -tectonic test/simple.tex"
+	@echo "#"
+
+common:
+	$(MAKE) -C src/common
 
 texpresso:
-	$(MAKE) -C src texpresso
+	$(MAKE) -C src/frontend texpresso
 
 dev:
 	$(MAKE) -C src texpresso-dev
@@ -14,14 +33,13 @@ debug:
 	$(MAKE) -C src texpresso-debug texpresso-debug-proxy
 
 clean:
-	rm -rf build/objects/*
+	rm -rf build/*/*
 
 distclean:
 	rm -rf build Makefile.config
-	cd tectonic && cargo clean
 
 re2c:
-	$(MAKE) -C src $@
+	$(MAKE) -C src/dvi $@
 
 test-utfmapping:
 	mkdir -p build
@@ -41,8 +59,7 @@ config:
 	echo >Makefile.config "CFLAGS=-O2 -ggdb -I. -fPIC"
 	echo >>Makefile.config 'CC=gcc $$(CFLAGS)'
 	echo >>Makefile.config 'LDCC=g++ $$(CFLAGS)'
-	echo >>Makefile.config "LIBS=-lmupdf -lm `CC=gcc ./mupdf-config.sh` -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lgumbo -lSDL2"
-	echo >>Makefile.config "TECTONIC_ENV="
+	echo >>Makefile.config "LIBS=-lmupdf -lm `CC=gcc ./mupdf-config.sh` -lz -ljpeg -lharfbuzz -lfreetype -lSDL2"
 endif
 
 ifeq ($(UNAME), Darwin)
@@ -53,12 +70,34 @@ config:
 	echo >Makefile.config "CFLAGS=-O2 -ggdb -I. -fPIC -I$(BREW)/include"
 	echo >>Makefile.config 'CC=gcc $$(CFLAGS)'
 	echo >>Makefile.config 'LDCC=g++ $$(CFLAGS)'
-	echo >>Makefile.config "LIBS=-L$(BREW)/lib -lmupdf -lm `CC=gcc ./mupdf-config.sh -L$(BREW)/lib` -lz -ljpeg -ljbig2dec -lharfbuzz -lfreetype -lopenjp2 -lSDL2"
-	echo >>Makefile.config "TECTONIC_ENV=PKG_CONFIG_PATH=$(BREW_ICU4C)/lib/pkgconfig C_INCLUDE_PATH=$(BREW_ICU4C)/include LIBRARY_PATH=$(BREW_ICU4C)/lib"
+	echo >>Makefile.config "LIBS=-L$(BREW)/lib -lmupdf -lm `CC=gcc ./mupdf-config.sh -L$(BREW)/lib` -lz -ljpeg -lharfbuzz -lfreetype -lSDL2"
 endif
 
-texpresso-tonic:
-	$(MAKE) -f Makefile.tectonic tectonic
-	cp -f tectonic/target/release/texpresso-tonic build/
+texpresso-xetex:
+	$(MAKE) -C src/engine
 
-.PHONY: all dev clean config texpresso-tonic re2c
+compile_commands.json:
+	bear -- $(MAKE) -B -k all
+
+fill-tectonic-cache:
+	tectonic --outfmt fmt test/format.tex
+	tectonic --outfmt xdv test/simple.tex
+
+test-texlive:
+	build/texpresso-xetex -texlive test/simple.tex
+	rm simple.aux simple.log simple.xdv
+
+test-tectonic:
+	build/texpresso-xetex -tectonic test/simple.tex
+	rm simple.aux simple.log simple.xdv
+
+test-texpresso:
+	SDL_VIDEODRIVER=dummy build/texpresso -test-initialize test/simple.tex
+
+test-texpresso-texlive:
+	SDL_VIDEODRIVER=dummy build/texpresso -texlive -test-initialize test/simple.tex
+
+test-texpresso-tectonic:
+	SDL_VIDEODRIVER=dummy build/texpresso -tectonic -test-initialize test/simple.tex
+
+.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso

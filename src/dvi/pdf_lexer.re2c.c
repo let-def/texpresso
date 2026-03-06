@@ -51,7 +51,7 @@ re2c:define:YYSHIFTSTAG = "@@{tag} += @@{shift};";
 
 /*!re2c
 
-ws      = [\x20\r\n\t\x0c\x00];
+ws      = [\x20\r\n\t\x0c];
 delim   = ('[' | ']' | [()/%><]);
 eol     = ('\r' | '\n' | '\r\n');
 nat     = [0-9]+;

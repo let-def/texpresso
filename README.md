@@ -1,7 +1,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/let-def/texpresso">
-    <img width=256 height=256 src="doc/texpresso_logo_v2.png", alt="texpresso">
+    <img width=256 height=256 src="doc/texpresso_logo_v3.svg", alt="texpresso">
   </a>
   <h1>
     <strong>
@@ -10,16 +10,15 @@
   </h1>
 </div>
 
-
 > [!Note]
 > TeXpresso is still in an early development phase.
 > Changes and bug fixes are happening frequently, check the [CHANGELOG.md](CHANGELOG.md).
 
-**Important: this repository uses submodules. Clone using `git clone --recurse-submodules`.**
+[![CI TeXpresso Build & Test](https://github.com/let-def/texpresso/actions/workflows/ci.yml/badge.svg)](https://github.com/let-def/texpresso/actions/workflows/ci.yml)
 
 ## About
 
-TeXpresso provides a "live rendering" experience when editing LaTeX documents in a supported editor: change something in the .tex file, the render window will update almost immediately with your change. Write something invalid, you get an error message immediately.
+TeXpresso provides a *"live rendering"* experience when editing LaTeX documents in a supported editor: change something in the `.tex` file, the render window will update almost immediately with your change. Write something invalid, you get an error message immediately.
 
 This can radically improve the LaTeX editing experience compared to the usual rebuild-and-wait-for-viewer-to-update experience, especially for large documents.
 
@@ -34,9 +33,7 @@ TeXpresso has been tested on Linux and macOS and should work with both AMD64 and
 The TeXpresso system is built of the following parts:
 
 1. A TeX engine that renders LaTeX documents into PDF;
-   we use a modified version of the [Tectonic](https://tectonic-typesetting.github.io/en-US/) engine, modified to interact with the TeXpresso driver.
-
-   This is in the [tectonic/](tectonic/) git-submodule, and it produces the `texpresso-tonic` helper binary
+   we use a custom version of the `XeTeX` engine, modified to interact with the TeXpresso driver.
 
 2. A PDF renderer that renders PDF documents into images.
    We use [MuPDF](https://mupdf.com/).
@@ -45,7 +42,7 @@ The TeXpresso system is built of the following parts:
 
 4. A driver program that talks to the editor to be notified of changes to the LaTeX document, maintains an incremental view of the document and the rendering process (supporting incrementality, rollback, error recovery, etc.), talks to the LaTeX engine to re-render the modified portions of the document, and synchronizes with the viewer.
 
-   The driver is where the "live" magic lives. It is the `texpresso` binary, whose sources are in this repository.
+   The driver is where the *"live"* magic lives. It is the `texpresso` binary, whose sources are in this repository.
 
 The driver sends information between the editor and the renderer in both directions. In particular, it is possible to ask the editor to jump to a specific place in the LaTeX document by clicking on the viewer window or, conversely, to refresh the viewer window to display the document at the editor position.
 
@@ -82,7 +79,7 @@ It will try to start the `texpresso` command. If it is not possible, it will ope
 `(customize-variable 'texpresso-binary)` to let you set the path to texpresso
 binary (`<where you cloned the repository>/build/texpresso`).
 
-To work correctly, `texpresso` needs `texpresso-tonic` helper; when copying them, make sure they are both in the same directory.
+To work correctly, `texpresso` needs `texpresso-xetex` helper; when copying them, make sure they are both in the same directory.
 
 `M-x texpresso-display-output` will open a small window listing TeX warnings and errors on the current page.
 Use `M-x texpresso-next-page` and `M-x texpresso-previous-page` to move between pages without leaving Emacs.
@@ -130,6 +127,6 @@ https://user-images.githubusercontent.com/1048096/235424858-a5a2900b-fb48-40b7-a
 ## Credits
 
 Thanks to [@DominikPeters](https://github.com/DominikPeters) for contributing the VS Code extension.
-Thanks to [@merv1n34k](https://github.com/merv1n34k) for contributing the logo.
+Thanks to [@merv1n34k](https://github.com/merv1n34k) for contributing the continuous integration and the logo.
 
 Thanks our many contributors, [@gasche](https://github.com/gasche), [@haselwarter](https://github.com/haselwarter), [@alerque](https://github.com/alerque), [@sandersantema](https://github.com/sandersantema), [@t4ccer](https://github.com/t4ccer), [@schnell18](https://github.com/schnell18), and [@bowentan](https://github.com/bowentan) for improving features, portability and compatibility with many platforms.

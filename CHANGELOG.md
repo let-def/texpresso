@@ -1,7 +1,7 @@
 # v0.1 Mon 11 Aug 14:42:38 JST 2025
 
 Hopefully the last release still relying on a custom build of tectonic:
-    
+
 - Re-enable SyncTeX (accidentally disabled during a rebase)
 - Fix a crash when the same file was opened multiple times
 - Disable compositor bypass (#50, report by @adamkruszewski)

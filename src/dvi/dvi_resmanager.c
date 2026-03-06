@@ -23,14 +23,15 @@
  */
 
 #include <ft2build.h>
+#include <mupdf/fitz/stream.h>
+#include <string.h>
+#include "providers.h"
 #include FT_FREETYPE_H
 #include "mydvi.h"
 #include "fz_util.h"
-#include "../mupdf_compat.h"
 #include <sys/wait.h>
 #include <sys/file.h>
 #include <unistd.h>
-#include <errno.h>
 
 typedef struct cell_dvi_font cell_dvi_font;
 typedef struct cell_tex_enc cell_tex_enc;
@@ -84,12 +85,28 @@ default_hooks_free_env(fz_context *ctx, void *env)
   fz_free(ctx, env);
 }
 
+static const char* kind_to_string(dvi_reskind kind)
+{
+  switch (kind)
+  {
+#define CASE(x) case x: return #x
+    CASE(RES_PDF);
+    CASE(RES_ENC);
+    CASE(RES_MAP);
+    CASE(RES_TFM);
+    CASE(RES_VF);
+    CASE(RES_FONT);
+#undef CASE
+    default: "(unknown)";
+  }
+}
+
 static fz_stream *
 tectonic_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const char *name)
 {
   char *path = NULL;
   bool free_path = 0;
-  fprintf(stderr, "[dvi] loading %s\n", name);
+  fprintf(stderr, "[dvi] loading %s (kind %s)\n", name, kind_to_string(kind));
   switch (kind)
   {
     case RES_PDF:
@@ -134,7 +151,8 @@ tectonic_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const cha
     case RES_VF:
     {
       const char *ext0 = name;
-      while (*ext0 && *ext0 != '.') ext0++;
+      while (*ext0 && *ext0 != '.')
+        ext0++;
       const char *exts[5] = {ext0, NULL};
       if (!*ext0)
       {
@@ -165,25 +183,20 @@ tectonic_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const cha
       else
         exts[0] = "";
 
+      char name_with_ext[1024];
+      char *pext = stpcpy(name_with_ext, name);
       for (const char **ext = exts; *ext; ++ext)
       {
-        char command[1024];
-        sprintf(command, "tectonic -X bundle cat %s%s", name, *ext);
-        FILE *f = popen(command, "r");
-        if (!f)
-          abort();
-        fz_stream *stream = fz_open_file_ptr_no_close(ctx, f);
-        fz_buffer *buffer = fz_read_all(ctx, stream, 4096);
-        fz_drop_stream(ctx, stream);
-        if (pclose(f) != 0)
+        stpcpy(pext, *ext);
+        const char *path = tectonic_get_file_path(name_with_ext);
+        if (path)
         {
-          fz_drop_buffer(ctx, buffer);
-          continue;
+          fz_stream *stream = fz_open_file(ctx, path);
+          if (stream)
+            return stream;
         }
-        stream = fz_open_buffer(ctx, buffer);
-        fz_drop_buffer(ctx, buffer);
-        return stream;
       }
+      fprintf(stderr, "failure\n");
       return NULL;
     }
     break;
@@ -230,102 +243,12 @@ dvi_reshooks dvi_tectonic_hooks(fz_context *ctx, const char *document_dir)
   };
 }
 
-struct bundle_server {
-  char *document_dir;
-  pid_t pid;
-  FILE *o, *i, *lock;
-};
-
-static void my_flock(int fd, int flag)
-{
-  while (flock(fd, flag) == -1)
-  {
-    if (errno == EINTR) continue;
-    perror("bundle_serve_hooks_cat: flock");
-    abort();
-  }
-}
-
 static fz_stream *
-bundle_serve_hooks_cat(fz_context *ctx, struct bundle_server *env, const char *name)
-{
-  fz_stream *result = NULL;
-
-  my_flock(fileno(env->lock), LOCK_EX);
-
-  if (fwrite(name, strlen(name), 1, env->o) != 1)
-  {
-    fprintf(stderr, "bundle_serve_hooks_cat: cannot send request\n");
-    goto release;
-  }
-  if (fwrite("\n", 1, 1, env->o) != 1)
-  {
-    fprintf(stderr, "bundle_serve_hooks_cat: cannot send newline\n");
-    goto release;
-  }
-  if (fflush(env->o) != 0)
-  {
-    perror("bundle_serve_hooks_cat: fflush");
-    goto release;
-  }
-  uint8_t answer[9];
-  if (fread(answer, 9, 1, env->i) != 1)
-  {
-    fprintf(stderr, "bundle_serve_hooks_cat: cannot read answer\n");
-    goto release;
-  }
-
-  switch (answer[0])
-  {
-    case 'C': case 'P': case 'E': 
-    break;
-    default:
-    fprintf(stderr, "bundle_serve_hooks_cat: unknown response %C\n", answer[0]);
-    abort();
-  };
-
-  uint64_t size =
-    ((uint64_t)answer[1] << (0 * 8)) |
-    ((uint64_t)answer[2] << (1 * 8)) |
-    ((uint64_t)answer[3] << (2 * 8)) |
-    ((uint64_t)answer[4] << (3 * 8)) |
-    ((uint64_t)answer[5] << (4 * 8)) |
-    ((uint64_t)answer[6] << (5 * 8)) |
-    ((uint64_t)answer[7] << (6 * 8)) |
-    ((uint64_t)answer[8] << (7 * 8));
-
-  fz_buffer *buffer = fz_new_buffer(ctx, size);
-  buffer->len = size;
-  fprintf(stderr, "success code:%c size:%d\n", answer[0], (int)size);
-
-  if (fread(buffer->data, size, 1, env->i) != 1)
-  {
-    fz_drop_buffer(ctx, buffer);
-    fprintf(stderr, "bundle_serve_hooks_cat: cannot read data\n");
-    goto release;
-  }
-
-  if (answer[0] == 'C')
-    result = fz_open_buffer(ctx, buffer);
-  else if (answer[0] == 'P')
-    result = fz_open_file(ctx, fz_string_from_buffer(ctx, buffer));
-  else
-    fprintf(stderr, "bundle_serve_hooks_cat: error loading %s: %.*s\n",
-            name, (int)size, buffer->data);
-  fz_drop_buffer(ctx, buffer);
-
-release:
-  my_flock(fileno(env->lock), LOCK_UN);
-  return result;
-}
-
-static fz_stream *
-bundle_serve_hooks_open_file(fz_context *ctx, void *_env, dvi_reskind kind, const char *name)
+texlive_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const char *name)
 {
   char *path = NULL;
   bool free_path = 0;
-  fprintf(stderr, "[dvi] loading %s\n", name);
-  bundle_server *env = _env;
+  fprintf(stderr, "[dvi] loading %s (kind %s)\n", name, kind_to_string(kind));
   switch (kind)
   {
     case RES_PDF:
@@ -333,7 +256,7 @@ bundle_serve_hooks_open_file(fz_context *ctx, void *_env, dvi_reskind kind, cons
         path = (char*)name;
       else
       {
-        const char *root = env->document_dir;
+        char *root = env;
         int root_len = strlen(root);
         int name_len = strlen(name);
         int len = root_len + name_len;
@@ -359,7 +282,7 @@ bundle_serve_hooks_open_file(fz_context *ctx, void *_env, dvi_reskind kind, cons
       break;
 
     case RES_FONT:
-      if (name[0] == '/' || name[0] == '.' || fz_file_exists(ctx, name))
+      if (name[0] == '/' || name[0] == '.')
       {
         path = (char *)name;
         break;
@@ -370,7 +293,8 @@ bundle_serve_hooks_open_file(fz_context *ctx, void *_env, dvi_reskind kind, cons
     case RES_VF:
     {
       const char *ext0 = name;
-      while (*ext0 && *ext0 != '.') ext0++;
+      while (*ext0 && *ext0 != '.')
+        ext0++;
       const char *exts[5] = {ext0, NULL};
       if (!*ext0)
       {
@@ -401,14 +325,20 @@ bundle_serve_hooks_open_file(fz_context *ctx, void *_env, dvi_reskind kind, cons
       else
         exts[0] = "";
 
+      char name_with_ext[1024];
+      char *pext = stpcpy(name_with_ext, name);
       for (const char **ext = exts; *ext; ++ext)
       {
-        char path[1024];
-        sprintf(path, "%s%s", name, *ext);
-        fz_stream *stream = bundle_serve_hooks_cat(ctx, env, path);
-        if (stream)
-          return stream;
+        stpcpy(pext, *ext);
+        const char *path = texlive_file_path(name_with_ext, NULL);
+        if (path)
+        {
+          fz_stream *stream = fz_open_file(ctx, path);
+          if (stream)
+            return stream;
+        }
       }
+      fprintf(stderr, "failure\n");
       return NULL;
     }
     break;
@@ -445,119 +375,13 @@ bundle_serve_hooks_open_file(fz_context *ctx, void *_env, dvi_reskind kind, cons
   return result;
 }
 
-static void
-bundle_serve_free_env(fz_context *ctx, void *_env)
+dvi_reshooks dvi_texlive_hooks(fz_context *ctx, const char *document_dir)
 {
-  bundle_server *env = _env;
-
-  if (fclose(env->i) != 0)
-    perror("bundle_serve_free_env: fclose(i)");
-
-  if (fclose(env->o) != 0)
-    perror("bundle_serve_free_env: fclose(o)");
-
-  int *dummy = 0;
-  if (waitpid(env->pid, dummy, 0) != env->pid)
-    perror("bundle_serve_free_env: waitpid");
-
-  fz_free(ctx, env->document_dir);
-  fz_free(ctx, env);
-}
-
-bundle_server *
-bundle_server_start(fz_context *ctx,
-                    const char *tectonic_path,
-                    const char *document_dir)
-{
-  char buffer[4096];
-  strcpy(buffer, tectonic_path);
-  strcat(buffer, " -X bundle serve");
-
-  int to_child[2], from_child[2];
-
-  if (pipe(to_child) == -1)
-  {
-    perror("dvi_bundle_serve_hooks: pipe(to_child)");
-    abort();
-  }
-
-  if (pipe(from_child) == -1)
-  {
-    perror("dvi_bundle_serve_hooks: pipe(to_child)");
-    abort();
-  }
-
-  pid_t pid = fork();
-
-  if (pid == -1)
-  {
-    perror("dvi_bundle_serve_hooks: fork");
-    abort();
-  }
-
-  if (pid == 0)
-  {
-    dup2(to_child[0], STDIN_FILENO);
-    dup2(from_child[1], STDOUT_FILENO);
-    close(to_child[1]);
-    close(from_child[0]);
-    execlp(tectonic_path, "texpresso-tonic", "-X", "bundle", "serve", NULL);
-    abort();
-  }
-
-  FILE *o = fdopen(to_child[1], "wb");
-  if (!o)
-  {
-    perror("dvi_bundle_serve_hooks: fdopen");
-    abort();
-  }
-
-  FILE *i = fdopen(from_child[0], "rb");
-  if (!i)
-  {
-    perror("dvi_bundle_serve_hooks: fdopen");
-    abort();
-  }
-
-  close(to_child[0]);
-  close(from_child[1]);
-
   char *path = fz_strdup(ctx, document_dir ? document_dir : "");
-  bundle_server *env = fz_malloc_struct(ctx, bundle_server);
-  env->i = i;
-  env->o = o;
-  env->pid = pid;
-  env->lock = tmpfile();
-  if (!env->lock)
-  {
-    perror("bundle_server_start: tmpfile");
-    abort();
-  }
-  env->document_dir = path;
-  return env;
-}
-
-int bundle_server_input(bundle_server *server)
-{
-  return fileno(server->i);
-}
-
-int bundle_server_output(bundle_server *server)
-{
-  return fileno(server->o);
-}
-
-int bundle_server_lock(bundle_server *server)
-{
-  return fileno(server->lock);
-}
-
-dvi_reshooks bundle_server_hooks(bundle_server *env)
-{
   return (dvi_reshooks){
-    .env = env,
-    .free_env = bundle_serve_free_env,
-    .open_file = bundle_serve_hooks_open_file,
+    .env = path,
+    .free_env = default_hooks_free_env,
+    .open_file = texlive_hooks_open_file,
   };
 }
 

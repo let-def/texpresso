@@ -31,7 +31,6 @@
 #include <mupdf/pdf.h>
 
 #include "fixed.h"
-#include "../mupdf_compat.h"
 
 // Forward declaration of resource manager
 typedef struct dvi_resmanager dvi_resmanager;
@@ -203,18 +202,7 @@ typedef struct {
 } dvi_reshooks;
 
 dvi_reshooks dvi_tectonic_hooks(fz_context *ctx, const char *document_directory);
-
-typedef struct bundle_server bundle_server;
-
-bundle_server *
-bundle_server_start(fz_context *ctx,
-                    const char *tectonic_path,
-                    const char *document_directory);
-
-int bundle_server_input(bundle_server *server);
-int bundle_server_output(bundle_server *server);
-int bundle_server_lock(bundle_server *server);
-dvi_reshooks bundle_server_hooks(bundle_server *server);
+dvi_reshooks dvi_texlive_hooks(fz_context *ctx, const char *document_directory);
 
 void dvi_free_hooks(fz_context *ctx, const dvi_reshooks *hooks);
 
