@@ -1,3 +1,15 @@
+# v0.2 Fri  6 Mar 19:09:31 JST 2026
+
+Finally, the engine is independent of tectonic and the build does not need rust anymore:
+
+- fix JSON generated for input-file message (@DominikPeters)
+- support UTF-16 surrogates in `(change-range)`
+- sanitize JSON string serialization
+- embed a custom fork of XeTeX engine (now independent of tectonic)
+- texpresso can now read packages either from TeXlive or Tectonic installations
+  (default to TeXlive if present, pass `-tectonic` argument to switch to Tectonic)
+- CI for multiple platforms contributed by @merv1n34k
+
 # v0.1 Mon 11 Aug 14:42:38 JST 2025
 
 Hopefully the last release still relying on a custom build of tectonic:
