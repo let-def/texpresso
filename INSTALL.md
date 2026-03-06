@@ -96,8 +96,8 @@ If the build fails, try tweaking the configuration flags in `Makefile.config`.
 
 A LaTeX distribution comes with many packages and resource files.
 TeXpresso uses an existing installation:
-- it defaults to using Tectonic if the `tectonic` command is available (in `PATH`)
-- it falls back to TeXlive if the `kpsewhich` command is available.
+- it defaults to TeXlive if the `kpsewhich` command is available.
+- it falls back to Tectonic if the `tectonic` command is available (in `PATH`)
 
 It is possible to force selecting a specific distribution by passing the
 `-tectonic` or `-texlive` flags.

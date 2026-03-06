@@ -32,7 +32,7 @@ into something that can be displayed:
 - [engine_dvi.c](engine_dvi.c) renders a DVI and XDV files.
 - [engine_pdf.c](engine_pdf.c) renders a PDF file (using MuPDF).
 - [engine_tex.c](engine_tex.c) renders a .tex file, by turning it into an XDV stream using
-  texpresso-tonic (TeXpresso flavor of [tectonic](https://github.com/tectonic-typesetting/tectonic))
+  texpresso-xetex (TeXpresso flavor of XeTeX, forked from [tectonic](https://github.com/tectonic-typesetting/tectonic))
 
 [dvi/](dvi/) is a generic interpreter for DVI format,with support for TeX
 TFM, VF, enc, PDF graphic stream, etc.
