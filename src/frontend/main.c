@@ -148,6 +148,91 @@ static void find_engine(char engine_path[PATH_BUFFER_SIZE],
   }
 }
 
+/*
+ * Calculates the relative path of 'path' with respect to 'dir'.
+ * Returns the relative string and sets *go_up to the number of "../" needed.
+ * If the path is outside the directory tree, go_up > 0.
+ */
+static const char *relative_path(const char *path, const char *dir, int *go_up)
+{
+  const char *rel_path = path, *dir_path = dir;
+
+  // 1. Skip common parts
+  while (*rel_path && *rel_path == *dir_path)
+  {
+    if (*rel_path == '/')
+    {
+      while (*rel_path == '/')
+        rel_path += 1;
+      while (*dir_path == '/')
+        dir_path += 1;
+    }
+    else
+    {
+      rel_path += 1;
+      dir_path += 1;
+    }
+  }
+
+  // 2. Go back to last directory separator
+  if (*rel_path && *dir_path)
+  {
+    rel_path -= 1;
+    dir_path -= 1;
+    while (path < rel_path && *rel_path != '/')
+    {
+      rel_path -= 1;
+      dir_path -= 1;
+    }
+    if (*rel_path == '/')
+    {
+      assert (*dir_path == '/');
+      rel_path += 1;
+      dir_path += 1;
+    }
+  }
+
+  // 3. Count number of '../' needed to go back to dir root
+  *go_up = 0;
+  if (*dir_path)
+  {
+    *go_up = 1;
+    while (*dir_path)
+    {
+      if (*dir_path == '/')
+      {
+        *go_up += 1;
+        while (*dir_path == '/')
+          dir_path += 1;
+      }
+      else
+      {
+        dir_path += 1;
+      }
+    }
+  }
+
+  while (*rel_path == '/')
+    rel_path += 1;
+
+  return rel_path;
+}
+
+/*
+ * Find the offset of the first byte that differs between an fz_buffer and a raw
+ * buffer.
+ */
+static int find_diff(const fz_buffer *buf, const void *data, int size)
+{
+  const unsigned char *ptr = data;
+  int i, len = fz_mini(buf->len, size);
+  for (i = 0; i < len && buf->data[i] == ptr[i]; ++i)
+    ;
+  return i;
+}
+
+/* --- Rendering and Layout Utilities --- */
+
 static float zoom_factor(int count)
 {
   return expf((float)count / 5000.0f);
@@ -196,6 +281,11 @@ static int repaint_on_resize(void *data, SDL_Event *event)
 
 /* --- Engine & Document Logic --- */
 
+static int get_last_visible_page(ui_state *ui)
+{
+  return ui->page;
+}
+
 // Always compute SyncTeX for now
 static bool need_synctex(void)
 {
@@ -204,17 +294,30 @@ static bool need_synctex(void)
 
 static bool need_advance(fz_context *ctx, ui_state *ui)
 {
-  int need = send(page_count, ui->eng) <= ui->page;
+  // 1. No need to advance if the document is fully rendered
+  if (send(get_status, ui->eng) == DOC_TERMINATED)
+    return false;
 
-  if (!need)
-  {
-    fz_buffer *buf;
-    synctex_t *stx = send(synctex, ui->eng, &buf);
-    need = (need_synctex() && synctex_page_count(stx) <= ui->page) ||
-           synctex_has_target(stx);
-  }
+  // Set the target to the last page currently visible to the user
+  int target_page = get_last_visible_page(ui);
 
-  return (need && send(get_status, ui->eng) == DOC_RUNNING);
+  // 2. Proceed if the target page has not been rendered yet.
+  if (send(page_count, ui->eng) <= target_page)
+    return true;
+
+  // 3. Proceed also if synctex has not yet reached the target page
+  //    (this can happen because of buffering).
+  fz_buffer *buf;
+  synctex_t *stx = send(synctex, ui->eng, &buf);
+  if (need_synctex() && synctex_page_count(stx) <= target_page)
+    return true;
+
+  // 4. Proceed if a synctex target has been set
+  //    (looking for a source line that has not been reached yet).
+  if (synctex_has_target(stx))
+    return true;
+
+  return false;
 }
 
 static bool advance_engine(fz_context *ctx, ui_state *ui)
@@ -413,87 +516,6 @@ static void ui_mouse_wheel(struct persistent_state *ps,
     ps->schedule_event(UI_RENDER_EVENT);
 }
 
-/* --- Path Utilities --- */
-
-/*
- * Calculates the relative path of 'path' with respect to 'dir'.
- * Returns the relative string and sets *go_up to the number of "../" needed.
- * If the path is outside the directory tree, go_up > 0.
- */
-static const char *relative_path(const char *path, const char *dir, int *go_up)
-{
-  const char *rel_path = path, *dir_path = dir;
-
-  // 1. Skip common parts
-  while (*rel_path && *rel_path == *dir_path)
-  {
-    if (*rel_path == '/')
-    {
-      while (*rel_path == '/')
-        rel_path += 1;
-      while (*dir_path == '/')
-        dir_path += 1;
-    }
-    else
-    {
-      rel_path += 1;
-      dir_path += 1;
-    }
-  }
-
-  // 2. Go back to last directory separator
-  if (*rel_path && *dir_path)
-  {
-    rel_path -= 1;
-    dir_path -= 1;
-    while (path < rel_path && *rel_path != '/')
-    {
-      rel_path -= 1;
-      dir_path -= 1;
-    }
-    if (*rel_path == '/')
-    {
-      assert (*dir_path == '/');
-      rel_path += 1;
-      dir_path += 1;
-    }
-  }
-
-  // 3. Count number of '../' needed to go back to dir root
-  *go_up = 0;
-  if (*dir_path)
-  {
-    *go_up = 1;
-    while (*dir_path)
-    {
-      if (*dir_path == '/')
-      {
-        *go_up += 1;
-        while (*dir_path == '/')
-          dir_path += 1;
-      }
-      else
-      {
-        dir_path += 1;
-      }
-    }
-  }
-
-  while (*rel_path == '/')
-    rel_path += 1;
-
-  return rel_path;
-}
-
-static int find_diff(const fz_buffer *buf, const void *data, int size)
-{
-  const unsigned char *ptr = data;
-  int i, len = fz_mini(buf->len, size);
-  for (i = 0; i < len && buf->data[i] == ptr[i]; ++i)
-    ;
-  return i;
-}
-
 /* --- Editor Command Interpretation --- */
 
 static void realize_change(struct persistent_state *ps,
@@ -649,15 +671,15 @@ static void realize_change(struct persistent_state *ps,
 static void flush_changes(struct persistent_state *ps, ui_state *ui)
 {
   int count = delayed_changes.count;
-  if (count)
+  if (count == 0)
+    return;
+
+  delayed_changes.count = 0;
+  delayed_changes.cursor = 0;
+  for (int i = 0; i < count; ++i)
   {
-    delayed_changes.count = 0;
-    delayed_changes.cursor = 0;
-    for (int i = 0; i < count; ++i)
-    {
-      struct editor_change *op = &delayed_changes.op[i];
-      realize_change(ps, ui, op);
-    }
+    struct editor_change *op = &delayed_changes.op[i];
+    realize_change(ps, ui, op);
   }
 }
 
