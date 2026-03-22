@@ -30,13 +30,21 @@
 #include <mupdf/fitz/context.h>
 #include "renderer.h"
 
-enum custom_events {
-  SCAN_EVENT,
-  RENDER_EVENT,
-  RELOAD_EVENT,
-  STDIN_EVENT,
+enum custom_events
+{
+  CUSTOM_EVENT_UI,
+  CUSTOM_EVENT_FD,
+  CUSTOM_EVENT_COUNT
+};
 
-  EVENT_COUNT,
+enum ui_event
+{
+  UI_SCAN_EVENT,
+  UI_RENDER_EVENT,
+  UI_RELOAD_EVENT,
+  UI_STDIN_EVENT,
+
+  UI_EVENT_COUNT,
 };
 
 struct initial_state
@@ -58,9 +66,9 @@ enum editor_protocol
 struct persistent_state {
   struct initial_state initial;
   enum editor_protocol protocol;
-  Uint32 custom_event;
+  Uint32 custom_events;
 
-  void (*schedule_event)(enum custom_events ev);
+  void (*schedule_event)(enum ui_event ev);
   bool (*should_reload_binary)(void);
 
   SDL_Window *window;
