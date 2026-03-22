@@ -23,91 +23,60 @@
  */
 
 #include <SDL2/SDL.h>
-#include <string.h>
-#include <time.h>
+#include <errno.h>
 #include <poll.h>
 #include <stdio.h>
+#include <string.h>
+#include <time.h>
 #include <unistd.h>
-#include <errno.h>
+#include "base64.h"
+#include "driver.h"
+#include "editor.h"
+#include "engine.h"
 #include "mydvi.h"
+#include "prot_parser.h"
 #include "providers.h"
 #include "renderer.h"
-#include "engine.h"
-#include "driver.h"
 #include "synctex.h"
+#include "utf_mapping.h"
 #include "vstack.h"
-#include "prot_parser.h"
-#include "editor.h"
-#include "base64.h"
 
-struct persistent_state *pstate;
+/* --- Configuration Constants --- */
 
-static void schedule_event(enum custom_events ev)
-{
-  pstate->schedule_event(ev);
-}
+#define ENGINE_STEP_LIMIT 10
+#define ENGINE_TIMEOUT_US 5000000
+#define DEFAULT_ENGINE_NAME "texpresso-xetex"
+#define MAX_BUFFERED_OPS 64
+#define MAX_BUFFERED_CHARS 4096
+#define PATH_BUFFER_SIZE 4096
 
-static bool should_reload_binary(void)
-{
-  return pstate->should_reload_binary();
-}
+/* --- Helper Macros --- */
 
 #ifdef __APPLE__
-# define st_time(a) st_##a##timespec
+#define st_time(a) st_##a##timespec
 #else
-# define st_time(a) st_##a##tim
+#define st_time(a) st_##a##tim
 #endif
 
-static bool is_more_recent(uint64_t *time, char *candidate)
+/* --- UI State Definitions --- */
+
+enum ui_mouse_status
 {
-  struct stat st;
-  if (stat(candidate, &st) == 0 && st.st_time(c).tv_sec > *time)
-  {
-    *time = st.st_time(c).tv_sec;
-    return 1;
-  }
-  return 0;
-}
-
-static void set_more_recent(uint64_t *time, char **result, char *candidate)
-{
-  if (is_more_recent(time, candidate))
-    *result = candidate;
-}
-
-static void find_engine(char engine_path[4096], const char *exec_path)
-{
-  strcpy(engine_path, exec_path);
-  char *basename = NULL;
-  for (int i = 0; i < 4096 && engine_path[i]; ++i)
-    if (engine_path[i] == '/')
-      basename = engine_path + i + 1;
-  uint64_t time = 0;
-  if (basename)
-  {
-    strcpy(basename, "texpresso-xetex");
-    if (!is_more_recent(&time, engine_path))
-      strcpy(engine_path, "texpresso-xetex");
-  }
-}
-
-/* UI state */
-
-enum ui_mouse_status {
   UI_MOUSE_NONE,
   UI_MOUSE_SELECT,
   UI_MOUSE_MOVE,
 };
 
-typedef struct {
+typedef struct
+{
   txp_engine *eng;
   txp_renderer *doc_renderer;
   SDL_Renderer *sdl_renderer;
   SDL_Window *window;
 
   int page;
-  int need_synctex;
   int zoom;
+  bool need_synctex;
 
   // Mouse input state
   int last_mouse_x, last_mouse_y;
@@ -116,11 +85,88 @@ typedef struct {
   bool advancing;
 } ui_state;
 
-/* UI rendering */
+/* --- Delayed Change Buffer --- */
+
+static struct
+{
+  char buffer[MAX_BUFFERED_CHARS];
+  int cursor;
+  struct editor_change op[MAX_BUFFERED_OPS];
+  int count;
+} delayed_changes = {0};
+
+/* --- Forward Declarations --- */
+
+static bool should_reload_binary(void);
+static void handle_sdl_event(SDL_Event *e,
+                             ui_state *ui,
+                             struct persistent_state *ps);
+static bool update_pan(fz_context *ctx,
+                       ui_state *ui,
+                       int dx,
+                       int dy,
+                       float scale_x,
+                       float scale_y);
+static void interpret_command(struct persistent_state *ps,
+                              ui_state *ui,
+                              vstack *stack,
+                              val command);
+
+/* --- Utility Functions --- */
+
+static bool is_more_recent(uint64_t *time, char *candidate)
+{
+  struct stat st;
+  if (stat(candidate, &st) == 0 && st.st_time(c).tv_sec > *time)
+  {
+    *time = st.st_time(c).tv_sec;
+    return true;
+  }
+  return false;
+}
+
+static void find_engine(char engine_path[PATH_BUFFER_SIZE],
+                        const char *exec_path)
+{
+  strncpy(engine_path, exec_path, PATH_BUFFER_SIZE - 1);
+  engine_path[PATH_BUFFER_SIZE - 1] = '\0';
+
+  char *basename = NULL;
+  for (int i = 0; i < PATH_BUFFER_SIZE && engine_path[i]; ++i)
+  {
+    if (engine_path[i] == '/')
+      basename = engine_path + i + 1;
+  }
+
+  uint64_t time = 0;
+  if (basename)
+  {
+    strcpy(basename, DEFAULT_ENGINE_NAME);
+    if (!is_more_recent(&time, engine_path))
+    {
+      strcpy(engine_path, DEFAULT_ENGINE_NAME);
+    }
+  }
+}
 
 static float zoom_factor(int count)
 {
   return expf((float)count / 5000.0f);
+}
+
+static fz_point get_scale_factor(SDL_Window *window)
+{
+  int ww, wh, pw, ph;
+  SDL_GetWindowSize(window, &ww, &wh);
+
+#if SDL_VERSION_ATLEAST(2, 0, 26)
+  SDL_GetWindowSizeInPixels(window, &pw, &ph);
+#else
+  SDL_GetRendererOutputSize(SDL_GetRenderer(window), &pw, &ph);
+#endif
+
+  return fz_make_point(ww != 0 ? (float)pw / ww : 1,
+                       wh != 0 ? (float)ph / wh : 1);
 }
 
 static void render(fz_context *ctx, ui_state *ui)
@@ -149,7 +195,7 @@ static int repaint_on_resize(void *data, SDL_Event *event)
   return 0;
 }
 
-/* Document processing */
+/* --- Engine & Document Logic --- */
 
 static bool need_advance(fz_context *ctx, ui_state *ui)
 {
@@ -159,9 +205,8 @@ static bool need_advance(fz_context *ctx, ui_state *ui)
   {
     fz_buffer *buf;
     synctex_t *stx = send(synctex, ui->eng, &buf);
-    need =
-      (ui->need_synctex && synctex_page_count(stx) <= ui->page) ||
-      synctex_has_target(stx);
+    need = (ui->need_synctex && synctex_page_count(stx) <= ui->page) ||
+           synctex_has_target(stx);
   }
 
   return (need && send(get_status, ui->eng) == DOC_RUNNING);
@@ -172,6 +217,7 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
   bool need = need_advance(ctx, ui);
   if (!need && ui->advancing)
     editor_flush();
+
   ui->advancing = need;
   if (!need)
     return false;
@@ -179,7 +225,7 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
   struct timespec start;
   clock_gettime(CLOCK_MONOTONIC, &start);
 
-  int steps = 10;
+  int steps = ENGINE_STEP_LIMIT;
   while (need)
   {
     if (!send(step, ui->eng, ctx, false))
@@ -190,43 +236,32 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
 
     if (steps == 0)
     {
-      steps = 10;
-
+      steps = ENGINE_STEP_LIMIT;
       struct timespec curr;
       clock_gettime(CLOCK_MONOTONIC, &curr);
 
-      int delta =
-        (curr.tv_sec - start.tv_sec) * 1000 * 1000 * 1000 +
-        (curr.tv_nsec - start.tv_nsec);
+      int delta = (curr.tv_sec - start.tv_sec) * 1000 * 1000 * 1000 +
+                  (curr.tv_nsec - start.tv_nsec);
 
-      if (delta > 5000000)
+      if (delta > ENGINE_TIMEOUT_US)
         break;
     }
   }
   return need;
 }
 
-static fz_point get_scale_factor(SDL_Window *window)
-{
-  int ww, wh, pw, ph;
-  SDL_GetWindowSize(window, &ww, &wh);
+/* --- Input Handling (State Updates) --- */
 
-#if SDL_VERSION_ATLEAST(2, 0, 26)
-  SDL_GetWindowSizeInPixels(window, &pw, &ph);
-#else
-  SDL_GetRendererOutputSize(SDL_GetRenderer(window), &pw, &ph);
-#endif
-
-  return fz_make_point(ww != 0 ? (float)pw / ww : 1,
-                       wh != 0 ? (float)ph / wh : 1);
-}
-
-/* UI events */
-
-static void ui_mouse_down(struct persistent_state *ps, ui_state *ui, int x, int y, bool ctrl)
+static void ui_mouse_down(struct persistent_state *ps,
+                          ui_state *ui,
+                          int x,
+                          int y,
+                          bool ctrl)
 {
   if (ctrl)
+  {
     ui->mouse_status = UI_MOUSE_MOVE;
+  }
   else
   {
     ui->mouse_status = UI_MOUSE_SELECT;
@@ -234,11 +269,11 @@ static void ui_mouse_down(struct persistent_state *ps, ui_state *ui, int x, int 
     fz_point p = fz_make_point(scale.x * x, scale.y * y);
 
     uint32_t ticks = SDL_GetTicks();
+    bool double_click = (ticks - ui->last_click_ticks < 500) &&
+                        (abs(ui->last_mouse_x - x) < 30) &&
+                        (abs(ui->last_mouse_y - y) < 30);
 
-    bool double_click = ticks - ui->last_click_ticks < 500 &&
-                        abs(ui->last_mouse_x - x) < 30 && abs(ui->last_mouse_y - y) < 30;
-
-    bool diff;
+    bool diff = false;
 
     if (double_click)
     {
@@ -254,18 +289,16 @@ static void ui_mouse_down(struct persistent_state *ps, ui_state *ui, int x, int 
       synctex_t *stx = send(synctex, ui->eng, &buf);
       if (stx && buf)
       {
-        fz_point pt = txp_renderer_screen_to_document(ps->ctx, ui->doc_renderer, p);
+        fz_point pt =
+            txp_renderer_screen_to_document(ps->ctx, ui->doc_renderer, p);
         float f = 1 / send(scale_factor, ui->eng);
-        // pt.x -= 72;
-        // pt.y -= 72;
-        fprintf(stderr, "click: (%f,%f) mapped:(%f,%f)\n",
-                pt.x, pt.y, f * pt.x, f * pt.y);
-        synctex_scan(ps->ctx, stx, buf, ps->doc_path, ui->page, f * pt.x, f * pt.y);
+        synctex_scan(ps->ctx, stx, buf, ps->doc_path, ui->page, f * pt.x,
+                     f * pt.y);
       }
     }
 
     if (diff)
-      schedule_event(RENDER_EVENT);
+      ps->schedule_event(RENDER_EVENT);
   }
 
   ui->last_mouse_x = x;
@@ -277,9 +310,11 @@ static void ui_mouse_up(ui_state *ui)
   ui->mouse_status = UI_MOUSE_NONE;
 }
 
-static void ui_mouse_move(fz_context *ctx, ui_state *ui, int x, int y)
+static void ui_mouse_move(struct persistent_state *ps, ui_state *ui, int x, int y)
 {
   fz_point scale = get_scale_factor(ui->window);
+  bool needs_render = false;
+
   switch (ui->mouse_status)
   {
     case UI_MOUSE_NONE:
@@ -288,230 +323,117 @@ static void ui_mouse_move(fz_context *ctx, ui_state *ui, int x, int y)
     case UI_MOUSE_SELECT:
     {
       fz_point p = fz_make_point(scale.x * x, scale.y * y);
-      // fprintf(stderr, "drag sel\n");
-      if (txp_renderer_drag_selection(ctx, ui->doc_renderer, p))
-        schedule_event(RENDER_EVENT);
+      if (txp_renderer_drag_selection(ps->ctx, ui->doc_renderer, p))
+        needs_render = true;
       break;
     }
 
     case UI_MOUSE_MOVE:
     {
-      txp_renderer_config *config = txp_renderer_get_config(ctx, ui->doc_renderer);
-      int dx = x - ui->last_mouse_x;
-      int dy = y - ui->last_mouse_y;
-      if (dx != 0 || dy != 0)
-      {
-        config->pan.x += scale.x * dx;
-        config->pan.y += scale.y * dy;
-        ui->last_mouse_x = x;
-        ui->last_mouse_y = y;
-        schedule_event(RENDER_EVENT);
-      }
+      if (update_pan(ps->ctx, ui, x - ui->last_mouse_x, y - ui->last_mouse_y,
+                     scale.x, scale.y))
+        needs_render = true;
+      ui->last_mouse_x = x;
+      ui->last_mouse_y = y;
       break;
     }
   }
+
+  if (needs_render)
+    ps->schedule_event(RENDER_EVENT);
 }
 
-static void ui_mouse_wheel(fz_context *ctx, ui_state *ui, float dx, float dy, int mousex, int mousey, bool ctrl, int timestamp)
+static bool update_pan(fz_context *ctx,
+                       ui_state *ui,
+                       int dx,
+                       int dy,
+                       float scale_x,
+                       float scale_y)
 {
-  fz_point scale = get_scale_factor(ui->window);
+  if (dx == 0 && dy == 0)
+    return false;
 
+  txp_renderer_config *config =
+      txp_renderer_get_config(ctx, ui->doc_renderer);
+  config->pan.x += scale_x * dx;
+  config->pan.y += scale_y * dy;
+  return true;
+}
+
+static void ui_mouse_wheel(struct persistent_state *ps,
+                           ui_state *ui,
+                           float dx,
+                           float dy,
+                           int mousex,
+                           int mousey,
+                           bool ctrl)
+{
   if (ui->mouse_status != UI_MOUSE_NONE)
     return;
 
-  txp_renderer_config *config = txp_renderer_get_config(ctx, ui->doc_renderer);
+  txp_renderer_config *config = txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+  bool needs_render = false;
+  fz_point scale = get_scale_factor(ui->window);
 
   if (ctrl)
   {
     SDL_FRect rect;
-    if (dy != 0 && txp_renderer_page_position(ctx, ui->doc_renderer, &rect, NULL, NULL))
+    if (dy != 0 &&
+        txp_renderer_page_position(ps->ctx, ui->doc_renderer, &rect, NULL, NULL))
     {
       ui->zoom = fz_maxi(ui->zoom + dy * 100, 0);
       int ww, wh;
       SDL_GetWindowSize(ui->window, &ww, &wh);
+
       float mx = (mousex - ww / 2.0f) * scale.x;
       float my = (mousey - wh / 2.0f) * scale.y;
-      float of = config->zoom, nf = zoom_factor(ui->zoom);
-      config->pan.x = mx + nf * ((config->pan.x - mx) / of);
-      config->pan.y = my + nf * ((config->pan.y - my) / of);
-      config->zoom = nf;
-      schedule_event(RENDER_EVENT);
+
+      float zf = zoom_factor(ui->zoom);
+      float effective_zoom = zf / config->zoom;
+
+      config->pan.x = mx + effective_zoom * (config->pan.x - mx);
+      config->pan.y = my + effective_zoom * (config->pan.y - my);
+      config->zoom = zf;
+      needs_render = true;
     }
   }
   else
   {
-    (void)timestamp;
-    float x = scale.x * dx * 5;
-    float y = scale.y * dy * 5;
-    config->pan.x -= x;
-    config->pan.y += y;
-    // fprintf(stderr, "wheel pan: (%.02f, %.02f) raw:(%.02f, %.02f)\n", x, y, dx, dy);
-    schedule_event(RENDER_EVENT);
-  }
-}
-
-/* Stdin polling */
-
-static int SDLCALL poll_stdin_thread_main(void *data)
-{
-  int *pipes = data;
-  char c;
-  int n;
-
-  while (1)
-  {
-    n = read(pipes[0], &c, 1);
-    if (n == -1)
+    float x = scale.x * dx * 5, y = scale.y * dy * 5;
+    if (update_pan(ps->ctx, ui, (int)(x * 100), (int)(y * 100), 0.01f, 0.01f))
     {
-      if (errno == EINTR)
-        continue;
-      return 1;
-    }
-
-    if (n == 0)
-      return 1;
-
-    if (c == 'q')
-      return 0;
-
-    if (c != 'c')
-      abort();
-
-    struct pollfd fds[2];
-    fds[0].fd = STDIN_FILENO;
-    fds[0].events = POLLRDNORM;
-    fds[0].revents = 0;
-    fds[1].fd = pipes[0];
-    fds[1].events = POLLRDNORM;
-    fds[1].revents = 0;
-
-    while (1)
-    {
-      n = poll(fds, 2, -1);
-      if (n == -1)
-      {
-        if (errno == EINTR)
-          continue;
-        return 1;
-      }
-      if ((fds[0].revents & POLLRDNORM) != 0)
-        schedule_event(STDIN_EVENT);
-      break;
+      // Note: update_pan uses scale, here we pre-calculated.
+      // Simplified: just update config directly for wheel
+      config->pan.x -= x;
+      config->pan.y += y;
+      needs_render = true;
     }
   }
+
+  if (needs_render)
+    ps->schedule_event(RENDER_EVENT);
 }
 
-static bool poll_stdin(void)
-{
-  struct pollfd fd;
-  fd.fd = STDIN_FILENO;
-  fd.events = POLLRDNORM;
-  fd.revents = 0;
-  return (poll(&fd, 1, 0) == 1) && ((fd.revents & POLLRDNORM) != 0);
-}
+/* --- Path Utilities --- */
 
-static void wakeup_poll_thread(int poll_stdin_pipe[2], char c)
-{
-  while (1)
-  {
-    int n = write(poll_stdin_pipe[1], &c, 1);
-    if (n == 1)
-      break;
-    if (n == -1 && errno == EINTR)
-      continue;
-    perror("write(poll_stdin_pipe, _, _)");
-    break;
-  }
-}
-
-/* Command interpreter */
-
-enum pan_to { PAN_TO_TOP, PAN_TO_BOTTOM };
-static void pan_to(fz_context *ctx, ui_state *ui, enum pan_to to)
-{
-  txp_renderer_config *config = txp_renderer_get_config(ctx, ui->doc_renderer);
-  txp_renderer_bounds bounds;
-  if (txp_renderer_page_bounds(ctx, ui->doc_renderer, &bounds))
-    config->pan.y = (to == PAN_TO_TOP) ? bounds.pan_interval.y : -bounds.pan_interval.y;
-  // a helper function for other UI actions, so no event scheduled
-}
-
-static void previous_page(fz_context *ctx, ui_state *ui, bool pan)
-{
-  synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
-  if (ui->page > 0)
-  {
-    ui->page -= 1;
-
-    int page_count = send(page_count, ui->eng);
-    if (page_count > 0 && ui->page >= page_count &&
-        send(get_status, ui->eng) == DOC_TERMINATED)
-      ui->page = page_count - 1;
-
-    // FIXME: technically, this is slightly incorrect.
-    // The new page has not been loaded yet, so we compute the coordinate with
-    // respect to the page currently displayed. Most of the time, pages have the
-    // same dimension, so this is fine.
-    if (pan)
-      pan_to(ctx, ui, PAN_TO_BOTTOM);
-
-    schedule_event(RELOAD_EVENT);
-  }
-}
-
-static void next_page(fz_context *ctx, ui_state *ui, bool pan)
-{
-  synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
-  ui->page += 1;
-  // FIXME: Same remark as in previous_page.
-  if (pan)
-    pan_to(ctx, ui, PAN_TO_TOP);
-  schedule_event(RELOAD_EVENT);
-}
-
-static void ui_pan(fz_context *ctx, ui_state *ui, float factor)
-{
-  fz_point scale = get_scale_factor(ui->window);
-
-  txp_renderer_config *config = txp_renderer_get_config(ctx, ui->doc_renderer);
-
-  txp_renderer_bounds bounds;
-  if (!txp_renderer_page_bounds(ctx, ui->doc_renderer, &bounds))
-    return;
-
-  float delta = bounds.window_size.y * scale.y * factor;
-  float range = bounds.pan_interval.y < 0 ? 0 : bounds.pan_interval.y;
-
-  //fprintf(stderr, "ui_pan: factor:%.02f delta:%.02f current:%.02f range:%.02f\n",
-  //        factor, delta, config->pan.y, range);
-
-  if (config->pan.y == -range && factor < 0)
-  {
-    next_page(ctx, ui, 1);
-    return;
-  }
-
-  if (config->pan.y == range && factor > 0)
-  {
-    previous_page(ctx, ui, 1);
-    return;
-  }
-
-  config->pan.y += delta;
-  schedule_event(RENDER_EVENT);
-}
-
+/*
+ * Calculates the relative path of 'path' with respect to 'dir'.
+ * Returns the relative string and sets *go_up to the number of "../" needed.
+ * If the path is outside the directory tree, go_up > 0.
+ */
 static const char *relative_path(const char *path, const char *dir, int *go_up)
 {
   const char *rel_path = path, *dir_path = dir;
 
-  // Skip common parts
+  // 1. Skip common parts
   while (*rel_path && *rel_path == *dir_path)
   {
     if (*rel_path == '/')
     {
-      while (*rel_path == '/') rel_path += 1;
-      while (*dir_path == '/') dir_path += 1;
+      while (*rel_path == '/')
+        rel_path += 1;
+      while (*dir_path == '/')
+        dir_path += 1;
     }
     else
     {
@@ -520,7 +442,7 @@ static const char *relative_path(const char *path, const char *dir, int *go_up)
     }
   }
 
-  // Go back to last directory separator
+  // 2. Go back to last directory separator
   if (*rel_path && *dir_path)
   {
     rel_path -= 1;
@@ -532,13 +454,13 @@ static const char *relative_path(const char *path, const char *dir, int *go_up)
     }
     if (*rel_path == '/')
     {
-      if (*dir_path != '/') abort();
+      assert (*dir_path == '/');
       rel_path += 1;
       dir_path += 1;
     }
   }
 
-  // Count number of '../'
+  // 3. Count number of '../' needed to go back to dir root
   *go_up = 0;
   if (*dir_path)
   {
@@ -552,7 +474,9 @@ static const char *relative_path(const char *path, const char *dir, int *go_up)
           dir_path += 1;
       }
       else
+      {
         dir_path += 1;
+      }
     }
   }
 
@@ -566,12 +490,12 @@ static int find_diff(const fz_buffer *buf, const void *data, int size)
 {
   const unsigned char *ptr = data;
   int i, len = fz_mini(buf->len, size);
-  for (i = 0; i < len && buf->data[i] == ptr[i]; ++i);
-  fprintf(stderr, "i:%d len:%d size:%d\n", i, (int)buf->len, size);
+  for (i = 0; i < len && buf->data[i] == ptr[i]; ++i)
+    ;
   return i;
 }
 
-#include "utf_mapping.h"
+/* --- Editor Command Interpretation --- */
 
 static void realize_change(struct persistent_state *ps,
                            ui_state *ui,
@@ -581,7 +505,8 @@ static void realize_change(struct persistent_state *ps,
   const char *path = relative_path(op->path, ps->doc_path, &go_up);
   if (go_up > 0)
   {
-    fprintf(stderr, "[command] change %s: file has a different root, skipping\n", path);
+    fprintf(stderr,
+            "[command] change %s: file has a different root, skipping\n", path);
     return;
   }
 
@@ -603,11 +528,8 @@ static void realize_change(struct persistent_state *ps,
 
   if (op->base == BASE_LINE)
   {
-    // Compute byte offsets from line offsets
     int line = offset, count = remove;
-
     offset = remove = 0;
-
     uint8_t *p = b->data;
     size_t len = b->len;
 
@@ -617,10 +539,11 @@ static void realize_change(struct persistent_state *ps,
         line -= 1;
       offset++;
     }
-
     if (line > 0)
     {
-      fprintf(stderr, "[command] change line %s: invalid line number, skipping\n", path);
+      fprintf(stderr,
+              "[command] change line %s: invalid line number, skipping\n",
+              path);
       return;
     }
 
@@ -631,21 +554,18 @@ static void realize_change(struct persistent_state *ps,
         count -= 1;
       remove++;
     }
-
     if (count > 1)
     {
-      fprintf(stderr, "[command] change line %s: invalid line count, skipping\n", path);
+      fprintf(stderr,
+              "[command] change line %s: invalid line count, skipping\n", path);
       return;
     }
-
     remove -= offset;
   }
   else if (op->base == BASE_RANGE)
   {
-    // Compute byte offsets from line offsets
     int line = op->range.start_line;
     offset = remove = 0;
-
     uint8_t *p = b->data;
     size_t len = b->len;
 
@@ -655,17 +575,21 @@ static void realize_change(struct persistent_state *ps,
         line -= 1;
       offset++;
     }
-
     if (line > 0)
     {
-      fprintf(stderr, "[command] change range %s: invalid start line, skipping\n", path);
+      fprintf(stderr,
+              "[command] change range %s: invalid start line, skipping\n",
+              path);
       return;
     }
 
-    int start_char_offset = utf16_to_utf8_offset(p + offset, p + len, op->range.start_char);
+    int start_char_offset =
+        utf16_to_utf8_offset(p + offset, p + len, op->range.start_char);
     if (start_char_offset == -1)
     {
-      fprintf(stderr, "[command] change range %s: invalid start char, skipping\n", path);
+      fprintf(stderr,
+              "[command] change range %s: invalid start char, skipping\n",
+              path);
       return;
     }
 
@@ -675,7 +599,8 @@ static void realize_change(struct persistent_state *ps,
     line = op->range.end_line - op->range.start_line;
     if (line < 0)
     {
-      fprintf(stderr, "[command] change range %s: invalid end line, skipping\n", path);
+      fprintf(stderr, "[command] change range %s: invalid end line, skipping\n",
+              path);
       return;
     }
 
@@ -685,17 +610,19 @@ static void realize_change(struct persistent_state *ps,
         line -= 1;
       remove++;
     }
-
     if (line > 0)
     {
-      fprintf(stderr, "[command] change range %s: invalid end line, skipping\n", path);
+      fprintf(stderr, "[command] change range %s: invalid end line, skipping\n",
+              path);
       return;
     }
 
-    int end_char_offset = utf16_to_utf8_offset(p + remove, p + len, op->range.end_char);
+    int end_char_offset =
+        utf16_to_utf8_offset(p + remove, p + len, op->range.end_char);
     if (end_char_offset == -1)
     {
-      fprintf(stderr, "[command] change range %s: invalid end char, skipping\n", path);
+      fprintf(stderr, "[command] change range %s: invalid end char, skipping\n",
+              path);
       return;
     }
 
@@ -714,27 +641,13 @@ static void realize_change(struct persistent_state *ps,
 
   memmove(b->data + offset + length, b->data + offset + remove,
           b->len - offset - remove);
-
   b->len = b->len - remove + length;
-
   memmove(b->data + offset, op->data, length);
 
-  fprintf(stderr, "[command] change %s: changed offset %d\n", path, offset);
   send(notify_file_changes, ui->eng, ps->ctx, e, offset);
 }
 
-#define BUFFERED_OPS 64
-#define BUFFERED_CHARS 4096
-
-struct {
-  char buffer[BUFFERED_CHARS];
-  int cursor;
-  struct editor_change op[BUFFERED_OPS];
-  int count;
-} delayed_changes = {0,};
-
-static void flush_changes(struct persistent_state *ps,
-                          ui_state *ui)
+static void flush_changes(struct persistent_state *ps, ui_state *ui)
 {
   int count = delayed_changes.count;
   if (count)
@@ -759,8 +672,8 @@ static void interpret_change(struct persistent_state *ps,
 
   if ((page_count == ui->page - 2 || page_count == ui->page - 1) &&
       send(get_status, ui->eng) == DOC_RUNNING &&
-      delayed_changes.count < BUFFERED_OPS &&
-      cursor + plen + 1 + op->length <= BUFFERED_CHARS)
+      delayed_changes.count < MAX_BUFFERED_OPS &&
+      cursor + plen + 1 + op->length <= MAX_BUFFERED_CHARS)
   {
     char *op_path = delayed_changes.buffer + cursor;
     memcpy(op_path, op->path, plen + 1);
@@ -792,7 +705,8 @@ static void interpret_open(struct persistent_state *ps,
   path = relative_path(path, ps->doc_path, &go_up);
   if (go_up > 0)
   {
-    fprintf(stderr, "[command] open %s: file has a different root, skipping\n", path);
+    fprintf(stderr, "[command] open %s: file has a different root, skipping\n",
+            path);
     return;
   }
 
@@ -804,12 +718,10 @@ static void interpret_open(struct persistent_state *ps,
   }
 
   flush_changes(ps, ui);
-
   int changed = -1;
 
   if (e->edit_data)
   {
-    fprintf(stderr, "[command] open %s: known file, updating\n", path);
     changed = find_diff(e->edit_data, data, size);
     if (e->edit_data->cap < size)
       fz_resize_buffer(ps->ctx, e->edit_data, size + 128);
@@ -818,7 +730,6 @@ static void interpret_open(struct persistent_state *ps,
   }
   else
   {
-    fprintf(stderr, "[command] open %s: new file\n", path);
     e->edit_data = fz_new_buffer_from_copied_data(ps->ctx, data, size);
     if (e->fs_data)
       changed = find_diff(e->fs_data, data, size);
@@ -827,10 +738,7 @@ static void interpret_open(struct persistent_state *ps,
   }
 
   if (changed >= 0)
-  {
-    fprintf(stderr, "[command] open %s: changed offset is %d\n", path, changed);
     send(notify_file_changes, ui->eng, ps->ctx, e, changed);
-  }
 }
 
 static void interpret_close(struct persistent_state *ps,
@@ -841,7 +749,8 @@ static void interpret_close(struct persistent_state *ps,
   path = relative_path(path, ps->doc_path, &go_up);
   if (go_up > 0)
   {
-    fprintf(stderr, "[command] close %s: file has a different root, skipping\n", path);
+    fprintf(stderr, "[command] close %s: file has a different root, skipping\n",
+            path);
     return;
   }
 
@@ -859,28 +768,20 @@ static void interpret_close(struct persistent_state *ps,
   }
 
   flush_changes(ps, ui);
-
   int changed = 0;
-
   if (e->fs_data)
     changed = find_diff(e->fs_data, e->edit_data->data, e->edit_data->len);
 
   fz_drop_buffer(ps->ctx, e->edit_data);
   e->edit_data = NULL;
-
-  fprintf(stderr, "[command] close %s: closing, changed offset %d\n", path,
-          changed);
-
   send(notify_file_changes, ui->eng, ps->ctx, e, changed);
 }
 
 static uint32_t convert_color(fz_context *ctx, vstack *stack, float frgb[3])
 {
   uint8_t rgb[3];
-
   for (int i = 0; i < 3; ++i)
     rgb[i] = fz_clampi(frgb[i] * 255.0, 0, 255) & 0xFF;
-
   return (rgb[0] << 16) | (rgb[1] << 8) | (rgb[2]);
 }
 
@@ -889,20 +790,84 @@ static void display_page(struct persistent_state *ps, ui_state *ui)
   fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
   txp_renderer_set_contents(ps->ctx, ui->doc_renderer, dl);
   fz_drop_display_list(ps->ctx, dl);
-  schedule_event(RENDER_EVENT);
+  ps->schedule_event(RENDER_EVENT);
 }
 
 #if !SDL_VERSION_ATLEAST(2, 0, 16)
-static void
-SDL_SetWindowAlwaysOnTop(SDL_Window *window, SDL_bool state)
+static void SDL_SetWindowAlwaysOnTop(SDL_Window *window, SDL_bool state)
 {
   (void)window;
   (void)state;
-  fprintf(stderr, "[info] stay-on-top feature is not available with "
-                  "SDL older than 2.16.0\n");
+  fprintf(stderr,
+          "[info] stay-on-top feature is not available with SDL older than "
+          "2.16.0\n");
 }
 #endif
 
+enum pan_to { PAN_TO_TOP, PAN_TO_BOTTOM };
+
+static void pan_to(fz_context *ctx, ui_state *ui, enum pan_to to)
+{
+  txp_renderer_config *config = txp_renderer_get_config(ctx, ui->doc_renderer);
+  txp_renderer_bounds bounds;
+  if (txp_renderer_page_bounds(ctx, ui->doc_renderer, &bounds))
+    config->pan.y =
+        (to == PAN_TO_TOP) ? bounds.pan_interval.y : -bounds.pan_interval.y;
+}
+
+static void previous_page(struct persistent_state *ps, ui_state *ui, bool pan)
+{
+  synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
+  if (ui->page > 0)
+  {
+    ui->page -= 1;
+    int page_count = send(page_count, ui->eng);
+    if (page_count > 0 && ui->page >= page_count &&
+        send(get_status, ui->eng) == DOC_TERMINATED)
+      ui->page = page_count - 1;
+
+    if (pan)
+      pan_to(ps->ctx, ui, PAN_TO_BOTTOM);
+
+    ps->schedule_event(RELOAD_EVENT);
+  }
+}
+
+static void next_page(struct persistent_state *ps, ui_state *ui, bool pan)
+{
+  synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
+  ui->page += 1;
+  if (pan)
+    pan_to(ps->ctx, ui, PAN_TO_TOP);
+  ps->schedule_event(RELOAD_EVENT);
+}
+
+static void ui_pan(struct persistent_state *ps, ui_state *ui, float factor)
+{
+  fz_point scale = get_scale_factor(ui->window);
+  txp_renderer_config *config = txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+  txp_renderer_bounds bounds;
+
+  if (!txp_renderer_page_bounds(ps->ctx, ui->doc_renderer, &bounds))
+    return;
+
+  float delta = bounds.window_size.y * scale.y * factor;
+  float range = bounds.pan_interval.y < 0 ? 0 : bounds.pan_interval.y;
+
+  if (config->pan.y == -range && factor < 0)
+  {
+    next_page(ps, ui, 1);
+    return;
+  }
+  if (config->pan.y == range && factor > 0)
+  {
+    previous_page(ps, ui, 1);
+    return;
+  }
+
+  config->pan.y += delta;
+  ps->schedule_event(RENDER_EVENT);
+}
 
 static void interpret_command(struct persistent_state *ps,
                               ui_state *ui,
@@ -934,15 +899,12 @@ static void interpret_command(struct persistent_state *ps,
       else
         interpret_open(ps, ui, cmd.open.path, cmd.open.data, cmd.open.length);
       break;
-
     case EDIT_CLOSE:
       interpret_close(ps, ui, cmd.close.path);
       break;
-
     case EDIT_CHANGE:
       interpret_change(ps, ui, &cmd.change);
       break;
-
     case EDIT_THEME:
     {
       txp_renderer_config *config =
@@ -950,91 +912,77 @@ static void interpret_command(struct persistent_state *ps,
       config->background_color = convert_color(ps->ctx, stack, cmd.theme.bg);
       config->foreground_color = convert_color(ps->ctx, stack, cmd.theme.fg);
       config->themed_color = 1;
-      schedule_event(RENDER_EVENT);
-      fprintf(stderr, "[command] theme %x %x\n",
-              config->background_color, config->foreground_color);
+      ps->schedule_event(RENDER_EVENT);
     }
     break;
-
     case EDIT_PREVIOUS_PAGE:
-      previous_page(ps->ctx, ui, 0);
+      previous_page(ps, ui, 0);
       break;
-
     case EDIT_NEXT_PAGE:
-      next_page(ps->ctx, ui, 0);
+      next_page(ps, ui, 0);
       break;
-
     case EDIT_MOVE_WINDOW:
     {
-      float x = cmd.move_window.x, y = cmd.move_window.y,
-            w = cmd.move_window.w, h = cmd.move_window.h;
+      float x = cmd.move_window.x, y = cmd.move_window.y, w = cmd.move_window.w,
+            h = cmd.move_window.h;
       int x0 = x, y0 = y;
       SDL_SetWindowPosition(ui->window, x, y);
       SDL_GetWindowPosition(ui->window, &x0, &y0);
       SDL_SetWindowSize(ui->window, w + x - x0, h + y - y0);
-      fprintf(stderr, "[command] move-window %f %f %f %f (pos: %d %d)\n",
-              x, y, w, h, x0, y0);
     }
     break;
-
     case EDIT_MAP_WINDOW:
     {
-      float x = cmd.move_window.x, y = cmd.move_window.y,
-            w = cmd.move_window.w, h = cmd.move_window.h;
+      float x = cmd.move_window.x, y = cmd.move_window.y, w = cmd.move_window.w,
+            h = cmd.move_window.h;
       int x0 = x, y0 = y;
       SDL_SetWindowBordered(ui->window, SDL_FALSE);
       SDL_SetWindowAlwaysOnTop(ui->window, SDL_TRUE);
       SDL_SetWindowPosition(ui->window, x, y);
       SDL_GetWindowPosition(ui->window, &x0, &y0);
       SDL_SetWindowSize(ui->window, w + x - x0, h + y - y0);
-      fprintf(stderr, "[command] map-window %f %f %f %f (pos: %d %d)\n",
-              x, y, w, h, x0, y0);
     }
     break;
-
     case EDIT_UNMAP_WINDOW:
     {
       if (!(SDL_GetWindowFlags(ui->window) & SDL_WINDOW_INPUT_FOCUS))
         SDL_SetWindowBordered(ui->window, SDL_TRUE);
       SDL_SetWindowAlwaysOnTop(ui->window, SDL_FALSE);
-      fprintf(stderr, "[command] unmap-window\n");
     }
-
+    break;
     case EDIT_RESCAN:
-      schedule_event(SCAN_EVENT);
+      ps->schedule_event(SCAN_EVENT);
       break;
-
     case EDIT_STAY_ON_TOP:
       SDL_SetWindowAlwaysOnTop(ui->window, cmd.stay_on_top.status);
-      fprintf(stderr, "[command] stay-on-top %d\n", cmd.stay_on_top.status);
       break;
-
     case EDIT_SYNCTEX_FORWARD:
     {
       fz_buffer *buf;
       synctex_t *stx = send(synctex, ui->eng, &buf);
       int go_up = 0;
-      const char *path = relative_path(cmd.synctex_forward.path, ps->doc_path, &go_up);
+      const char *path =
+          relative_path(cmd.synctex_forward.path, ps->doc_path, &go_up);
       if (go_up > 0)
       {
         fprintf(stderr,
-                "[command] synctex-forward %s: file has a different root, skipping\n",
+                "[command] synctex-forward %s: file has a different root, "
+                "skipping\n",
                 path);
       }
       else
       {
         synctex_set_target(stx, ui->page, path, cmd.synctex_forward.line);
-        schedule_event(STDIN_EVENT);
+        ps->schedule_event(STDIN_EVENT);
       }
     }
     break;
-
     case EDIT_CROP:
     {
       txp_renderer_config *config =
           txp_renderer_get_config(ps->ctx, ui->doc_renderer);
       config->crop = !config->crop;
-      schedule_event(RENDER_EVENT);
+      ps->schedule_event(RENDER_EVENT);
     }
     break;
     case EDIT_INVERT:
@@ -1042,62 +990,251 @@ static void interpret_command(struct persistent_state *ps,
       txp_renderer_config *config =
           txp_renderer_get_config(ps->ctx, ui->doc_renderer);
       config->invert_color = !config->invert_color;
-      schedule_event(RENDER_EVENT);
+      ps->schedule_event(RENDER_EVENT);
     }
     break;
   }
 }
 
-/* Entry point */
+/* --- Threading & Stdin --- */
+
+struct poll_thread_state
+{
+  int pipes[2];
+  struct persistent_state *ps;
+};
+
+static int SDLCALL poll_thread_main(void *data)
+{
+  struct poll_thread_state *st = data;
+  char c;
+  int n;
+
+  while (1)
+  {
+    n = read(st->pipes[0], &c, 1);
+    if (n == -1)
+    {
+      if (errno == EINTR)
+        continue;
+      return 1;
+    }
+    if (n == 0)
+      return 1;
+    if (c == 'q')
+      return 0;
+    if (c != 'c')
+      abort();
+
+    struct pollfd fds[2];
+    fds[0].fd = STDIN_FILENO;
+    fds[0].events = POLLRDNORM;
+    fds[0].revents = 0;
+    fds[1].fd = st->pipes[0];
+    fds[1].events = POLLRDNORM;
+    fds[1].revents = 0;
+
+    while (1)
+    {
+      n = poll(fds, 2, -1);
+      if (n == -1)
+      {
+        if (errno == EINTR)
+          continue;
+        return 1;
+      }
+      if ((fds[0].revents & POLLRDNORM) != 0)
+        st->ps->schedule_event(STDIN_EVENT);
+      break;
+    }
+  }
+}
+
+static bool poll_stdin(void)
+{
+  struct pollfd fd;
+  fd.fd = STDIN_FILENO;
+  fd.events = POLLRDNORM;
+  fd.revents = 0;
+  return (poll(&fd, 1, 0) == 1) && ((fd.revents & POLLRDNORM) != 0);
+}
+
+static void wakeup_poll_thread(struct poll_thread_state *st, char c)
+{
+  while (1)
+  {
+    int n = write(st->pipes[1], &c, 1);
+    if (n == 1)
+      break;
+    if (n == -1 && errno == EINTR)
+      continue;
+    perror("write(poll_stdin_pipe, _, _)");
+    break;
+  }
+}
+
+/* --- Main Event Handler --- */
+
+static void handle_sdl_event(SDL_Event *e,
+                             ui_state *ui,
+                             struct persistent_state *ps)
+{
+  fz_context *ctx = ps->ctx;
+  switch (e->type)
+  {
+    case SDL_KEYDOWN:
+      switch (e->key.keysym.sym)
+      {
+        case SDLK_LEFT:
+        case SDLK_PAGEUP:
+          previous_page(ps, ui, 0);
+          break;
+        case SDLK_UP:
+          ui_pan(ps, ui, 2.0f / 3.0f);
+          break;
+        case SDLK_DOWN:
+          ui_pan(ps, ui, -2.0f / 3.0f);
+          break;
+        case SDLK_RIGHT:
+        case SDLK_PAGEDOWN:
+          next_page(ps, ui, 0);
+          break;
+        case SDLK_p:
+        {
+          txp_renderer_config *config =
+              txp_renderer_get_config(ctx, ui->doc_renderer);
+          config->fit = (config->fit == FIT_PAGE) ? FIT_WIDTH : FIT_PAGE;
+          ps->schedule_event(RENDER_EVENT);
+        }
+        break;
+        case SDLK_b:
+          SDL_SetWindowBordered(ui->window, !!(SDL_GetWindowFlags(ui->window) &
+                                               SDL_WINDOW_BORDERLESS));
+          break;
+        case SDLK_t:
+          SDL_SetWindowAlwaysOnTop(
+              ui->window,
+              !(SDL_GetWindowFlags(ui->window) & SDL_WINDOW_ALWAYS_ON_TOP));
+          break;
+        case SDLK_c:
+        {
+          txp_renderer_config *config =
+              txp_renderer_get_config(ctx, ui->doc_renderer);
+          config->crop = !config->crop;
+          ps->schedule_event(RENDER_EVENT);
+        }
+        break;
+        case SDLK_i:
+        {
+          txp_renderer_config *config =
+              txp_renderer_get_config(ctx, ui->doc_renderer);
+          if ((SDL_GetModState() & KMOD_SHIFT))
+            config->themed_color = !config->themed_color;
+          else
+            config->invert_color = !config->invert_color;
+          ps->schedule_event(RENDER_EVENT);
+        }
+        break;
+        case SDLK_ESCAPE:
+          SDL_SetWindowFullscreen(ui->window, 0);
+          break;
+        case SDLK_F5:
+          SDL_SetWindowFullscreen(ui->window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+          {
+            txp_renderer_config *config =
+                txp_renderer_get_config(ctx, ui->doc_renderer);
+            config->fit = FIT_PAGE;
+            ps->schedule_event(RENDER_EVENT);
+          }
+          break;
+      }
+      break;
+    case SDL_MOUSEWHEEL:
+    {
+      int mx = 0, my = 0;
+      float px = 0, py = 0;
+#if SDL_VERSION_ATLEAST(2, 0, 260)
+      mx = e->wheel.mouseX;
+      my = e->wheel.mouseY;
+#else
+      SDL_GetMouseState(&mx, &my);
+#endif
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+      px = e->wheel.preciseX;
+      py = e->wheel.preciseY;
+#else
+      px = e->wheel.x;
+      py = e->wheel.y;
+#endif
+      bool ctrl = !!(SDL_GetModState() & KMOD_CTRL);
+      ui_mouse_wheel(ps, ui, px, py, mx, my, ctrl);
+    }
+    break;
+    case SDL_MOUSEBUTTONDOWN:
+      ui_mouse_down(ps, ui, e->button.x, e->button.y,
+                    SDL_GetModState() & KMOD_CTRL);
+      break;
+    case SDL_MOUSEBUTTONUP:
+      ui_mouse_up(ui);
+      break;
+    case SDL_MOUSEMOTION:
+      ui_mouse_move(ps, ui, e->motion.x, e->motion.y);
+      break;
+    case SDL_WINDOWEVENT:
+      switch (e->window.event)
+      {
+        case SDL_WINDOWEVENT_SIZE_CHANGED:
+        case SDL_WINDOWEVENT_RESIZED:
+        case SDL_WINDOWEVENT_EXPOSED:
+          ps->schedule_event(RENDER_EVENT);
+          break;
+      }
+      break;
+  }
+}
+
+/* --- Entry Point --- */
 
 bool texpresso_main(struct persistent_state *ps)
 {
   editor_set_protocol(ps->protocol);
   editor_set_line_output(ps->line_output);
-  pstate = ps;
 
   ui_state raw_ui, *ui = &raw_ui;
-
   ui->window = ps->window;
 
-  bool using_texlive = 0;
-
+  bool using_texlive = false;
   if (ps->use_texlive)
   {
     if (!texlive_available())
     {
-      fprintf(stderr,
-              "[fatal] cannot find kpsewhich command for texlive integration "
-              "(please make sure it is installed and visible in PATH)\n");
-      return 0;
+      fprintf(
+          stderr,
+          "[fatal] cannot find kpsewhich command for texlive integration\n");
+      return false;
     }
-    using_texlive = 1;
+    using_texlive = true;
   }
   else if (ps->use_tectonic)
   {
     if (!tectonic_available())
     {
-      fprintf(stderr,
-              "[fatal] cannot find tectonic "
-              "(please make sure it is installed and visible in PATH)\n");
-      return 0;
+      fprintf(stderr, "[fatal] cannot find tectonic\n");
+      return false;
     }
   }
   else if (!(using_texlive = texlive_available()) && !tectonic_available())
   {
-    fprintf(stderr,
-            "[fatal] cannot find tectonic nor kpsewhich (texlive)"
-            "(please make sure at least one of them is installed and visible in PATH)\n");
-    return 0;
+    fprintf(stderr, "[fatal] cannot find tectonic nor kpsewhich (texlive)\n");
+    return false;
   }
 
   const char *doc_ext = NULL;
-
   for (const char *ptr = ps->doc_name; *ptr; ptr++)
     if (*ptr == '.')
       doc_ext = ptr + 1;
 
-  char engine_path[4096];
+  char engine_path[PATH_BUFFER_SIZE];
   find_engine(engine_path, ps->exe_path);
   fprintf(stderr, "[info] engine path: %s\n", engine_path);
 
@@ -1144,29 +1281,30 @@ bool texpresso_main(struct persistent_state *ps)
   ui->last_mouse_y = -1000;
   ui->last_click_ticks = SDL_GetTicks() - 200000000;
 
-  bool quit = 0, reload = 0;
-  send(step, ui->eng, ps->ctx, true);
-  render(ps->ctx, ui);
-  schedule_event(RELOAD_EVENT);
+  bool quit = false, reload = false, stdin_eof = false;
+  fz_context *ctx = ps->ctx;
 
-  struct repaint_on_resize_env repaint_on_resize_env = {.ctx = ps->ctx, .ui = ui};
-  SDL_AddEventWatch(repaint_on_resize, &repaint_on_resize_env);
+  send(step, ui->eng, ctx, true);
+  render(ctx, ui);
+  ps->schedule_event(RELOAD_EVENT);
 
-  vstack *cmd_stack = vstack_new(ps->ctx);
+  struct repaint_on_resize_env repaint_env = {.ctx = ctx, .ui = ui};
+  SDL_AddEventWatch(repaint_on_resize, &repaint_env);
+
+  vstack *cmd_stack = vstack_new(ctx);
   prot_parser cmd_parser;
   prot_initialize(&cmd_parser, (ps->protocol == EDITOR_JSON));
 
-  // Start watching stdin
-  int poll_stdin_pipe[2];
-  if (pipe(poll_stdin_pipe) == -1)
+  struct poll_thread_state poll_state;
+  poll_state.ps = ps;
+  if (pipe(poll_state.pipes) == -1)
   {
     perror("pipe");
     abort();
   }
 
-  SDL_Thread *poll_stdin_thread =
-    SDL_CreateThread(poll_stdin_thread_main, "poll_stdin_thread", poll_stdin_pipe);
-  bool stdin_eof = 0;
+  SDL_Thread *poll_thread =
+      SDL_CreateThread(poll_thread_main, "poll_thread", &poll_state);
 
   while (!quit)
   {
@@ -1174,10 +1312,11 @@ bool texpresso_main(struct persistent_state *ps)
     bool has_event = SDL_PollEvent(&e);
 
     // Process stdin
-    send(begin_changes, ui->eng, ps->ctx);
+    send(begin_changes, ui->eng, ctx);
     char buffer[4096];
     int n = -1;
-    while (!stdin_eof && poll_stdin() && (n = read(STDIN_FILENO, buffer, 4096)) != 0)
+    while (!stdin_eof && poll_stdin() &&
+           (n = read(STDIN_FILENO, buffer, 4096)) != 0)
     {
       if (n == -1)
       {
@@ -1187,54 +1326,53 @@ bool texpresso_main(struct persistent_state *ps)
         break;
       }
 
-      fprintf(stderr, "stdin: %.*s\n", n, buffer);
-
       const char *ptr = buffer, *lim = buffer + n;
-      fz_try(ps->ctx)
+      fz_try(ctx)
       {
-        while ((ptr = prot_parse(ps->ctx, &cmd_parser, cmd_stack, ptr, lim)))
+        while ((ptr = prot_parse(ctx, &cmd_parser, cmd_stack, ptr, lim)))
         {
-          val cmds = vstack_get_values(ps->ctx, cmd_stack);
-          int n_cmds = val_array_length(ps->ctx, cmd_stack, cmds);
+          val cmds = vstack_get_values(ctx, cmd_stack);
+          int n_cmds = val_array_length(ctx, cmd_stack, cmds);
           for (int i = 0; i < n_cmds; i++)
           {
-            val cmd = val_array_get(ps->ctx, cmd_stack, cmds, i);
+            val cmd = val_array_get(ctx, cmd_stack, cmds, i);
             interpret_command(ps, ui, cmd_stack, cmd);
           }
         }
       }
-      fz_catch(ps->ctx)
+      fz_catch(ctx)
       {
         fprintf(stderr, "error while reading stdin commands: %s\n",
-                fz_caught_message(ps->ctx));
-        vstack_reset(ps->ctx, cmd_stack);
+                fz_caught_message(ctx));
+        vstack_reset(ctx, cmd_stack);
         prot_reinitialize(&cmd_parser);
       }
     }
-    if (n == 0) stdin_eof = 1;
+    if (n == 0)
+      stdin_eof = true;
 
-    if (send(end_changes, ui->eng, ps->ctx))
+    if (send(end_changes, ui->eng, ctx))
     {
-      send(step, ui->eng, ps->ctx, true);
-      schedule_event(RELOAD_EVENT);
+      send(step, ui->eng, ctx, true);
+      ps->schedule_event(RELOAD_EVENT);
     }
 
     // Process document
     {
       int before_page_count = send(page_count, ui->eng);
-      bool advance = advance_engine(ps->ctx, ui);
+      bool advance = advance_engine(ctx, ui);
       int after_page_count = send(page_count, ui->eng);
       fflush(stdout);
 
       if (ui->page >= before_page_count && ui->page < after_page_count)
-        schedule_event(RELOAD_EVENT);
+        ps->schedule_event(RELOAD_EVENT);
 
       if (!has_event)
       {
         if (advance)
           continue;
         if (!stdin_eof)
-          wakeup_poll_thread(poll_stdin_pipe, 'c');
+          wakeup_poll_thread(&poll_state, 'c');
         has_event = SDL_WaitEvent(&e);
         if (!has_event)
         {
@@ -1246,7 +1384,7 @@ bool texpresso_main(struct persistent_state *ps)
       fz_buffer *buf;
       synctex_t *stx = send(synctex, ui->eng, &buf);
       int page = -1, x = -1, y = -1;
-      if (synctex_find_target(ps->ctx, stx, buf, &page, &x, &y))
+      if (synctex_find_target(ctx, stx, buf, &page, &x, &y))
       {
         fprintf(stderr, "[synctex forward] sync: hit page %d, coordinates (%d, %d)\n",
                 page, x, y);
@@ -1257,196 +1395,68 @@ bool texpresso_main(struct persistent_state *ps)
           display_page(ps, ui);
         }
 
-        // FIXME: Scroll to point
         float f = send(scale_factor, ui->eng);
         fz_point p = fz_make_point(f * x, f * y);
-        fz_point pt = txp_renderer_document_to_screen(ps->ctx, ui->doc_renderer, p);
+        fz_point pt = txp_renderer_document_to_screen(ctx, ui->doc_renderer, p);
         fprintf(stderr, "[synctex forward] position on screen: (%.02f, %.02f)\n",
                 pt.x, pt.y);
         int w, h;
-        txp_renderer_screen_size(ps->ctx, ui->doc_renderer, &w, &h);
-        float margin_lo = h / 4.0;
-        float margin_hi = h / 3.0;
+        txp_renderer_screen_size(ctx, ui->doc_renderer, &w, &h);
+        float margin_lo = h / 4.0f;
+        float margin_hi = h / 3.0f;
 
         txp_renderer_config *config =
-            txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-
-        float delta = 0.0;
+            txp_renderer_get_config(ctx, ui->doc_renderer);
+        float delta = 0.0f;
         if (pt.y < margin_lo)
-          delta = - pt.y + margin_hi;
+          delta = -pt.y + margin_hi;
         else if (pt.y >= h - margin_lo)
           delta = h - pt.y - margin_hi;
         fprintf(stderr, "[synctex forward] pan.y = %.02f + %.02f = %.02f\n",
                 config->pan.y, delta, config->pan.y + delta);
         config->pan.y += delta;
-        if (delta != 0.0)
-          schedule_event(RENDER_EVENT);
+        if (delta != 0.0f)
+          ps->schedule_event(RENDER_EVENT);
       }
     }
 
-    txp_renderer_set_scale_factor(ps->ctx, ui->doc_renderer,
+    txp_renderer_set_scale_factor(ctx, ui->doc_renderer,
                                   get_scale_factor(ui->window));
-    txp_renderer_config *config =
-        txp_renderer_get_config(ps->ctx, ui->doc_renderer);
 
-    // Process event
-    switch (e.type)
-    {
-      case SDL_QUIT:
-        quit = 1;
-        break;
-
-      case SDL_KEYDOWN:
-        switch (e.key.keysym.sym)
-        {
-          case SDLK_LEFT:
-          case SDLK_PAGEUP:
-            previous_page(ps->ctx, ui, 0);
-            break;
-
-          case SDLK_UP:
-            ui_pan(ps->ctx, ui, 2.0/3.0);
-            break;
-
-          case SDLK_DOWN:
-            ui_pan(ps->ctx, ui, -2.0/3.0);
-            break;
-
-          case SDLK_RIGHT:
-          case SDLK_PAGEDOWN:
-            next_page(ps->ctx, ui, 0);
-            break;
-
-          case SDLK_p:
-            config->fit = (config->fit == FIT_PAGE) ? FIT_WIDTH : FIT_PAGE;
-            schedule_event(RENDER_EVENT);
-            break;
-
-          case SDLK_b:
-            SDL_SetWindowBordered(
-                ui->window,
-                !!(SDL_GetWindowFlags(ui->window) & SDL_WINDOW_BORDERLESS));
-            break;
-
-          case SDLK_t:
-            SDL_SetWindowAlwaysOnTop(
-                ui->window,
-                !(SDL_GetWindowFlags(ui->window) & SDL_WINDOW_ALWAYS_ON_TOP));
-            break;
-
-          case SDLK_c:
-            config->crop = !config->crop;
-            schedule_event(RENDER_EVENT);
-            break;
-
-          case SDLK_i:
-            if ((SDL_GetModState() & KMOD_SHIFT))
-              config->themed_color = !config->themed_color;
-            else
-              config->invert_color = !config->invert_color;
-            schedule_event(RENDER_EVENT);
-            break;
-
-          case SDLK_ESCAPE:
-            SDL_SetWindowFullscreen(ui->window, 0);
-            break;
-
-          case SDLK_F5:
-            SDL_SetWindowFullscreen(ui->window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-            config->fit = FIT_PAGE;
-            schedule_event(RENDER_EVENT);
-            break;
-
-          // case SDLK_r:
-          //   reload = 1;
-          case SDLK_q:
-            quit = 1;
-            break;
-        }
-        break;
-
-      case SDL_MOUSEWHEEL:
-        {
-           int mx = 0, my = 0;
-           float px = 0, py = 0;
-#if SDL_VERSION_ATLEAST(2, 0, 260)
-           mx = e.wheel.mouseX;
-           my = e.wheel.mouseY;
-#else
-           SDL_GetMouseState(&mx, &my);
-#endif
-#if SDL_VERSION_ATLEAST(2, 0, 18)
-          px = e.wheel.preciseX;
-          py = e.wheel.preciseY;
-#else
-          px = e.wheel.x;
-          py = e.wheel.y;
-#endif
-          bool ctrl = !!(SDL_GetModState() & KMOD_CTRL);
-          ui_mouse_wheel(ps->ctx, ui, px, py, mx, my, ctrl, e.wheel.timestamp);
-        }
-        break;
-
-      case SDL_MOUSEBUTTONDOWN:
-        ui_mouse_down(ps, ui, e.button.x, e.button.y,
-                      SDL_GetModState() & KMOD_CTRL);
-        break;
-
-      case SDL_MOUSEBUTTONUP:
-        ui_mouse_up(ui);
-        break;
-
-      case SDL_MOUSEMOTION:
-        ui_mouse_move(ps->ctx, ui, e.motion.x, e.motion.y);
-        break;
-
-      case SDL_WINDOWEVENT:
-        switch (e.window.event)
-        {
-          case SDL_WINDOWEVENT_SIZE_CHANGED:
-          case SDL_WINDOWEVENT_RESIZED:
-          case SDL_WINDOWEVENT_EXPOSED:
-            schedule_event(RENDER_EVENT);
-            break;
-        }
-        break;
-    }
-
+    // Process Event
     if (e.type == ps->custom_event)
     {
-      int page_count;
       *(char *)e.user.data1 = 0;
       switch (e.user.code)
       {
         case SCAN_EVENT:
-          if (should_reload_binary())
+          if (ps->should_reload_binary())
           {
-            quit = reload = 1;
+            quit = reload = true;
             continue;
           }
-          send(begin_changes, ui->eng, ps->ctx);
+          send(begin_changes, ui->eng, ctx);
           flush_changes(ps, ui);
-          send(detect_changes, ui->eng, ps->ctx);
-          if (send(end_changes, ui->eng, ps->ctx))
+          send(detect_changes, ui->eng, ctx);
+          if (send(end_changes, ui->eng, ctx))
           {
-            send(step, ui->eng, ps->ctx, true);
-            schedule_event(RELOAD_EVENT);
+            send(step, ui->eng, ctx, true);
+            ps->schedule_event(RELOAD_EVENT);
           }
           break;
-
         case RENDER_EVENT:
-          render(ps->ctx, ui);
-          send(begin_changes, ui->eng, ps->ctx);
+          render(ctx, ui);
+          send(begin_changes, ui->eng, ctx);
           flush_changes(ps, ui);
-          if (send(end_changes, ui->eng, ps->ctx))
+          if (send(end_changes, ui->eng, ctx))
           {
-            send(step, ui->eng, ps->ctx, true);
-            schedule_event(RELOAD_EVENT);
+            send(step, ui->eng, ctx, true);
+            ps->schedule_event(RELOAD_EVENT);
           }
           break;
-
         case RELOAD_EVENT:
-          page_count = send(page_count, ui->eng);
+        {
+          int page_count = send(page_count, ui->eng);
           if (ui->page >= page_count &&
               send(get_status, ui->eng) == DOC_TERMINATED)
           {
@@ -1455,42 +1465,49 @@ bool texpresso_main(struct persistent_state *ps)
           }
           if (ui->page < page_count)
             display_page(ps, ui);
-          break;
-
+        }
+        break;
         case STDIN_EVENT:
           break;
       }
     }
+    else
+    {
+      handle_sdl_event(&e, ui, ps);
+      if (e.type == SDL_QUIT ||
+          e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_q)
+        quit = true;
+    }
+
     if (ps->initialize_only)
     {
       fprintf(stderr, "[info] Initialize mode: terminating engine process\n");
-      quit = 1;
+      quit = true;
     }
   }
 
-  {
-    int status = 0;
-    wakeup_poll_thread(poll_stdin_pipe, 'q');
-    SDL_WaitThread(poll_stdin_thread, &status);
-    close(poll_stdin_pipe[0]);
-    close(poll_stdin_pipe[1]);
-  }
+  // Cleanup
+  wakeup_poll_thread(&poll_state, 'q');
+  SDL_WaitThread(poll_thread, NULL);
+  close(poll_state.pipes[0]);
+  close(poll_state.pipes[1]);
 
-  SDL_DelEventWatch(repaint_on_resize, &repaint_on_resize_env);
+  SDL_DelEventWatch(repaint_on_resize, &repaint_env);
 
   if (ps->initial.initialized && ps->initial.display_list)
-    fz_drop_display_list(ps->ctx, ps->initial.display_list);
-  ps->initial.initialized = 1;
+    fz_drop_display_list(ctx, ps->initial.display_list);
+
+  ps->initial.initialized = true;
   ps->initial.page = ui->page;
   ps->initial.need_synctex = ui->need_synctex;
   ps->initial.zoom = ui->zoom;
-  ps->initial.config = *txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-  ps->initial.display_list = txp_renderer_get_contents(ps->ctx, ui->doc_renderer);
+  ps->initial.config = *txp_renderer_get_config(ctx, ui->doc_renderer);
+  ps->initial.display_list = txp_renderer_get_contents(ctx, ui->doc_renderer);
   if (ps->initial.display_list)
-    fz_keep_display_list(ps->ctx, ps->initial.display_list);
+    fz_keep_display_list(ctx, ps->initial.display_list);
 
-  txp_renderer_free(ps->ctx, ui->doc_renderer);
-  send(destroy, ui->eng, ps->ctx);
+  txp_renderer_free(ctx, ui->doc_renderer);
+  send(destroy, ui->eng, ctx);
 
   return reload;
 }
