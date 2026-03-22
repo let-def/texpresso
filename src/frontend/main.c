@@ -33,6 +33,7 @@
 #include "driver.h"
 #include "editor.h"
 #include "engine.h"
+#include "fd_poll.h"
 #include "mydvi.h"
 #include "prot_parser.h"
 #include "providers.h"
@@ -73,6 +74,7 @@ typedef struct
   txp_renderer *doc_renderer;
   SDL_Renderer *sdl_renderer;
   SDL_Window *window;
+  fd_poller *fdpoll;
 
   int page;
   int zoom;
@@ -996,60 +998,6 @@ static void interpret_command(struct persistent_state *ps,
   }
 }
 
-/* --- Threading & Stdin --- */
-
-struct poll_thread_state
-{
-  int pipes[2];
-  struct persistent_state *ps;
-};
-
-static int SDLCALL poll_thread_main(void *data)
-{
-  struct poll_thread_state *st = data;
-  char c;
-  int n;
-
-  while (1)
-  {
-    n = read(st->pipes[0], &c, 1);
-    if (n == -1)
-    {
-      if (errno == EINTR)
-        continue;
-      return 1;
-    }
-    if (n == 0)
-      return 1;
-    if (c == 'q')
-      return 0;
-    if (c != 'c')
-      abort();
-
-    struct pollfd fds[2];
-    fds[0].fd = STDIN_FILENO;
-    fds[0].events = POLLRDNORM;
-    fds[0].revents = 0;
-    fds[1].fd = st->pipes[0];
-    fds[1].events = POLLRDNORM;
-    fds[1].revents = 0;
-
-    while (1)
-    {
-      n = poll(fds, 2, -1);
-      if (n == -1)
-      {
-        if (errno == EINTR)
-          continue;
-        return 1;
-      }
-      if ((fds[0].revents & POLLRDNORM) != 0)
-        st->ps->schedule_event(UI_STDIN_EVENT);
-      break;
-    }
-  }
-}
-
 static bool poll_stdin(void)
 {
   struct pollfd fd;
@@ -1057,20 +1005,6 @@ static bool poll_stdin(void)
   fd.events = POLLRDNORM;
   fd.revents = 0;
   return (poll(&fd, 1, 0) == 1) && ((fd.revents & POLLRDNORM) != 0);
-}
-
-static void wakeup_poll_thread(struct poll_thread_state *st, char c)
-{
-  while (1)
-  {
-    int n = write(st->pipes[1], &c, 1);
-    if (n == 1)
-      break;
-    if (n == -1 && errno == EINTR)
-      continue;
-    perror("write(poll_stdin_pipe, _, _)");
-    break;
-  }
 }
 
 /* --- Main Event Handler --- */
@@ -1261,6 +1195,7 @@ bool texpresso_main(struct persistent_state *ps)
 
   if (ps->initial.initialized)
   {
+    SDL_FlushEvents(ps->custom_events, ps->custom_events + CUSTOM_EVENT_COUNT - 1);
     ui->page = ps->initial.page;
     ui->zoom = ps->initial.zoom;
     ui->need_synctex = ps->initial.need_synctex;
@@ -1295,16 +1230,8 @@ bool texpresso_main(struct persistent_state *ps)
   prot_parser cmd_parser;
   prot_initialize(&cmd_parser, (ps->protocol == EDITOR_JSON));
 
-  struct poll_thread_state poll_state;
-  poll_state.ps = ps;
-  if (pipe(poll_state.pipes) == -1)
-  {
-    perror("pipe");
-    abort();
-  }
-
-  SDL_Thread *poll_thread =
-      SDL_CreateThread(poll_thread_main, "poll_thread", &poll_state);
+  fd_poller *poller = fd_poller_new(ps->custom_events + CUSTOM_EVENT_FD);
+  fd_poller_watch(poller, STDIN_FILENO);
 
   while (!quit)
   {
@@ -1372,7 +1299,7 @@ bool texpresso_main(struct persistent_state *ps)
         if (advance)
           continue;
         if (!stdin_eof)
-          wakeup_poll_thread(&poll_state, 'c');
+          fd_poller_watch(poller, STDIN_FILENO);
         has_event = SDL_WaitEvent(&e);
         if (!has_event)
         {
@@ -1471,6 +1398,10 @@ bool texpresso_main(struct persistent_state *ps)
           break;
       }
     }
+    else if (e.type == ps->custom_events + CUSTOM_EVENT_FD)
+    {
+      fprintf(stderr, "data on stdin\n");
+    }
     else
     {
       handle_sdl_event(&e, ui, ps);
@@ -1487,11 +1418,7 @@ bool texpresso_main(struct persistent_state *ps)
   }
 
   // Cleanup
-  wakeup_poll_thread(&poll_state, 'q');
-  SDL_WaitThread(poll_thread, NULL);
-  close(poll_state.pipes[0]);
-  close(poll_state.pipes[1]);
-
+  fd_poller_free(poller);
   SDL_DelEventWatch(repaint_on_resize, &repaint_env);
 
   if (ps->initial.initialized && ps->initial.display_list)
