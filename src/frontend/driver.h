@@ -51,7 +51,6 @@ struct initial_state
 {
   int initialized;
   int page;
-  int need_synctex;
   int zoom;
   txp_renderer_config config;
   fz_display_list *display_list;
