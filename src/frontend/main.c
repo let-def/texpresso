@@ -298,7 +298,7 @@ static void ui_mouse_down(struct persistent_state *ps,
     }
 
     if (diff)
-      ps->schedule_event(RENDER_EVENT);
+      ps->schedule_event(UI_RENDER_EVENT);
   }
 
   ui->last_mouse_x = x;
@@ -340,7 +340,7 @@ static void ui_mouse_move(struct persistent_state *ps, ui_state *ui, int x, int 
   }
 
   if (needs_render)
-    ps->schedule_event(RENDER_EVENT);
+    ps->schedule_event(UI_RENDER_EVENT);
 }
 
 static bool update_pan(fz_context *ctx,
@@ -411,7 +411,7 @@ static void ui_mouse_wheel(struct persistent_state *ps,
   }
 
   if (needs_render)
-    ps->schedule_event(RENDER_EVENT);
+    ps->schedule_event(UI_RENDER_EVENT);
 }
 
 /* --- Path Utilities --- */
@@ -790,7 +790,7 @@ static void display_page(struct persistent_state *ps, ui_state *ui)
   fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
   txp_renderer_set_contents(ps->ctx, ui->doc_renderer, dl);
   fz_drop_display_list(ps->ctx, dl);
-  ps->schedule_event(RENDER_EVENT);
+  ps->schedule_event(UI_RENDER_EVENT);
 }
 
 #if !SDL_VERSION_ATLEAST(2, 0, 16)
@@ -829,7 +829,7 @@ static void previous_page(struct persistent_state *ps, ui_state *ui, bool pan)
     if (pan)
       pan_to(ps->ctx, ui, PAN_TO_BOTTOM);
 
-    ps->schedule_event(RELOAD_EVENT);
+    ps->schedule_event(UI_RELOAD_EVENT);
   }
 }
 
@@ -839,7 +839,7 @@ static void next_page(struct persistent_state *ps, ui_state *ui, bool pan)
   ui->page += 1;
   if (pan)
     pan_to(ps->ctx, ui, PAN_TO_TOP);
-  ps->schedule_event(RELOAD_EVENT);
+  ps->schedule_event(UI_RELOAD_EVENT);
 }
 
 static void ui_pan(struct persistent_state *ps, ui_state *ui, float factor)
@@ -866,7 +866,7 @@ static void ui_pan(struct persistent_state *ps, ui_state *ui, float factor)
   }
 
   config->pan.y += delta;
-  ps->schedule_event(RENDER_EVENT);
+  ps->schedule_event(UI_RENDER_EVENT);
 }
 
 static void interpret_command(struct persistent_state *ps,
@@ -912,7 +912,7 @@ static void interpret_command(struct persistent_state *ps,
       config->background_color = convert_color(ps->ctx, stack, cmd.theme.bg);
       config->foreground_color = convert_color(ps->ctx, stack, cmd.theme.fg);
       config->themed_color = 1;
-      ps->schedule_event(RENDER_EVENT);
+      ps->schedule_event(UI_RENDER_EVENT);
     }
     break;
     case EDIT_PREVIOUS_PAGE:
@@ -951,7 +951,7 @@ static void interpret_command(struct persistent_state *ps,
     }
     break;
     case EDIT_RESCAN:
-      ps->schedule_event(SCAN_EVENT);
+      ps->schedule_event(UI_SCAN_EVENT);
       break;
     case EDIT_STAY_ON_TOP:
       SDL_SetWindowAlwaysOnTop(ui->window, cmd.stay_on_top.status);
@@ -973,7 +973,7 @@ static void interpret_command(struct persistent_state *ps,
       else
       {
         synctex_set_target(stx, ui->page, path, cmd.synctex_forward.line);
-        ps->schedule_event(STDIN_EVENT);
+        ps->schedule_event(UI_STDIN_EVENT);
       }
     }
     break;
@@ -982,7 +982,7 @@ static void interpret_command(struct persistent_state *ps,
       txp_renderer_config *config =
           txp_renderer_get_config(ps->ctx, ui->doc_renderer);
       config->crop = !config->crop;
-      ps->schedule_event(RENDER_EVENT);
+      ps->schedule_event(UI_RENDER_EVENT);
     }
     break;
     case EDIT_INVERT:
@@ -990,7 +990,7 @@ static void interpret_command(struct persistent_state *ps,
       txp_renderer_config *config =
           txp_renderer_get_config(ps->ctx, ui->doc_renderer);
       config->invert_color = !config->invert_color;
-      ps->schedule_event(RENDER_EVENT);
+      ps->schedule_event(UI_RENDER_EVENT);
     }
     break;
   }
@@ -1044,7 +1044,7 @@ static int SDLCALL poll_thread_main(void *data)
         return 1;
       }
       if ((fds[0].revents & POLLRDNORM) != 0)
-        st->ps->schedule_event(STDIN_EVENT);
+        st->ps->schedule_event(UI_STDIN_EVENT);
       break;
     }
   }
@@ -1104,7 +1104,7 @@ static void handle_sdl_event(SDL_Event *e,
           txp_renderer_config *config =
               txp_renderer_get_config(ctx, ui->doc_renderer);
           config->fit = (config->fit == FIT_PAGE) ? FIT_WIDTH : FIT_PAGE;
-          ps->schedule_event(RENDER_EVENT);
+          ps->schedule_event(UI_RENDER_EVENT);
         }
         break;
         case SDLK_b:
@@ -1121,7 +1121,7 @@ static void handle_sdl_event(SDL_Event *e,
           txp_renderer_config *config =
               txp_renderer_get_config(ctx, ui->doc_renderer);
           config->crop = !config->crop;
-          ps->schedule_event(RENDER_EVENT);
+          ps->schedule_event(UI_RENDER_EVENT);
         }
         break;
         case SDLK_i:
@@ -1132,7 +1132,7 @@ static void handle_sdl_event(SDL_Event *e,
             config->themed_color = !config->themed_color;
           else
             config->invert_color = !config->invert_color;
-          ps->schedule_event(RENDER_EVENT);
+          ps->schedule_event(UI_RENDER_EVENT);
         }
         break;
         case SDLK_ESCAPE:
@@ -1144,7 +1144,7 @@ static void handle_sdl_event(SDL_Event *e,
             txp_renderer_config *config =
                 txp_renderer_get_config(ctx, ui->doc_renderer);
             config->fit = FIT_PAGE;
-            ps->schedule_event(RENDER_EVENT);
+            ps->schedule_event(UI_RENDER_EVENT);
           }
           break;
       }
@@ -1186,7 +1186,7 @@ static void handle_sdl_event(SDL_Event *e,
         case SDL_WINDOWEVENT_SIZE_CHANGED:
         case SDL_WINDOWEVENT_RESIZED:
         case SDL_WINDOWEVENT_EXPOSED:
-          ps->schedule_event(RENDER_EVENT);
+          ps->schedule_event(UI_RENDER_EVENT);
           break;
       }
       break;
@@ -1286,7 +1286,7 @@ bool texpresso_main(struct persistent_state *ps)
 
   send(step, ui->eng, ctx, true);
   render(ctx, ui);
-  ps->schedule_event(RELOAD_EVENT);
+  ps->schedule_event(UI_RELOAD_EVENT);
 
   struct repaint_on_resize_env repaint_env = {.ctx = ctx, .ui = ui};
   SDL_AddEventWatch(repaint_on_resize, &repaint_env);
@@ -1354,7 +1354,7 @@ bool texpresso_main(struct persistent_state *ps)
     if (send(end_changes, ui->eng, ctx))
     {
       send(step, ui->eng, ctx, true);
-      ps->schedule_event(RELOAD_EVENT);
+      ps->schedule_event(UI_RELOAD_EVENT);
     }
 
     // Process document
@@ -1365,7 +1365,7 @@ bool texpresso_main(struct persistent_state *ps)
       fflush(stdout);
 
       if (ui->page >= before_page_count && ui->page < after_page_count)
-        ps->schedule_event(RELOAD_EVENT);
+        ps->schedule_event(UI_RELOAD_EVENT);
 
       if (!has_event)
       {
@@ -1416,7 +1416,7 @@ bool texpresso_main(struct persistent_state *ps)
                 config->pan.y, delta, config->pan.y + delta);
         config->pan.y += delta;
         if (delta != 0.0f)
-          ps->schedule_event(RENDER_EVENT);
+          ps->schedule_event(UI_RENDER_EVENT);
       }
     }
 
@@ -1424,12 +1424,12 @@ bool texpresso_main(struct persistent_state *ps)
                                   get_scale_factor(ui->window));
 
     // Process Event
-    if (e.type == ps->custom_event)
+    if (e.type == ps->custom_events + CUSTOM_EVENT_UI)
     {
       *(char *)e.user.data1 = 0;
       switch (e.user.code)
       {
-        case SCAN_EVENT:
+        case UI_SCAN_EVENT:
           if (ps->should_reload_binary())
           {
             quit = reload = true;
@@ -1441,20 +1441,20 @@ bool texpresso_main(struct persistent_state *ps)
           if (send(end_changes, ui->eng, ctx))
           {
             send(step, ui->eng, ctx, true);
-            ps->schedule_event(RELOAD_EVENT);
+            ps->schedule_event(UI_RELOAD_EVENT);
           }
           break;
-        case RENDER_EVENT:
+        case UI_RENDER_EVENT:
           render(ctx, ui);
           send(begin_changes, ui->eng, ctx);
           flush_changes(ps, ui);
           if (send(end_changes, ui->eng, ctx))
           {
             send(step, ui->eng, ctx, true);
-            ps->schedule_event(RELOAD_EVENT);
+            ps->schedule_event(UI_RELOAD_EVENT);
           }
           break;
-        case RELOAD_EVENT:
+        case UI_RELOAD_EVENT:
         {
           int page_count = send(page_count, ui->eng);
           if (ui->page >= page_count &&
@@ -1467,7 +1467,7 @@ bool texpresso_main(struct persistent_state *ps)
             display_page(ps, ui);
         }
         break;
-        case STDIN_EVENT:
+        case UI_STDIN_EVENT:
           break;
       }
     }
