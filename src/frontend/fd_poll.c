@@ -7,11 +7,20 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
+#include <sys/poll.h>
 #include <unistd.h>
 
 /* Configuration */
 #define MAX_WATCHED_FDS 8
+
+#define DEBUG 0
+
+#define dprintf(...)                \
+  do                                \
+  {                                 \
+    if (DEBUG)                      \
+      fprintf(stderr, __VA_ARGS__); \
+  } while (0)
 
 /* Internal State Structure */
 struct fd_poller
@@ -24,7 +33,8 @@ struct fd_poller
   int event_type;
 };
 
-/* Worker Thread Main Function */
+/* Wo#include <sys/poll.h>
+rker Thread Main Function */
 static int SDLCALL poll_thread_main(void *data)
 {
   struct fd_poller *poller = (struct fd_poller *)data;
@@ -46,14 +56,16 @@ static int SDLCALL poll_thread_main(void *data)
 
     /* Add Control Pipe */
     fds[0].fd = control_fd;
-    fds[0].events = POLLIN;
+    fds[0].events = POLLRDNORM;
     fds[0].revents = 0;
 
     /* Add Watched FDs */
+    dprintf("FD_POLL: poll(");
     for (int i = 0; i < poller->fd_count; i++)
     {
+      dprintf("%s%d", i > 0 ? ", " : "", poller->fds[i]);
       fds[i + 1].fd = poller->fds[i];
-      fds[i + 1].events = POLLIN;
+      fds[i + 1].events = POLLRDNORM;
       fds[i + 1].revents = 0;
     }
     dprintf(")\n");
@@ -78,7 +90,7 @@ static int SDLCALL poll_thread_main(void *data)
     poller->fd_count = 0;
     for (int i = 1; i <= fd_count; i++)
     {
-      if (fds[i].revents & POLLIN)
+      if (fds[i].revents & POLLRDNORM)
       {
         /* Generate SDL Event */
         SDL_Event event;
@@ -87,6 +99,8 @@ static int SDLCALL poll_thread_main(void *data)
         event.user.code = fds[i].fd; /* Store FD in code */
         event.user.data1 = NULL;
         event.user.data2 = NULL;
+
+        dprintf("FD_POLL: fd %d is ready\n", int_buf);
 
         if (SDL_PushEvent(&event) < 0)
         {
@@ -105,7 +119,7 @@ static int SDLCALL poll_thread_main(void *data)
        4. Process Control FD (Index 0)
        Read one integer, act on it, and loop again.
     */
-    if (fds[0].revents & POLLIN)
+    if (fds[0].revents & POLLRDNORM)
     {
       n = read(control_fd, &int_buf, sizeof(int));
       if (n == -1)
@@ -145,10 +159,12 @@ static int SDLCALL poll_thread_main(void *data)
 
         if (int_buf == -1)
         {
+          dprintf("FD_POLL: ignoring %d, already watching\n", int_buf);
         }
         else if (poller->fd_count < MAX_WATCHED_FDS)
         {
           poller->fds[poller->fd_count++] = int_buf;
+          dprintf("FD_POLL: watching fd %d\n", int_buf);
         }
         else
         {
@@ -157,6 +173,10 @@ static int SDLCALL poll_thread_main(void *data)
                   MAX_WATCHED_FDS, int_buf);
         }
       }
+    }
+    else
+    {
+      dprintf("FD_POLL: nothing on control fd\n");
     }
 
     /* If we processed control messages or events, we loop back to
@@ -226,6 +246,7 @@ void fd_poller_watch(fd_poller *poller, int fd)
   if (!poller || fd < 0)
     return;
 
+  dprintf("FD_POLL: watch %d\n", fd);
   write_int(poller, fd, __func__);
 }
 
