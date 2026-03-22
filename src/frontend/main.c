@@ -78,7 +78,6 @@ typedef struct
 
   int page;
   int zoom;
-  bool need_synctex;
 
   // Mouse input state
   int last_mouse_x, last_mouse_y;
@@ -197,6 +196,12 @@ static int repaint_on_resize(void *data, SDL_Event *event)
 
 /* --- Engine & Document Logic --- */
 
+// Always compute SyncTeX for now
+static bool need_synctex(void)
+{
+  return true;
+}
+
 static bool need_advance(fz_context *ctx, ui_state *ui)
 {
   int need = send(page_count, ui->eng) <= ui->page;
@@ -205,7 +210,7 @@ static bool need_advance(fz_context *ctx, ui_state *ui)
   {
     fz_buffer *buf;
     synctex_t *stx = send(synctex, ui->eng, &buf);
-    need = (ui->need_synctex && synctex_page_count(stx) <= ui->page) ||
+    need = (need_synctex() && synctex_page_count(stx) <= ui->page) ||
            synctex_has_target(stx);
   }
 
@@ -1261,7 +1266,6 @@ bool texpresso_main(struct persistent_state *ps)
     SDL_FlushEvents(ps->custom_events, ps->custom_events + CUSTOM_EVENT_COUNT - 1);
     ui->page = ps->initial.page;
     ui->zoom = ps->initial.zoom;
-    ui->need_synctex = ps->initial.need_synctex;
     *txp_renderer_get_config(ps->ctx, ui->doc_renderer) = ps->initial.config;
     txp_renderer_set_contents(ps->ctx, ui->doc_renderer,
                               ps->initial.display_list);
@@ -1271,7 +1275,6 @@ bool texpresso_main(struct persistent_state *ps)
   {
     ui->page = 0;
     ui->zoom = 0;
-    ui->need_synctex = 1;
   }
 
   ui->mouse_status = UI_MOUSE_NONE;
@@ -1441,7 +1444,6 @@ bool texpresso_main(struct persistent_state *ps)
 
   ps->initial.initialized = true;
   ps->initial.page = ui->page;
-  ps->initial.need_synctex = ui->need_synctex;
   ps->initial.zoom = ui->zoom;
   ps->initial.config = *txp_renderer_get_config(ctx, ui->doc_renderer);
   ps->initial.display_list = txp_renderer_get_contents(ctx, ui->doc_renderer);
