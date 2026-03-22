@@ -1127,6 +1127,77 @@ static void handle_sdl_event(SDL_Event *e,
   }
 }
 
+struct stdin_state {
+  vstack *cmd_stack;
+  prot_parser cmd_parser;
+  bool eof;
+};
+
+static void stdin_init(fz_context *ctx, struct stdin_state *st, enum editor_protocol protocol)
+{
+  st->cmd_stack = vstack_new(ctx);
+  prot_initialize(&st->cmd_parser, protocol == EDITOR_JSON);
+  st->eof = false;
+}
+
+static void stdin_cleanup(fz_context *ctx, struct stdin_state *st)
+{
+  vstack_free(ctx, st->cmd_stack);
+}
+
+static void stdin_process(struct stdin_state *st,
+                          struct persistent_state *ps,
+                          fd_poller *poller,
+                          ui_state *ui)
+{
+  // Process stdin
+  send(begin_changes, ui->eng, ps->ctx);
+  char buffer[4096];
+  int n = -1;
+  while (!st->eof && poll_stdin() &&
+         (n = read(STDIN_FILENO, buffer, 4096)) != 0)
+  {
+    if (n == -1)
+    {
+      if (errno == EINTR)
+        continue;
+      perror("poll stdin");
+      break;
+    }
+
+    const char *ptr = buffer, *lim = buffer + n;
+    fz_try(ps->ctx)
+    {
+      while ((ptr = prot_parse(ps->ctx, &st->cmd_parser, st->cmd_stack, ptr, lim)))
+      {
+        val cmds = vstack_get_values(ps->ctx, st->cmd_stack);
+        int n_cmds = val_array_length(ps->ctx, st->cmd_stack, cmds);
+        for (int i = 0; i < n_cmds; i++)
+        {
+          val cmd = val_array_get(ps->ctx, st->cmd_stack, cmds, i);
+          interpret_command(ps, ui, st->cmd_stack, cmd);
+        }
+      }
+    }
+    fz_catch(ps->ctx)
+    {
+      fprintf(stderr, "error while reading stdin commands: %s\n",
+              fz_caught_message(ps->ctx));
+      vstack_reset(ps->ctx, st->cmd_stack);
+      prot_reinitialize(&st->cmd_parser);
+    }
+  }
+  if (n == 0)
+    st->eof = true;
+  if (!st->eof)
+    fd_poller_watch(poller, STDIN_FILENO);
+  if (send(end_changes, ui->eng, ps->ctx))
+  {
+    send(step, ui->eng, ps->ctx, true);
+    ps->schedule_event(UI_RELOAD_EVENT);
+  }
+}
+
 /* --- Entry Point --- */
 
 bool texpresso_main(struct persistent_state *ps)
@@ -1226,63 +1297,16 @@ bool texpresso_main(struct persistent_state *ps)
   struct repaint_on_resize_env repaint_env = {.ctx = ctx, .ui = ui};
   SDL_AddEventWatch(repaint_on_resize, &repaint_env);
 
-  vstack *cmd_stack = vstack_new(ctx);
-  prot_parser cmd_parser;
-  prot_initialize(&cmd_parser, (ps->protocol == EDITOR_JSON));
-
   fd_poller *poller = fd_poller_new(ps->custom_events + CUSTOM_EVENT_FD);
   fd_poller_watch(poller, STDIN_FILENO);
+
+  struct stdin_state stdin_st;
+  stdin_init(ctx, &stdin_st, ps->protocol);
 
   while (!quit)
   {
     SDL_Event e;
     bool has_event = SDL_PollEvent(&e);
-
-    // Process stdin
-    send(begin_changes, ui->eng, ctx);
-    char buffer[4096];
-    int n = -1;
-    while (!stdin_eof && poll_stdin() &&
-           (n = read(STDIN_FILENO, buffer, 4096)) != 0)
-    {
-      if (n == -1)
-      {
-        if (errno == EINTR)
-          continue;
-        perror("poll stdin");
-        break;
-      }
-
-      const char *ptr = buffer, *lim = buffer + n;
-      fz_try(ctx)
-      {
-        while ((ptr = prot_parse(ctx, &cmd_parser, cmd_stack, ptr, lim)))
-        {
-          val cmds = vstack_get_values(ctx, cmd_stack);
-          int n_cmds = val_array_length(ctx, cmd_stack, cmds);
-          for (int i = 0; i < n_cmds; i++)
-          {
-            val cmd = val_array_get(ctx, cmd_stack, cmds, i);
-            interpret_command(ps, ui, cmd_stack, cmd);
-          }
-        }
-      }
-      fz_catch(ctx)
-      {
-        fprintf(stderr, "error while reading stdin commands: %s\n",
-                fz_caught_message(ctx));
-        vstack_reset(ctx, cmd_stack);
-        prot_reinitialize(&cmd_parser);
-      }
-    }
-    if (n == 0)
-      stdin_eof = true;
-
-    if (send(end_changes, ui->eng, ctx))
-    {
-      send(step, ui->eng, ctx, true);
-      ps->schedule_event(UI_RELOAD_EVENT);
-    }
 
     // Process document
     {
@@ -1298,8 +1322,6 @@ bool texpresso_main(struct persistent_state *ps)
       {
         if (advance)
           continue;
-        if (!stdin_eof)
-          fd_poller_watch(poller, STDIN_FILENO);
         has_event = SDL_WaitEvent(&e);
         if (!has_event)
         {
@@ -1400,7 +1422,8 @@ bool texpresso_main(struct persistent_state *ps)
     }
     else if (e.type == ps->custom_events + CUSTOM_EVENT_FD)
     {
-      fprintf(stderr, "data on stdin\n");
+      if (e.user.code == STDIN_FILENO)
+        stdin_process(&stdin_st, ps, poller, ui);
     }
     else
     {
@@ -1418,6 +1441,7 @@ bool texpresso_main(struct persistent_state *ps)
   }
 
   // Cleanup
+  stdin_cleanup(ctx, &stdin_st);
   fd_poller_free(poller);
   SDL_DelEventWatch(repaint_on_resize, &repaint_env);
 
