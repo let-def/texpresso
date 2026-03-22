@@ -97,7 +97,7 @@ static bool get_executable_path(char path[PATH_MAX])
   return realpath(exe_path, path);
 }
 
-static bool should_reload_binary(void)
+static bool should_hotload_binary(void)
 {
   return 0;
 }
@@ -333,7 +333,7 @@ int main(int argc, const char **argv)
       .inclusion_path = inclusion_path,
       .custom_events = custom_events,
       .schedule_event = &schedule_event,
-      .should_reload_binary = &should_reload_binary,
+      .should_hotload_binary = &should_hotload_binary,
 
       .line_output = line_output,
       .use_tectonic = use_tectonic,

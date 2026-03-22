@@ -69,7 +69,7 @@ struct persistent_state {
   Uint32 custom_events;
 
   void (*schedule_event)(enum ui_event ev);
-  bool (*should_reload_binary)(void);
+  bool (*should_hotload_binary)(void);
 
   SDL_Window *window;
   SDL_Renderer *renderer;

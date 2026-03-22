@@ -98,7 +98,6 @@ static struct
 
 /* --- Forward Declarations --- */
 
-static bool should_reload_binary(void);
 static void handle_sdl_event(SDL_Event *e,
                              ui_state *ui,
                              struct persistent_state *ps);
@@ -1279,7 +1278,7 @@ bool texpresso_main(struct persistent_state *ps)
   ui->last_mouse_x = -1000;
   ui->last_mouse_y = -1000;
 
-  bool quit = false, reload = false, stdin_eof = false;
+  bool quit = false, hotload = false;
   fz_context *ctx = ps->ctx;
 
   send(step, ui->eng, ctx, true);
@@ -1371,9 +1370,9 @@ bool texpresso_main(struct persistent_state *ps)
       switch (e.user.code)
       {
         case UI_SCAN_EVENT:
-          if (ps->should_reload_binary())
+          if (ps->should_hotload_binary())
           {
-            quit = reload = true;
+            quit = hotload = true;
             continue;
           }
           send(begin_changes, ui->eng, ctx);
@@ -1452,5 +1451,5 @@ bool texpresso_main(struct persistent_state *ps)
   txp_renderer_free(ctx, ui->doc_renderer);
   send(destroy, ui->eng, ctx);
 
-  return reload;
+  return hotload;
 }
