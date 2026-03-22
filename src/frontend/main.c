@@ -82,7 +82,6 @@ typedef struct
 
   // Mouse input state
   int last_mouse_x, last_mouse_y;
-  uint32_t last_click_ticks;
   enum ui_mouse_status mouse_status;
   bool advancing;
 } ui_state;
@@ -258,6 +257,7 @@ static void ui_mouse_down(struct persistent_state *ps,
                           ui_state *ui,
                           int x,
                           int y,
+                          int clicks,
                           bool ctrl)
 {
   if (ctrl)
@@ -269,23 +269,12 @@ static void ui_mouse_down(struct persistent_state *ps,
     ui->mouse_status = UI_MOUSE_SELECT;
     fz_point scale = get_scale_factor(ui->window);
     fz_point p = fz_make_point(scale.x * x, scale.y * y);
-
-    uint32_t ticks = SDL_GetTicks();
-    bool double_click = (ticks - ui->last_click_ticks < 500) &&
-                        (abs(ui->last_mouse_x - x) < 30) &&
-                        (abs(ui->last_mouse_y - y) < 30);
-
     bool diff = false;
 
-    if (double_click)
-    {
-      diff = txp_renderer_select_word(ps->ctx, ui->doc_renderer, p);
-    }
-    else
+    if (clicks == 1)
     {
       diff = txp_renderer_start_selection(ps->ctx, ui->doc_renderer, p);
       diff = txp_renderer_select_char(ps->ctx, ui->doc_renderer, p) || diff;
-      ui->last_click_ticks = ticks;
 
       fz_buffer *buf;
       synctex_t *stx = send(synctex, ui->eng, &buf);
@@ -297,6 +286,10 @@ static void ui_mouse_down(struct persistent_state *ps,
         synctex_scan(ps->ctx, stx, buf, ps->doc_path, ui->page, f * pt.x,
                      f * pt.y);
       }
+    }
+    else if (clicks == 2)
+    {
+      diff = txp_renderer_select_word(ps->ctx, ui->doc_renderer, p);
     }
 
     if (diff)
@@ -1105,7 +1098,7 @@ static void handle_sdl_event(SDL_Event *e,
     }
     break;
     case SDL_MOUSEBUTTONDOWN:
-      ui_mouse_down(ps, ui, e->button.x, e->button.y,
+      ui_mouse_down(ps, ui, e->button.x, e->button.y, e->button.clicks,
                     SDL_GetModState() & KMOD_CTRL);
       break;
     case SDL_MOUSEBUTTONUP:
@@ -1285,7 +1278,6 @@ bool texpresso_main(struct persistent_state *ps)
   ui->mouse_status = UI_MOUSE_NONE;
   ui->last_mouse_x = -1000;
   ui->last_mouse_y = -1000;
-  ui->last_click_ticks = SDL_GetTicks() - 200000000;
 
   bool quit = false, reload = false, stdin_eof = false;
   fz_context *ctx = ps->ctx;
