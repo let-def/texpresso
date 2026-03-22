@@ -317,6 +317,8 @@ standard output. This function interprets one of these."
               (switch-to-buffer buf))
           (message "TeXpresso: unknown file %s" (nth 1 expr)))))
 
+     ((eq tag 'input-file))
+
      (t (message "Unknown message in texpresso output: %S" expr)))))
 
 (defun texpresso--stdout-filter (process text)
