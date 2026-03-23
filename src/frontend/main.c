@@ -76,7 +76,7 @@ typedef struct
   SDL_Window *window;
   fd_poller *fdpoll;
 
-  int page;
+  int current_page;
   int zoom;
 
   // Mouse input state
@@ -284,9 +284,14 @@ static int repaint_on_resize(void *data, SDL_Event *event)
 
 /* --- Engine & Document Logic --- */
 
+static int get_current_page(ui_state *ui)
+{
+  return ui->current_page;
+}
+
 static int get_last_visible_page(ui_state *ui)
 {
-  return ui->page;
+  return ui->current_page;
 }
 
 // Always compute SyncTeX for now
@@ -448,8 +453,8 @@ static void ui_mouse_down(struct persistent_state *ps,
         fz_point pt =
             txp_renderer_screen_to_document(ps->ctx, ui->doc_renderer, p);
         float f = 1 / send(scale_factor, ui->eng);
-        synctex_scan(ps->ctx, stx, buf, ps->doc_path, ui->page, f * pt.x,
-                     f * pt.y);
+        synctex_scan(ps->ctx, stx, buf, ps->doc_path, get_current_page(ui),
+                     f * pt.x, f * pt.y);
       }
     }
     else if (clicks == 2)
@@ -747,9 +752,9 @@ static void interpret_change(struct persistent_state *ps,
 {
   int plen = strlen(op->path);
   int page_count = send(page_count, ui->eng);
+  int current_page = get_current_page(ui);
   int cursor = delayed_changes.cursor;
-
-  if ((page_count == ui->page - 2 || page_count == ui->page - 1) &&
+  if ((page_count == current_page - 2 || page_count == current_page - 1) &&
       send(get_status, ui->eng) == DOC_RUNNING &&
       delayed_changes.count < MAX_BUFFERED_OPS &&
       cursor + plen + 1 + op->length <= MAX_BUFFERED_CHARS)
@@ -866,7 +871,8 @@ static uint32_t convert_color(fz_context *ctx, vstack *stack, float frgb[3])
 
 static void display_page(struct persistent_state *ps, ui_state *ui)
 {
-  fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
+  int current_page = get_current_page(ui);
+  fz_display_list *dl = send(render_page, ui->eng, ps->ctx, current_page);
   txp_renderer_set_contents(ps->ctx, ui->doc_renderer, dl);
   fz_drop_display_list(ps->ctx, dl);
   ps->schedule_event(UI_RENDER_EVENT);
@@ -897,13 +903,13 @@ static void pan_to(fz_context *ctx, ui_state *ui, enum pan_to to)
 static void previous_page(struct persistent_state *ps, ui_state *ui, bool pan)
 {
   synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
-  if (ui->page > 0)
+  if (get_current_page(ui) > 0)
   {
-    ui->page -= 1;
+    ui->current_page -= 1;
     int page_count = send(page_count, ui->eng);
-    if (page_count > 0 && ui->page >= page_count &&
+    if (page_count > 0 && ui->current_page >= page_count &&
         send(get_status, ui->eng) == DOC_TERMINATED)
-      ui->page = page_count - 1;
+      ui->current_page = page_count - 1;
 
     if (pan)
       pan_to(ps->ctx, ui, PAN_TO_BOTTOM);
@@ -915,7 +921,7 @@ static void previous_page(struct persistent_state *ps, ui_state *ui, bool pan)
 static void next_page(struct persistent_state *ps, ui_state *ui, bool pan)
 {
   synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
-  ui->page += 1;
+  ui->current_page += 1;
   if (pan)
     pan_to(ps->ctx, ui, PAN_TO_TOP);
   ps->schedule_event(UI_RELOAD_EVENT);
@@ -1051,7 +1057,7 @@ static void interpret_command(struct persistent_state *ps,
       }
       else
       {
-        synctex_set_target(stx, ui->page, path, cmd.synctex_forward.line);
+        synctex_set_target(stx, get_current_page(ui), path, cmd.synctex_forward.line);
         ps->schedule_event(UI_STDIN_EVENT);
       }
     }
@@ -1340,13 +1346,13 @@ bool texpresso_main(struct persistent_state *ps)
 
   ui->sdl_renderer = ps->renderer;
   ui->doc_renderer = txp_renderer_new(ps->ctx, ui->sdl_renderer);
-  ui->page = 0;
+  ui->current_page = 0;
   ui->zoom = 0;
 
   if (ps->initial.initialized)
   {
     SDL_FlushEvents(ps->custom_events, ps->custom_events + CUSTOM_EVENT_COUNT - 1);
-    ui->page = ps->initial.page;
+    ui->current_page = ps->initial.page;
     ui->zoom = ps->initial.zoom;
     *txp_renderer_get_config(ps->ctx, ui->doc_renderer) = ps->initial.config;
     txp_renderer_set_contents(ps->ctx, ui->doc_renderer,
@@ -1380,13 +1386,17 @@ bool texpresso_main(struct persistent_state *ps)
     bool has_event = SDL_PollEvent(&e);
 
     // Advance document document
-    int before_page_count = send(page_count, ui->eng);
-    bool advance = advance_engine(ctx, ui);
-    int after_page_count = send(page_count, ui->eng);
-    fflush(stdout);
+    bool advance;
+    {
+      int before_page_count = send(page_count, ui->eng);
+      advance = advance_engine(ctx, ui);
+      int after_page_count = send(page_count, ui->eng);
+      fflush(stdout);
 
-    if (ui->page >= before_page_count && ui->page < after_page_count)
-      ps->schedule_event(UI_RELOAD_EVENT);
+      if (ui->current_page >= before_page_count &&
+          ui->current_page < after_page_count)
+        ps->schedule_event(UI_RELOAD_EVENT);
+    }
 
     // Wait for event if needed
     if (!has_event)
@@ -1411,9 +1421,9 @@ bool texpresso_main(struct persistent_state *ps)
               "[synctex forward] sync: hit page %d, coordinates (%d, %d)\n",
               page, x, y);
 
-      if (page != ui->page)
+      if (page != ui->current_page)
       {
-        ui->page = page;
+        ui->current_page = page;
         display_page(ps, ui);
       }
 
@@ -1479,13 +1489,13 @@ bool texpresso_main(struct persistent_state *ps)
         case UI_RELOAD_EVENT:
         {
           int page_count = send(page_count, ui->eng);
-          if (ui->page >= page_count &&
+          if (ui->current_page >= page_count &&
               send(get_status, ui->eng) == DOC_TERMINATED)
           {
             if (page_count > 0)
-              ui->page = page_count - 1;
+              ui->current_page = page_count - 1;
           }
-          if (ui->page < page_count)
+          if (ui->current_page < page_count)
             display_page(ps, ui);
         }
         break;
@@ -1522,7 +1532,7 @@ bool texpresso_main(struct persistent_state *ps)
     fz_drop_display_list(ctx, ps->initial.display_list);
 
   ps->initial.initialized = true;
-  ps->initial.page = ui->page;
+  ps->initial.page = ui->current_page;
   ps->initial.zoom = ui->zoom;
   ps->initial.config = *txp_renderer_get_config(ctx, ui->doc_renderer);
   ps->initial.display_list = txp_renderer_get_contents(ctx, ui->doc_renderer);
