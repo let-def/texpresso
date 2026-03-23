@@ -45,7 +45,7 @@
 /* --- Configuration Constants --- */
 
 #define ENGINE_STEP_LIMIT 10
-#define ENGINE_TIMEOUT_US 5000000
+#define ENGINE_TIMEOUT_NS 5000000
 #define DEFAULT_ENGINE_NAME "texpresso-xetex"
 #define MAX_BUFFERED_OPS 64
 #define MAX_BUFFERED_CHARS 4096
@@ -82,6 +82,9 @@ typedef struct
   // Mouse input state
   int last_mouse_x, last_mouse_y;
   enum ui_mouse_status mouse_status;
+
+  // Internal state of the advance_engine function to detect transitions from
+  // advancing to idle.
   bool advancing;
 } ui_state;
 
@@ -320,41 +323,96 @@ static bool need_advance(fz_context *ctx, ui_state *ui)
   return false;
 }
 
+/**
+ * Advances the document rendering engine for a bounded amount of time.
+ *
+ * This function is designed to be called within the main UI loop. It ensures
+ * that rendering progresses without blocking the UI for too long.
+ * It also handles the transition from "rendering active" to "idle" and triggers
+ * a UI flush to stabilize the display.
+ *
+ * @param ctx The MuPDF context.
+ * @param ui The UI state structure.
+ * @return true if the engine still has work to do (needs another slice), false if idle or done.
+ */
 static bool advance_engine(fz_context *ctx, ui_state *ui)
 {
+  // 1. Determine if we need to render more pages or resolve SyncTeX targets.
+  //    This checks against the last visible page and engine status.
   bool need = need_advance(ctx, ui);
+
+  // 2. Handle State Transition: Rendering -> Idle
+  //    If we were previously advancing (ui->advancing is true) but now we don't
+  //    need to, it means we just finished the current rendering batch. We flush
+  //    the editor state here to ensure the UI displays the complete, stable
+  //    result before we potentially stop rendering or switch to event waiting.
+  //    This prevents visual flickering where the user might see a half-rendered
+  //    page.
   if (!need && ui->advancing)
     editor_flush();
 
+  // 3. Update the internal "advancing" flag to reflect the current requirement.
   ui->advancing = need;
+
+  // 4. Early Exit: If no work is needed, return immediately.
+  //    This allows the caller (UI loop) to switch to an event-waiting mode.
   if (!need)
     return false;
 
+  // 5. Start Time Measurement
+  //    We use CLOCK_MONOTONIC to avoid issues with system clock adjustments.
   struct timespec start;
   clock_gettime(CLOCK_MONOTONIC, &start);
 
+  // 6. Execute Rendering Loop
+  //    We run in a loop, executing steps until:
+  //    a) The engine reports it's done (send returns false).
+  //    b) We no longer need to advance (user scrolled away or target reached).
+  //    c) We hit the step limit AND the time budget.
   int steps = ENGINE_STEP_LIMIT;
   while (need)
   {
+    // Execute one step of the rendering engine.
+    // If the engine terminates or errors, break immediately.
     if (!send(step, ui->eng, ctx, false))
       break;
 
+    // Decrement the step counter for this time slice.
     steps -= 1;
+
+    // Re-evaluate if we still need to render.
     need = need_advance(ctx, ui);
 
+    // 7. Time Budget Check
+    //    If we have exhausted our step limit for this slice, check the elapsed
+    //    time.
     if (steps == 0)
     {
+      // Reset step counter for the next slice if we continue.
       steps = ENGINE_STEP_LIMIT;
+
       struct timespec curr;
       clock_gettime(CLOCK_MONOTONIC, &curr);
 
-      int delta = (curr.tv_sec - start.tv_sec) * 1000 * 1000 * 1000 +
-                  (curr.tv_nsec - start.tv_nsec);
+      // Calculate elapsed time in nanoseconds.
+      // (curr_sec - start_sec) * 1e9 + (curr_nsec - start_nsec)
+      int64_t delta = (int64_t)(curr.tv_sec - start.tv_sec) * 1000000000LL +
+                      (curr.tv_nsec - start.tv_nsec);
 
-      if (delta > ENGINE_TIMEOUT_US)
+      // If we have exceeded the time budget (e.g., 10ms), break to yield
+      // control. This ensures the UI remains responsive even if the rendering
+      // engine is slow.
+      if (delta > ENGINE_TIMEOUT_NS)
         break;
     }
   }
+
+  // 8. Return Status
+  //    Return the current state of 'need'.
+  //    - If true: We still have work to do, but we hit a limit (time or steps).
+  //               The caller should try again soon.
+  //    - If false: We are done with the current batch (either finished or user
+  //    moved on).
   return need;
 }
 
@@ -1282,6 +1340,8 @@ bool texpresso_main(struct persistent_state *ps)
 
   ui->sdl_renderer = ps->renderer;
   ui->doc_renderer = txp_renderer_new(ps->ctx, ui->sdl_renderer);
+  ui->page = 0;
+  ui->zoom = 0;
 
   if (ps->initial.initialized)
   {
@@ -1292,11 +1352,6 @@ bool texpresso_main(struct persistent_state *ps)
     txp_renderer_set_contents(ps->ctx, ui->doc_renderer,
                               ps->initial.display_list);
     editor_reset_sync();
-  }
-  else
-  {
-    ui->page = 0;
-    ui->zoom = 0;
   }
 
   ui->mouse_status = UI_MOUSE_NONE;
@@ -1324,67 +1379,69 @@ bool texpresso_main(struct persistent_state *ps)
     SDL_Event e;
     bool has_event = SDL_PollEvent(&e);
 
-    // Process document
+    // Advance document document
+    int before_page_count = send(page_count, ui->eng);
+    bool advance = advance_engine(ctx, ui);
+    int after_page_count = send(page_count, ui->eng);
+    fflush(stdout);
+
+    if (ui->page >= before_page_count && ui->page < after_page_count)
+      ps->schedule_event(UI_RELOAD_EVENT);
+
+    // Wait for event if needed
+    if (!has_event)
     {
-      int before_page_count = send(page_count, ui->eng);
-      bool advance = advance_engine(ctx, ui);
-      int after_page_count = send(page_count, ui->eng);
-      fflush(stdout);
-
-      if (ui->page >= before_page_count && ui->page < after_page_count)
-        ps->schedule_event(UI_RELOAD_EVENT);
-
+      if (advance)
+        continue;
+      has_event = SDL_WaitEvent(&e);
       if (!has_event)
       {
-        if (advance)
-          continue;
-        has_event = SDL_WaitEvent(&e);
-        if (!has_event)
-        {
-          fprintf(stderr, "SDL_WaitEvent error: %s\n", SDL_GetError());
-          break;
-        }
-      }
-
-      fz_buffer *buf;
-      synctex_t *stx = send(synctex, ui->eng, &buf);
-      int page = -1, x = -1, y = -1;
-      if (synctex_find_target(ctx, stx, buf, &page, &x, &y))
-      {
-        fprintf(stderr, "[synctex forward] sync: hit page %d, coordinates (%d, %d)\n",
-                page, x, y);
-
-        if (page != ui->page)
-        {
-          ui->page = page;
-          display_page(ps, ui);
-        }
-
-        float f = send(scale_factor, ui->eng);
-        fz_point p = fz_make_point(f * x, f * y);
-        fz_point pt = txp_renderer_document_to_screen(ctx, ui->doc_renderer, p);
-        fprintf(stderr, "[synctex forward] position on screen: (%.02f, %.02f)\n",
-                pt.x, pt.y);
-        int w, h;
-        txp_renderer_screen_size(ctx, ui->doc_renderer, &w, &h);
-        float margin_lo = h / 4.0f;
-        float margin_hi = h / 3.0f;
-
-        txp_renderer_config *config =
-            txp_renderer_get_config(ctx, ui->doc_renderer);
-        float delta = 0.0f;
-        if (pt.y < margin_lo)
-          delta = -pt.y + margin_hi;
-        else if (pt.y >= h - margin_lo)
-          delta = h - pt.y - margin_hi;
-        fprintf(stderr, "[synctex forward] pan.y = %.02f + %.02f = %.02f\n",
-                config->pan.y, delta, config->pan.y + delta);
-        config->pan.y += delta;
-        if (delta != 0.0f)
-          ps->schedule_event(UI_RENDER_EVENT);
+        fprintf(stderr, "SDL_WaitEvent error: %s\n", SDL_GetError());
+        break;
       }
     }
 
+    // Check synctex target
+    fz_buffer *buf;
+    synctex_t *stx = send(synctex, ui->eng, &buf);
+    int page = -1, x = -1, y = -1;
+    if (synctex_find_target(ctx, stx, buf, &page, &x, &y))
+    {
+      fprintf(stderr,
+              "[synctex forward] sync: hit page %d, coordinates (%d, %d)\n",
+              page, x, y);
+
+      if (page != ui->page)
+      {
+        ui->page = page;
+        display_page(ps, ui);
+      }
+
+      float f = send(scale_factor, ui->eng);
+      fz_point p = fz_make_point(f * x, f * y);
+      fz_point pt = txp_renderer_document_to_screen(ctx, ui->doc_renderer, p);
+      fprintf(stderr, "[synctex forward] position on screen: (%.02f, %.02f)\n",
+              pt.x, pt.y);
+      int w, h;
+      txp_renderer_screen_size(ctx, ui->doc_renderer, &w, &h);
+      float margin_lo = h / 4.0f;
+      float margin_hi = h / 3.0f;
+
+      txp_renderer_config *config =
+          txp_renderer_get_config(ctx, ui->doc_renderer);
+      float delta = 0.0f;
+      if (pt.y < margin_lo)
+        delta = -pt.y + margin_hi;
+      else if (pt.y >= h - margin_lo)
+        delta = h - pt.y - margin_hi;
+      fprintf(stderr, "[synctex forward] pan.y = %.02f + %.02f = %.02f\n",
+              config->pan.y, delta, config->pan.y + delta);
+      config->pan.y += delta;
+      if (delta != 0.0f)
+        ps->schedule_event(UI_RENDER_EVENT);
+    }
+
+    // Update scale to current window size
     txp_renderer_set_scale_factor(ctx, ui->doc_renderer,
                                   get_scale_factor(ui->window));
 
