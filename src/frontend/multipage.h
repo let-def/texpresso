@@ -5,27 +5,89 @@
 #include <stddef.h>
 #include <mupdf/fitz.h>
 
+// ============================================================================
+// Multipage Document API
+// ============================================================================
+
 typedef struct multipage_s multipage_t;
 
+// Terminology
+// ===========
+// 
+// Lifecycle: multipage_t manages a collection of fz_display_list objects and
+//   tracks their vertical positions.
+// Ownership: multipage_t holds a reference to each stored display list.
+//   multipage_free() decrements these references and frees resources.
+// Validity and Count:
+//   Documents are populated sequentially from index 0 and invalidated only
+//   by backtracking (marking all pages past a certain index as invalid).
+//   While populating, `count` grows automatically as needed.
+//
+// `valid_count` reflects pages that are set and known to be up-to-date.
+// `count` may exceed `valid_count` in two situations:
+// - Backtracking occurred (multipage_invalidate_after): valid_count decreases
+//   but count remains unchanged.
+// - Pages were added beyond current count (multipage_set_page): valid_count
+//   grows exactly as needed, but blank pages are added to count to prepare for
+//   future additions without flickering.
+//
+// A page is 'valid' if it contains loaded, up-to-date content.
+// Visually, pages beyond valid_count are 'invalid' (stale or empty).
+// multipage_truncate() drops invalid pages once the actual document length is known.
+
+// Lifecycle
+// =========
+
+// Allocates and initializes a new multipage structure.
+// Returns NULL on allocation failure.
 multipage_t *multipage_new(void);
+
+// Frees the multipage structure and releases all internal display list references.
+// Requires fz_context *ctx for proper resource cleanup.
 void multipage_free(fz_context *ctx, multipage_t *mp);
 
+// State query
+// ===========
+
+// Returns the total number of visible pages.
+// Returns 0 if the structure is empty.
 size_t multipage_count(const multipage_t *mp);
-fz_display_list *multipage_get(multipage_t *mp, size_t index);
-//fz_rect multipage_get_bounds(const multipage_t *mp, size_t index);
 
-// Increase reference count of dl
-void multipage_set_page(fz_context *ctx, multipage_t *mp, size_t index, fz_display_list *dl);
-
-// Truncates: frees and removes pages >= count
-void multipage_truncate(fz_context *ctx, multipage_t *mp, size_t count);
-
-// Marks pages >= count as invalidated (still displayed but marked out of date)
-void multipage_invalidate_after(multipage_t *mp, size_t count);
-
-// Returns true if pages >= count were invalidated (i.e., need rebuilding)
+// Returns the number of valid (loaded, up-to-date) pages.
+// Always <= multipage_count(mp).
 size_t multipage_valid_count(const multipage_t *mp);
 
+// Returns the display list at `index`.
+// Returns NULL if `index` is out of bounds or the page is invalid.
+fz_display_list *multipage_get(const multipage_t *mp, size_t index);
+
+// State modification
+// ==================
+
+// Sets the display list for `index` and increments its reference count.
+// Marks all pages from 0 to `index` as valid.
+// Caller retains ownership; multipage_t acquires its own reference to dl.
+// If `index >= multipage_count()`, `multipage_count()` is grown to be higher
+// than `index` (possibly by many pages, to avoid visual instabilities caused by
+// repeatedly adding a single page).
+void multipage_set_page(fz_context *ctx, multipage_t *mp, size_t index, fz_display_list *dl);
+
+// Marks all pages at indices >= count as invalid (stale).
+// Pages are not freed; they remain displayed until replaced or truncated.
+// Updates valid_count to `count` (count remains unchanged).
+void multipage_invalidate_after(multipage_t *mp, size_t count);
+
+// Truncates the structure to `multipage_valid_count()` pages.
+// Updates `count` to `valid_count`.
+void multipage_truncate(fz_context *ctx, multipage_t *mp);
+
+// ============================================================================
+// Vertical layout
+// ============================================================================
+//
+// Terminology
+// ===========
+// 
 // Terminology
 // - Coordinate System: Y=0 is at the top; Y increases downwards.
 // - Page Index: Valid indices range from `0` to `multipage_count(mp) - 1`.
