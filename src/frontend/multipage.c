@@ -76,7 +76,7 @@ size_t multipage_count(const multipage_t *mp)
 }
 
 // Returns NULL if index < 0 or >= count
-fz_display_list *multipage_get(multipage_t *mp, size_t index)
+fz_display_list *multipage_get(const multipage_t *mp, size_t index)
 {
   if (!mp || index >= mp->count)
     return NULL;
@@ -142,10 +142,12 @@ void multipage_set_page(fz_context *ctx, multipage_t *mp, size_t index, fz_displ
     mp->valid = index + 1;
 }
 
-void multipage_truncate(fz_context *ctx, multipage_t *mp, size_t count)
+void multipage_truncate(fz_context *ctx, multipage_t *mp)
 {
-  if (!mp || mp->count <= count)
+  if (!mp)
     return;
+
+  size_t count = mp->valid, old_count = mp->count;
 
   // Free pages >= count
   for (size_t i = count, old_count = mp->count; i < old_count; ++i)
@@ -155,8 +157,6 @@ void multipage_truncate(fz_context *ctx, multipage_t *mp, size_t count)
   }
 
   psum_truncate(mp->psum, count);
-  if (mp->valid > count)
-    mp->valid = count;
   mp->count = count;
   mp->extra1 = 1;
   mp->extra2 = 1;
