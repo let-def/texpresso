@@ -15,8 +15,10 @@ struct multipage_s
 {
   page_t *pages;
   psum_t *psum;
-  size_t capacity;      // allocated slots
-  size_t count, extra1, extra2;         // logical count (>= 0, <= capacity)
+  size_t capacity;       // allocated slots
+  size_t count;          // logical count (0 <= count <= capacity)
+  size_t valid;          // valid pages (0 <= valid <= count)
+  size_t extra1, extra2; // fibonacci sequence for growing count
 };
 
 // Helper: ensure at least `needed` pages are allocated
@@ -49,6 +51,7 @@ multipage_t *multipage_new(void)
   mp->capacity = 0;
   mp->psum = psum_new();
   mp->count = 0;
+  mp->valid = 0;
   mp->extra1 = 1;
   mp->extra2 = 1;
   return mp;
@@ -135,6 +138,8 @@ void multipage_set_page(fz_context *ctx, multipage_t *mp, size_t index, fz_displ
   }
 
   multipage_set_raw(ctx, mp, index, dl, height);
+  if (index >= mp->valid)
+    mp->valid = index + 1;
 }
 
 void multipage_truncate(fz_context *ctx, multipage_t *mp, size_t count)
@@ -150,42 +155,28 @@ void multipage_truncate(fz_context *ctx, multipage_t *mp, size_t count)
   }
 
   psum_truncate(mp->psum, count);
+  if (mp->valid > count)
+    mp->valid = count;
   mp->count = count;
   mp->extra1 = 1;
   mp->extra2 = 1;
 }
 
-// void multipage_invalidate_after(multipage_t *mp, int count)
-// {
-//   if (!mp || count <= 0) return;
-//   if ((size_t)count > mp->count) count = (int)mp->count;
-//
-//   for (int i = count; i < (int)mp->count; ++i)
-//   {
-//     mp->pages[i].invalidated = true;
-//   }
-// }
-//
-// bool multipage_has_invalidated_pages(const multipage_t *mp)
-// {
-//   if (!mp || !mp->count) return false;
-//   for (size_t i = 0; i < mp->count; ++i)
-//   {
-//     if (mp->pages[i].invalidated) return true;
-//   }
-//   return false;
-// }
-//
-// void multipage_clear_invalidated(multipage_t *mp)
-// {
-//   if (!mp) return;
-//   for (size_t i = 0; i < mp->count; ++i)
-//   {
-//     mp->pages[i].invalidated = false;
-//   }
-// }
 
-int multipage_page_below(multipage_t *mp, float offset, float separator)
+// Marks pages >= count as invalidated (still displayed but marked out of date)
+void multipage_invalidate_after(multipage_t *mp, size_t count)
+{
+  if (mp && mp->valid > count)
+    mp->valid = count;
+}
+
+// Returns true if pages >= count were invalidated (i.e., need rebuilding)
+size_t multipage_valid_count(const multipage_t *mp)
+{
+  return mp ? mp->valid : 0;
+}
+
+ssize_t multipage_page_below(multipage_t *mp, float offset, float separator)
 {
   int candidate = psum_reverse_query_with_offset(mp->psum, offset, separator);
   if (candidate >= mp->count)
@@ -193,22 +184,19 @@ int multipage_page_below(multipage_t *mp, float offset, float separator)
   return candidate;
 }
 
-int multipage_page_above(multipage_t *mp, float offset, float separator)
+ssize_t multipage_page_above(multipage_t *mp, float offset, float separator)
 {
   return multipage_page_below(mp, offset - separator, separator);
-  // int candidate = multipage_page_below(mp, offset, separator);
-  // float position = psum_query(mp->psum, candidate) + separator * candidate;
-  // if (position > offset)
-  //   candidate -= 1;
-  // return candidate;
 }
 
 float multipage_total_height(multipage_t *mp, float separator)
 {
+  if (mp->count == 0)
+    return 0;
   return psum_total(mp->psum) + separator * (mp->count - 1);
 }
 
-float multipage_page_offset(multipage_t *mp, int page, float separator)
+float multipage_page_offset(multipage_t *mp, ssize_t page, float separator)
 {
   return psum_query(mp->psum, page) + page * separator;
 }
