@@ -34,13 +34,14 @@
 #include "editor.h"
 #include "engine.h"
 #include "fd_poll.h"
+#include "multipage.h"
 #include "mydvi.h"
 #include "prot_parser.h"
 #include "providers.h"
-#include "renderer.h"
 #include "synctex.h"
 #include "utf_mapping.h"
 #include "vstack.h"
+#include "pagebuffer.h"
 
 /* --- Configuration Constants --- */
 
@@ -70,14 +71,27 @@ enum ui_mouse_status
 
 typedef struct
 {
+  float zoom, target_zoom;
+  float offset_y, target_offset_y;
+  float offset_x, target_offset_x;
+  float velocity_y;
+  float width_reference;
+  bool panning, panning_x, animating;
+
+  float friction, spring_k, border_friction, zoom_speed;
+  int margin;
+  int screen_margin;
+} view_state;
+
+typedef struct
+{
   txp_engine *eng;
-  txp_renderer *doc_renderer;
   SDL_Renderer *sdl_renderer;
   SDL_Window *window;
   fd_poller *fdpoll;
-
+  pagebuffer_t *pb;
   int current_page;
-  int zoom;
+  view_state view;
 
   // Mouse input state
   int last_mouse_x, last_mouse_y;
@@ -256,17 +270,11 @@ static fz_point get_scale_factor(SDL_Window *window)
                        wh != 0 ? (float)ph / wh : 1);
 }
 
-static void render(fz_context *ctx, ui_state *ui)
-{
-  SDL_SetRenderDrawColor(ui->sdl_renderer, 0, 0, 0, 255);
-  SDL_RenderClear(ui->sdl_renderer);
-  txp_renderer_render(ctx, ui->doc_renderer);
-  SDL_RenderPresent(ui->sdl_renderer);
-}
+static void render(struct persistent_state *ps, ui_state *ui);
 
 struct repaint_on_resize_env
 {
-  fz_context *ctx;
+  struct persistent_state *ps;
   ui_state *ui;
 };
 
@@ -277,14 +285,14 @@ static int repaint_on_resize(void *data, SDL_Event *event)
       event->window.event == SDL_WINDOWEVENT_RESIZED &&
       SDL_GetWindowFromID(event->window.windowID) == env->ui->window)
   {
-    render(env->ctx, env->ui);
+    render(env->ps, env->ui);
   }
   return 0;
 }
 
 /* --- Engine & Document Logic --- */
 
-static int get_current_page(ui_state *ui)
+static int get_first_visible_page(ui_state *ui)
 {
   return ui->current_page;
 }
@@ -441,26 +449,27 @@ static void ui_mouse_down(struct persistent_state *ps,
     fz_point p = fz_make_point(scale.x * x, scale.y * y);
     bool diff = false;
 
-    if (clicks == 1)
-    {
-      diff = txp_renderer_start_selection(ps->ctx, ui->doc_renderer, p);
-      diff = txp_renderer_select_char(ps->ctx, ui->doc_renderer, p) || diff;
+    // FIXME
+    // if (clicks == 1)
+    // {
+    //   diff = txp_renderer_start_selection(ps->ctx, ui->doc_renderer, p);
+    //   diff = txp_renderer_select_char(ps->ctx, ui->doc_renderer, p) || diff;
 
-      fz_buffer *buf;
-      synctex_t *stx = send(synctex, ui->eng, &buf);
-      if (stx && buf)
-      {
-        fz_point pt =
-            txp_renderer_screen_to_document(ps->ctx, ui->doc_renderer, p);
-        float f = 1 / send(scale_factor, ui->eng);
-        synctex_scan(ps->ctx, stx, buf, ps->doc_path, get_current_page(ui),
-                     f * pt.x, f * pt.y);
-      }
-    }
-    else if (clicks == 2)
-    {
-      diff = txp_renderer_select_word(ps->ctx, ui->doc_renderer, p);
-    }
+    //   fz_buffer *buf;
+    //   synctex_t *stx = send(synctex, ui->eng, &buf);
+    //   if (stx && buf)
+    //   {
+    //     fz_point pt =
+    //         txp_renderer_screen_to_document(ps->ctx, ui->doc_renderer, p);
+    //     float f = 1 / send(scale_factor, ui->eng);
+    //     synctex_scan(ps->ctx, stx, buf, ps->doc_path, get_current_page(ui),
+    //                  f * pt.x, f * pt.y);
+    //   }
+    // }
+    // else if (clicks == 2)
+    // {
+    //   diff = txp_renderer_select_word(ps->ctx, ui->doc_renderer, p);
+    // }
 
     if (diff)
       ps->schedule_event(UI_RENDER_EVENT);
@@ -487,9 +496,10 @@ static void ui_mouse_move(struct persistent_state *ps, ui_state *ui, int x, int 
 
     case UI_MOUSE_SELECT:
     {
-      fz_point p = fz_make_point(scale.x * x, scale.y * y);
-      if (txp_renderer_drag_selection(ps->ctx, ui->doc_renderer, p))
-        needs_render = true;
+      // FIXME
+      // fz_point p = fz_make_point(scale.x * x, scale.y * y);
+      // if (txp_renderer_drag_selection(ps->ctx, ui->doc_renderer, p))
+      //   needs_render = true;
       break;
     }
 
@@ -518,10 +528,11 @@ static bool update_pan(fz_context *ctx,
   if (dx == 0 && dy == 0)
     return false;
 
-  txp_renderer_config *config =
-      txp_renderer_get_config(ctx, ui->doc_renderer);
-  config->pan.x += scale_x * dx;
-  config->pan.y += scale_y * dy;
+  // FIXME
+  // txp_renderer_config *config =
+  //     txp_renderer_get_config(ctx, ui->doc_renderer);
+  // config->pan.x += scale_x * dx;
+  // config->pan.y += scale_y * dy;
   return true;
 }
 
@@ -536,47 +547,48 @@ static void ui_mouse_wheel(struct persistent_state *ps,
   if (ui->mouse_status != UI_MOUSE_NONE)
     return;
 
-  txp_renderer_config *config = txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-  bool needs_render = false;
-  fz_point scale = get_scale_factor(ui->window);
+  // FIXME
+  // txp_renderer_config *config = txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+  // bool needs_render = false;
+  // fz_point scale = get_scale_factor(ui->window);
 
-  if (ctrl)
-  {
-    SDL_FRect rect;
-    if (dy != 0 &&
-        txp_renderer_page_position(ps->ctx, ui->doc_renderer, &rect, NULL, NULL))
-    {
-      ui->zoom = fz_maxi(ui->zoom + dy * 100, 0);
-      int ww, wh;
-      SDL_GetWindowSize(ui->window, &ww, &wh);
+  // if (ctrl)
+  // {
+  //   SDL_FRect rect;
+  //   if (dy != 0 &&
+  //       txp_renderer_page_position(ps->ctx, ui->doc_renderer, &rect, NULL, NULL))
+  //   {
+  //     ui->zoom = fz_maxi(ui->zoom + dy * 100, 0);
+  //     int ww, wh;
+  //     SDL_GetWindowSize(ui->window, &ww, &wh);
 
-      float mx = (mousex - ww / 2.0f) * scale.x;
-      float my = (mousey - wh / 2.0f) * scale.y;
+  //     float mx = (mousex - ww / 2.0f) * scale.x;
+  //     float my = (mousey - wh / 2.0f) * scale.y;
 
-      float zf = zoom_factor(ui->zoom);
-      float effective_zoom = zf / config->zoom;
+  //     float zf = zoom_factor(ui->zoom);
+  //     float effective_zoom = zf / config->zoom;
 
-      config->pan.x = mx + effective_zoom * (config->pan.x - mx);
-      config->pan.y = my + effective_zoom * (config->pan.y - my);
-      config->zoom = zf;
-      needs_render = true;
-    }
-  }
-  else
-  {
-    float x = scale.x * dx * 5, y = scale.y * dy * 5;
-    if (update_pan(ps->ctx, ui, (int)(x * 100), (int)(y * 100), 0.01f, 0.01f))
-    {
-      // Note: update_pan uses scale, here we pre-calculated.
-      // Simplified: just update config directly for wheel
-      config->pan.x -= x;
-      config->pan.y += y;
-      needs_render = true;
-    }
-  }
+  //     config->pan.x = mx + effective_zoom * (config->pan.x - mx);
+  //     config->pan.y = my + effective_zoom * (config->pan.y - my);
+  //     config->zoom = zf;
+  //     needs_render = true;
+  //   }
+  // }
+  // else
+  // {
+  //   float x = scale.x * dx * 5, y = scale.y * dy * 5;
+  //   if (update_pan(ps->ctx, ui, (int)(x * 100), (int)(y * 100), 0.01f, 0.01f))
+  //   {
+  //     // Note: update_pan uses scale, here we pre-calculated.
+  //     // Simplified: just update config directly for wheel
+  //     config->pan.x -= x;
+  //     config->pan.y += y;
+  //     needs_render = true;
+  //   }
+  // }
 
-  if (needs_render)
-    ps->schedule_event(UI_RENDER_EVENT);
+  // if (needs_render)
+  //   ps->schedule_event(UI_RENDER_EVENT);
 }
 
 /* --- Editor Command Interpretation --- */
@@ -752,9 +764,10 @@ static void interpret_change(struct persistent_state *ps,
 {
   int plen = strlen(op->path);
   int page_count = send(page_count, ui->eng);
-  int current_page = get_current_page(ui);
+  int first_page = get_first_visible_page(ui);
+  int last_page = get_last_visible_page(ui);
   int cursor = delayed_changes.cursor;
-  if ((page_count == current_page - 2 || page_count == current_page - 1) &&
+  if ((page_count >= first_page - 2 && page_count <= last_page) &&
       send(get_status, ui->eng) == DOC_RUNNING &&
       delayed_changes.count < MAX_BUFFERED_OPS &&
       cursor + plen + 1 + op->length <= MAX_BUFFERED_CHARS)
@@ -869,15 +882,6 @@ static uint32_t convert_color(fz_context *ctx, vstack *stack, float frgb[3])
   return (rgb[0] << 16) | (rgb[1] << 8) | (rgb[2]);
 }
 
-static void display_page(struct persistent_state *ps, ui_state *ui)
-{
-  int current_page = get_current_page(ui);
-  fz_display_list *dl = send(render_page, ui->eng, ps->ctx, current_page);
-  txp_renderer_set_contents(ps->ctx, ui->doc_renderer, dl);
-  fz_drop_display_list(ps->ctx, dl);
-  ps->schedule_event(UI_RENDER_EVENT);
-}
-
 #if !SDL_VERSION_ATLEAST(2, 0, 16)
 static void SDL_SetWindowAlwaysOnTop(SDL_Window *window, SDL_bool state)
 {
@@ -893,29 +897,30 @@ enum pan_to { PAN_TO_TOP, PAN_TO_BOTTOM };
 
 static void pan_to(fz_context *ctx, ui_state *ui, enum pan_to to)
 {
-  txp_renderer_config *config = txp_renderer_get_config(ctx, ui->doc_renderer);
-  txp_renderer_bounds bounds;
-  if (txp_renderer_page_bounds(ctx, ui->doc_renderer, &bounds))
-    config->pan.y =
-        (to == PAN_TO_TOP) ? bounds.pan_interval.y : -bounds.pan_interval.y;
+  // FIXME
+  // txp_renderer_config *config = txp_renderer_get_config(ctx, ui->doc_renderer);
+  // txp_renderer_bounds bounds;
+  // if (txp_renderer_page_bounds(ctx, ui->doc_renderer, &bounds))
+  //   config->pan.y =
+  //       (to == PAN_TO_TOP) ? bounds.pan_interval.y : -bounds.pan_interval.y;
 }
 
 static void previous_page(struct persistent_state *ps, ui_state *ui, bool pan)
 {
   synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
-  if (get_current_page(ui) > 0)
-  {
-    ui->current_page -= 1;
-    int page_count = send(page_count, ui->eng);
-    if (page_count > 0 && ui->current_page >= page_count &&
-        send(get_status, ui->eng) == DOC_TERMINATED)
-      ui->current_page = page_count - 1;
+  // if (get_current_page(ui) > 0)
+  // {
+  //   ui->current_page -= 1;
+  //   int page_count = send(page_count, ui->eng);
+  //   if (page_count > 0 && ui->current_page >= page_count &&
+  //       send(get_status, ui->eng) == DOC_TERMINATED)
+  //     ui->current_page = page_count - 1;
 
-    if (pan)
-      pan_to(ps->ctx, ui, PAN_TO_BOTTOM);
+  //   if (pan)
+  //     pan_to(ps->ctx, ui, PAN_TO_BOTTOM);
 
-    ps->schedule_event(UI_RELOAD_EVENT);
-  }
+  //   ps->schedule_event(UI_RENDER_EVENT);
+  // }
 }
 
 static void next_page(struct persistent_state *ps, ui_state *ui, bool pan)
@@ -924,33 +929,34 @@ static void next_page(struct persistent_state *ps, ui_state *ui, bool pan)
   ui->current_page += 1;
   if (pan)
     pan_to(ps->ctx, ui, PAN_TO_TOP);
-  ps->schedule_event(UI_RELOAD_EVENT);
+  ps->schedule_event(UI_RENDER_EVENT);
 }
 
 static void ui_pan(struct persistent_state *ps, ui_state *ui, float factor)
 {
-  fz_point scale = get_scale_factor(ui->window);
-  txp_renderer_config *config = txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-  txp_renderer_bounds bounds;
+  // FIXME
+  // fz_point scale = get_scale_factor(ui->window);
+  // txp_renderer_config *config = txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+  // txp_renderer_bounds bounds;
 
-  if (!txp_renderer_page_bounds(ps->ctx, ui->doc_renderer, &bounds))
-    return;
+  // if (!txp_renderer_page_bounds(ps->ctx, ui->doc_renderer, &bounds))
+  //   return;
 
-  float delta = bounds.window_size.y * scale.y * factor;
-  float range = bounds.pan_interval.y < 0 ? 0 : bounds.pan_interval.y;
+  // float delta = bounds.window_size.y * scale.y * factor;
+  // float range = bounds.pan_interval.y < 0 ? 0 : bounds.pan_interval.y;
 
-  if (config->pan.y == -range && factor < 0)
-  {
-    next_page(ps, ui, 1);
-    return;
-  }
-  if (config->pan.y == range && factor > 0)
-  {
-    previous_page(ps, ui, 1);
-    return;
-  }
+  // if (config->pan.y == -range && factor < 0)
+  // {
+  //   next_page(ps, ui, 1);
+  //   return;
+  // }
+  // if (config->pan.y == range && factor > 0)
+  // {
+  //   previous_page(ps, ui, 1);
+  //   return;
+  // }
 
-  config->pan.y += delta;
+  // config->pan.y += delta;
   ps->schedule_event(UI_RENDER_EVENT);
 }
 
@@ -992,12 +998,12 @@ static void interpret_command(struct persistent_state *ps,
       break;
     case EDIT_THEME:
     {
-      txp_renderer_config *config =
-          txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-      config->background_color = convert_color(ps->ctx, stack, cmd.theme.bg);
-      config->foreground_color = convert_color(ps->ctx, stack, cmd.theme.fg);
-      config->themed_color = 1;
-      ps->schedule_event(UI_RENDER_EVENT);
+      // txp_renderer_config *config =
+      //     txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+      // config->background_color = convert_color(ps->ctx, stack, cmd.theme.bg);
+      // config->foreground_color = convert_color(ps->ctx, stack, cmd.theme.fg);
+      // config->themed_color = 1;
+      // ps->schedule_event(UI_RENDER_EVENT);
     }
     break;
     case EDIT_PREVIOUS_PAGE:
@@ -1057,24 +1063,24 @@ static void interpret_command(struct persistent_state *ps,
       }
       else
       {
-        synctex_set_target(stx, get_current_page(ui), path, cmd.synctex_forward.line);
-        ps->schedule_event(UI_STDIN_EVENT);
+        // synctex_set_target(stx, get_current_page(ui), path, cmd.synctex_forward.line);
+        ps->schedule_event(UI_STEP_EVENT);
       }
     }
     break;
     case EDIT_CROP:
     {
-      txp_renderer_config *config =
-          txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-      config->crop = !config->crop;
+      // txp_renderer_config *config =
+      //     txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+      // config->crop = !config->crop;
       ps->schedule_event(UI_RENDER_EVENT);
     }
     break;
     case EDIT_INVERT:
     {
-      txp_renderer_config *config =
-          txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-      config->invert_color = !config->invert_color;
+      // txp_renderer_config *config =
+      //     txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+      // config->invert_color = !config->invert_color;
       ps->schedule_event(UI_RENDER_EVENT);
     }
     break;
@@ -1118,9 +1124,9 @@ static void handle_sdl_event(SDL_Event *e,
           break;
         case SDLK_p:
         {
-          txp_renderer_config *config =
-              txp_renderer_get_config(ctx, ui->doc_renderer);
-          config->fit = (config->fit == FIT_PAGE) ? FIT_WIDTH : FIT_PAGE;
+          // txp_renderer_config *config =
+          //     txp_renderer_get_config(ctx, ui->doc_renderer);
+          // config->fit = (config->fit == FIT_PAGE) ? FIT_WIDTH : FIT_PAGE;
           ps->schedule_event(UI_RENDER_EVENT);
         }
         break;
@@ -1135,20 +1141,20 @@ static void handle_sdl_event(SDL_Event *e,
           break;
         case SDLK_c:
         {
-          txp_renderer_config *config =
-              txp_renderer_get_config(ctx, ui->doc_renderer);
-          config->crop = !config->crop;
+          // txp_renderer_config *config =
+          //     txp_renderer_get_config(ctx, ui->doc_renderer);
+          // config->crop = !config->crop;
           ps->schedule_event(UI_RENDER_EVENT);
         }
         break;
         case SDLK_i:
         {
-          txp_renderer_config *config =
-              txp_renderer_get_config(ctx, ui->doc_renderer);
-          if ((SDL_GetModState() & KMOD_SHIFT))
-            config->themed_color = !config->themed_color;
-          else
-            config->invert_color = !config->invert_color;
+          // txp_renderer_config *config =
+          //     txp_renderer_get_config(ctx, ui->doc_renderer);
+          // if ((SDL_GetModState() & KMOD_SHIFT))
+          //   config->themed_color = !config->themed_color;
+          // else
+          //   config->invert_color = !config->invert_color;
           ps->schedule_event(UI_RENDER_EVENT);
         }
         break;
@@ -1158,9 +1164,9 @@ static void handle_sdl_event(SDL_Event *e,
         case SDLK_F5:
           SDL_SetWindowFullscreen(ui->window, SDL_WINDOW_FULLSCREEN_DESKTOP);
           {
-            txp_renderer_config *config =
-                txp_renderer_get_config(ctx, ui->doc_renderer);
-            config->fit = FIT_PAGE;
+            // txp_renderer_config *config =
+            //     txp_renderer_get_config(ctx, ui->doc_renderer);
+            // config->fit = FIT_PAGE;
             ps->schedule_event(UI_RENDER_EVENT);
           }
           break;
@@ -1277,8 +1283,170 @@ static void stdin_process(struct stdin_state *st,
   if (send(end_changes, ui->eng, ps->ctx))
   {
     send(step, ui->eng, ps->ctx, true);
-    ps->schedule_event(UI_RELOAD_EVENT);
+    ps->schedule_event(UI_RENDER_EVENT);
   }
+}
+
+/* UI rendering */
+
+float engine_get_effective_zoom(view_state *v, int win_w)
+{
+  float base_scale = (float)(win_w - v->screen_margin * 2) / v->width_reference;
+  return v->zoom * base_scale;
+}
+
+// Rigid clamping for horizontal offset
+float get_page_scroll_limit(float page_w, float win_w, float screen_margin)
+{
+  if (page_w <= win_w)
+    return 0.0f;
+  return (page_w - win_w) / 2.0f + screen_margin;
+}
+
+float get_page_screen_x(float page_w,
+                        float win_w,
+                        float offset_x,
+                        float screen_margin)
+{
+  float world_x_base = (win_w - page_w) / 2.0f;
+
+  float limit = get_page_scroll_limit(page_w, win_w, screen_margin);
+  float clamped_offset = offset_x;
+  if (clamped_offset < -limit)
+    clamped_offset = -limit;
+  if (clamped_offset > limit)
+    clamped_offset = limit;
+
+  return (world_x_base - clamped_offset);
+}
+
+fz_irect get_page_screen_position(fz_context *ctx, multipage_t *mp,
+                                  view_state *e, float ez, float win_w, int i)
+{
+  float w = 0, h = 0;
+  fz_display_list *dl = multipage_get(mp, i);
+  if (dl)
+  {
+    fz_rect bounds = fz_bound_display_list(ctx, dl);
+    w = (bounds.x1 - bounds.x0) * ez;
+    h = (bounds.y1 - bounds.y0) * ez;
+  }
+  fz_irect r;
+  r.x0 = get_page_screen_x(w, win_w, e->offset_x * ez, e->screen_margin);
+  r.y0 = (multipage_page_offset(mp, i, e->margin) - e->offset_y) * ez;
+  r.x1 = r.x0 + w;
+  r.y1 = r.y0 + h;
+  return r;
+}
+
+fz_irect get_page_buffer_position(fz_context *ctx,
+                                  multipage_t *mp,
+                                  view_state *e,
+                                  float ez,
+                                  float win_w,
+                                  int i)
+{
+  float offset = multipage_page_offset(mp, i, 0) * ez;
+  float w = 0, h = 0;
+  fz_display_list *dl = multipage_get(mp, i);
+  if (dl)
+  {
+    fz_rect bounds = fz_bound_display_list(ctx, dl);
+    w = (bounds.x1 - bounds.x0) * ez;
+    h = (bounds.y1 - bounds.y0) * ez;
+  }
+  return fz_make_irect(0, offset, w, offset + h);
+}
+
+static void render_pages(struct persistent_state *ps, ui_state *ui)
+{
+  if (multipage_count(ps->mp) == 0)
+    return;
+  
+  int pw, ph;
+  SDL_GetRendererOutputSize(ps->renderer, &pw, &ph);
+  fz_irect prect = fz_make_irect(0, 0, pw, ph);
+  pagebuffer_reserve(ui->pb, pw, ph);
+  float ez = engine_get_effective_zoom(&ui->view, pw);
+
+  int first_page = multipage_page_below(ps->mp, ui->view.offset_y,
+                                        ui->view.margin);
+  int last_page = multipage_page_above(ps->mp, ui->view.offset_y + ph / ez,
+                                       ui->view.margin);
+
+  //printf("ez:%f, first_page:%d, last_page:%d\n", ez, first_page, last_page);
+  //#define prect(r) printf("rect " #r ": (%d,%d,%d,%d)\n", r.x0, r.y0, r.x1, r.y1)
+#define prect(r)
+
+  fz_irect win_first =
+      get_page_screen_position(ps->ctx, ps->mp, &ui->view, ez, pw, first_page);
+  prect(win_first);
+  fz_irect buf_first =
+      get_page_buffer_position(ps->ctx, ps->mp, &ui->view, ez, pw, first_page);
+  prect(buf_first);
+  fz_irect win_last =
+      get_page_screen_position(ps->ctx, ps->mp, &ui->view, ez, pw, last_page);
+  prect(win_last);
+  fz_irect buf_last =
+      get_page_buffer_position(ps->ctx, ps->mp, &ui->view, ez, pw, last_page);
+  prect(buf_last);
+  fz_irect vis_first = pagebuffer_relative_clipped_area(win_first, prect);
+  prect(vis_first);
+  fz_irect vis_last = pagebuffer_relative_clipped_area(win_last, prect);
+  prect(vis_last);
+
+  pagebuffer_scroll(ui->pb, buf_first.y0 + vis_first.y0,
+                    buf_last.y0 + vis_last.y1, first_page, last_page);
+
+  for (int i = first_page; i <= last_page; i++)
+  {
+    //printf("cache %d\n", i);
+    fz_irect window_rect =
+        get_page_screen_position(ps->ctx, ps->mp, &ui->view, ez, pw, i);
+    prect(window_rect);
+    fz_irect buffer_rect =
+        get_page_buffer_position(ps->ctx, ps->mp, &ui->view, ez, pw, i);
+    prect(buffer_rect);
+    fz_irect visible_rect =
+        pagebuffer_relative_clipped_area(window_rect, prect);
+    prect(visible_rect);
+    pagebuffer_update_entry_from_display_list(
+        ps->ctx, ui->pb, i, buffer_rect, visible_rect, multipage_get(ps->mp, i),
+        NULL, NULL);
+  }
+
+  for (int i = first_page; i <= last_page; i++)
+  {
+    fz_irect window_rect =
+        get_page_screen_position(ps->ctx, ps->mp, &ui->view, ez, pw, i);
+    fz_irect buffer_rect =
+        get_page_buffer_position(ps->ctx, ps->mp, &ui->view, ez, pw, i);
+    fz_irect visible_rect =
+        pagebuffer_relative_clipped_area(window_rect, prect);
+
+    int x = window_rect.x0 + visible_rect.x0;
+    int y = window_rect.y0 + visible_rect.y0;
+    visible_rect.x0 += buffer_rect.x0;
+    visible_rect.y0 += buffer_rect.y0;
+    visible_rect.x1 += buffer_rect.x0;
+    visible_rect.y1 += buffer_rect.y0;
+    //printf("blit page %d: (%d,%d,%d,%d) -> %d, %d \n", i,
+    //       visible_rect.x0,
+    //       visible_rect.y0,
+    //       visible_rect.x1,
+    //       visible_rect.y1,
+    //       x, y
+    //       );
+    pagebuffer_blit(ui->pb, x, y, visible_rect);
+  }
+}
+
+static void render(struct persistent_state *ps, ui_state *ui)
+{
+  SDL_SetRenderDrawColor(ps->renderer, 96, 96, 96, 255);
+  SDL_RenderClear(ps->renderer);
+  render_pages(ps, ui);
+  SDL_RenderPresent(ps->renderer);
 }
 
 /* --- Entry Point --- */
@@ -1290,6 +1458,7 @@ bool texpresso_main(struct persistent_state *ps)
 
   ui_state raw_ui, *ui = &raw_ui;
   ui->window = ps->window;
+  ui->view.zoom = 1.0;
 
   bool using_texlive = false;
   if (ps->use_texlive)
@@ -1345,18 +1514,19 @@ bool texpresso_main(struct persistent_state *ps)
   }
 
   ui->sdl_renderer = ps->renderer;
-  ui->doc_renderer = txp_renderer_new(ps->ctx, ui->sdl_renderer);
+  ui->pb = pagebuffer_new(ui->sdl_renderer);
   ui->current_page = 0;
-  ui->zoom = 0;
+  // ui->zoom = 0;
+  multipage_invalidate_after(ps->mp, 0);
 
   if (ps->initial.initialized)
   {
     SDL_FlushEvents(ps->custom_events, ps->custom_events + CUSTOM_EVENT_COUNT - 1);
     ui->current_page = ps->initial.page;
-    ui->zoom = ps->initial.zoom;
-    *txp_renderer_get_config(ps->ctx, ui->doc_renderer) = ps->initial.config;
-    txp_renderer_set_contents(ps->ctx, ui->doc_renderer,
-                              ps->initial.display_list);
+    // ui->zoom = ps->initial.zoom;
+    // *txp_renderer_get_config(ps->ctx, ui->doc_renderer) = ps->initial.config;
+    // txp_renderer_set_contents(ps->ctx, ui->doc_renderer,
+    //                           ps->initial.display_list);
     editor_reset_sync();
   }
 
@@ -1368,10 +1538,10 @@ bool texpresso_main(struct persistent_state *ps)
   fz_context *ctx = ps->ctx;
 
   send(step, ui->eng, ctx, true);
-  render(ctx, ui);
-  ps->schedule_event(UI_RELOAD_EVENT);
+  render(ps, ui);
+  ps->schedule_event(UI_RENDER_EVENT);
 
-  struct repaint_on_resize_env repaint_env = {.ctx = ctx, .ui = ui};
+  struct repaint_on_resize_env repaint_env = {.ps = ps, .ui = ui};
   SDL_AddEventWatch(repaint_on_resize, &repaint_env);
 
   fd_poller *poller = fd_poller_new(ps->custom_events + CUSTOM_EVENT_FD);
@@ -1385,17 +1555,34 @@ bool texpresso_main(struct persistent_state *ps)
     SDL_Event e;
     bool has_event = SDL_PollEvent(&e);
 
-    // Advance document document
+    // Advance document
     bool advance;
     {
-      int before_page_count = send(page_count, ui->eng);
+      multipage_invalidate_after(ps->mp, send(page_count, ui->eng));
       advance = advance_engine(ctx, ui);
-      int after_page_count = send(page_count, ui->eng);
+      int first_page = get_first_visible_page(ui);
+      int last_page = get_last_visible_page(ui);
+
+      int before = multipage_valid_count(ps->mp);
+      int after = send(page_count, ui->eng);
+      for (int i = before; i < after; i++)
+      {
+        fz_display_list *dl = send(render_page, ui->eng, ps->ctx, i);
+        multipage_set_page(ctx, ps->mp, i, dl);
+        pagebuffer_invalidate_page(ui->pb, i);
+        if (i == 0)
+        {
+          fz_rect r = fz_bound_display_list(ctx, dl);
+          ui->view.width_reference = (r.x1 - r.x0);
+        }
+        fz_drop_display_list(ps->ctx, dl);
+      }
+      if (send(get_status, ui->eng) == DOC_TERMINATED)
+        multipage_truncate(ctx, ps->mp);
       fflush(stdout);
 
-      if (ui->current_page >= before_page_count &&
-          ui->current_page < after_page_count)
-        ps->schedule_event(UI_RELOAD_EVENT);
+      if (first_page <= after && before <= last_page) 
+        ps->schedule_event(UI_RENDER_EVENT);
     }
 
     // Wait for event if needed
@@ -1421,39 +1608,39 @@ bool texpresso_main(struct persistent_state *ps)
               "[synctex forward] sync: hit page %d, coordinates (%d, %d)\n",
               page, x, y);
 
-      if (page != ui->current_page)
-      {
-        ui->current_page = page;
-        display_page(ps, ui);
-      }
+      // if (page != ui->current_page)
+      // {
+      //   ui->current_page = page;
+      //   display_page(ps, ui);
+      // }
 
-      float f = send(scale_factor, ui->eng);
-      fz_point p = fz_make_point(f * x, f * y);
-      fz_point pt = txp_renderer_document_to_screen(ctx, ui->doc_renderer, p);
-      fprintf(stderr, "[synctex forward] position on screen: (%.02f, %.02f)\n",
-              pt.x, pt.y);
-      int w, h;
-      txp_renderer_screen_size(ctx, ui->doc_renderer, &w, &h);
-      float margin_lo = h / 4.0f;
-      float margin_hi = h / 3.0f;
+      // float f = send(scale_factor, ui->eng);
+      // fz_point p = fz_make_point(f * x, f * y);
+      // fz_point pt = txp_renderer_document_to_screen(ctx, ui->doc_renderer, p);
+      // fprintf(stderr, "[synctex forward] position on screen: (%.02f, %.02f)\n",
+      //         pt.x, pt.y);
+      // int w, h;
+      // txp_renderer_screen_size(ctx, ui->doc_renderer, &w, &h);
+      // float margin_lo = h / 4.0f;
+      // float margin_hi = h / 3.0f;
 
-      txp_renderer_config *config =
-          txp_renderer_get_config(ctx, ui->doc_renderer);
-      float delta = 0.0f;
-      if (pt.y < margin_lo)
-        delta = -pt.y + margin_hi;
-      else if (pt.y >= h - margin_lo)
-        delta = h - pt.y - margin_hi;
-      fprintf(stderr, "[synctex forward] pan.y = %.02f + %.02f = %.02f\n",
-              config->pan.y, delta, config->pan.y + delta);
-      config->pan.y += delta;
-      if (delta != 0.0f)
-        ps->schedule_event(UI_RENDER_EVENT);
+      // txp_renderer_config *config =
+      //     txp_renderer_get_config(ctx, ui->doc_renderer);
+      // float delta = 0.0f;
+      // if (pt.y < margin_lo)
+      //   delta = -pt.y + margin_hi;
+      // else if (pt.y >= h - margin_lo)
+      //   delta = h - pt.y - margin_hi;
+      // fprintf(stderr, "[synctex forward] pan.y = %.02f + %.02f = %.02f\n",
+      //         config->pan.y, delta, config->pan.y + delta);
+      // config->pan.y += delta;
+      // if (delta != 0.0f)
+      //   ps->schedule_event(UI_RENDER_EVENT);
     }
 
     // Update scale to current window size
-    txp_renderer_set_scale_factor(ctx, ui->doc_renderer,
-                                  get_scale_factor(ui->window));
+    // txp_renderer_set_scale_factor(ctx, ui->doc_renderer,
+    //                               get_scale_factor(ui->window));
 
     // Process Event
     if (e.type == ps->custom_events + CUSTOM_EVENT_UI)
@@ -1473,33 +1660,20 @@ bool texpresso_main(struct persistent_state *ps)
           if (send(end_changes, ui->eng, ctx))
           {
             send(step, ui->eng, ctx, true);
-            ps->schedule_event(UI_RELOAD_EVENT);
+            ps->schedule_event(UI_RENDER_EVENT);
           }
           break;
         case UI_RENDER_EVENT:
-          render(ctx, ui);
+          render(ps, ui);
           send(begin_changes, ui->eng, ctx);
           flush_changes(ps, ui);
           if (send(end_changes, ui->eng, ctx))
           {
             send(step, ui->eng, ctx, true);
-            ps->schedule_event(UI_RELOAD_EVENT);
+            ps->schedule_event(UI_RENDER_EVENT);
           }
           break;
-        case UI_RELOAD_EVENT:
-        {
-          int page_count = send(page_count, ui->eng);
-          if (ui->current_page >= page_count &&
-              send(get_status, ui->eng) == DOC_TERMINATED)
-          {
-            if (page_count > 0)
-              ui->current_page = page_count - 1;
-          }
-          if (ui->current_page < page_count)
-            display_page(ps, ui);
-        }
-        break;
-        case UI_STDIN_EVENT:
+        case UI_STEP_EVENT:
           break;
       }
     }
@@ -1528,19 +1702,14 @@ bool texpresso_main(struct persistent_state *ps)
   fd_poller_free(poller);
   SDL_DelEventWatch(repaint_on_resize, &repaint_env);
 
-  if (ps->initial.initialized && ps->initial.display_list)
-    fz_drop_display_list(ctx, ps->initial.display_list);
-
   ps->initial.initialized = true;
   ps->initial.page = ui->current_page;
-  ps->initial.zoom = ui->zoom;
-  ps->initial.config = *txp_renderer_get_config(ctx, ui->doc_renderer);
-  ps->initial.display_list = txp_renderer_get_contents(ctx, ui->doc_renderer);
-  if (ps->initial.display_list)
-    fz_keep_display_list(ctx, ps->initial.display_list);
-
-  txp_renderer_free(ctx, ui->doc_renderer);
+  // ps->initial.zoom = ui->zoom;
+  //ps->initial.config = *txp_renderer_get_config(ctx, ui->doc_renderer);
+  //txp_renderer_free(ctx, ui->doc_renderer);
+  
   send(destroy, ui->eng, ctx);
+  pagebuffer_free(ui->pb);
 
   return hotload;
 }

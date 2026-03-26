@@ -28,7 +28,7 @@
 #include <stdbool.h>
 #include <SDL2/SDL.h>
 #include <mupdf/fitz/context.h>
-#include "renderer.h"
+#include "multipage.h"
 
 enum custom_events
 {
@@ -41,8 +41,7 @@ enum ui_event
 {
   UI_SCAN_EVENT,
   UI_RENDER_EVENT,
-  UI_RELOAD_EVENT,
-  UI_STDIN_EVENT,
+  UI_STEP_EVENT,
 
   UI_EVENT_COUNT,
 };
@@ -52,8 +51,6 @@ struct initial_state
   int initialized;
   int page;
   int zoom;
-  txp_renderer_config config;
-  fz_display_list *display_list;
 };
 
 enum editor_protocol
@@ -76,6 +73,7 @@ struct persistent_state {
 
   const char *exe_path, *doc_path, *doc_name, *inclusion_path;
 
+  multipage_t *mp;
   bool line_output, use_tectonic, use_texlive, initialize_only, stream_mode;
 };
 
