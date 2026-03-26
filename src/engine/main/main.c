@@ -214,7 +214,7 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
 
     strcpy(last_open, cached);
 
-    txp_input *input = calloc(1, sizeof(txp_input_file));
+    txp_input_file *input = calloc(1, sizeof(txp_input_file));
     if (!input)
       abort();
     input->id = -1;
@@ -324,7 +324,7 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
     if (!f)
       return NULL;
 
-    txp_input *input = calloc(1, sizeof(txp_input_file));
+    txp_input_file *input = calloc(1, sizeof(txp_input_file));
     if (!input)
       abort();
     input->id = -1;
