@@ -26,6 +26,7 @@
 #include <signal.h>
 #include <mupdf/fitz.h>
 #include "logo.h"
+#include "multipage.h"
 #include "driver.h"
 
 #ifdef __APPLE__
@@ -327,6 +328,7 @@ int main(int argc, const char **argv)
       .window = window,
       .renderer = renderer,
       .ctx = ctx,
+      .mp = multipage_new(),
       .exe_path = exe_path,
       .doc_path = doc_path,
       .doc_name = doc_name,
@@ -358,6 +360,8 @@ int main(int argc, const char **argv)
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
   SDL_Quit();
+
+  multipage_free(ctx, pstate.mp);
   fz_drop_context(ctx);
 
   return exit_code;
