@@ -91,6 +91,12 @@ jobs:
       - name: Run tests – TeXpresso with Tectonic
         run: make test-texpresso-tectonic || echo "fail" > texpresso-tectonic.status
 
+      - name: Run tests – Stream mode
+        run: make test-stream || echo "fail" > stream.status
+
+      - name: Run tests – Stream pipe
+        run: make test-stream-pipe || echo "fail" > stream-pipe.status
+
       - name: Report summary
         if: always()
         run: |
@@ -100,6 +106,8 @@ jobs:
           [ ! -f texpresso.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f texpresso-texlive.status ]  && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f texpresso-tectonic.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f stream.status ]      && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f stream-pipe.status ] && pass=$((pass+1)) || fail=$((fail+1))
           echo "Passed: $pass" >> "$GITHUB_STEP_SUMMARY"
           echo "Failed: $fail"  >> "$GITHUB_STEP_SUMMARY"
           [ $fail -eq 0 ]
