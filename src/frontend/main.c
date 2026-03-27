@@ -821,6 +821,8 @@ static void interpret_open(struct persistent_state *ps,
     e->edit_data = fz_new_buffer_from_copied_data(ps->ctx, data, size);
     if (e->fs_data)
       changed = find_diff(e->fs_data, data, size);
+    else if (e->seen >= 0)
+      changed = 0;
   }
 
   if (changed >= 0)
