@@ -40,6 +40,7 @@ typedef struct txp_engine_s txp_engine;
 txp_engine *txp_create_tex_engine(fz_context *ctx,
                                   const char *engine_path,
                                   bool use_texlive,
+                                  bool stream_mode,
                                   const char *inclusion_path,
                                   const char *tex_name,
                                   dvi_reshooks hooks);

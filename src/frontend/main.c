@@ -1096,7 +1096,8 @@ bool texpresso_main(struct persistent_state *ps)
       ui->eng = txp_create_dvi_engine(ps->ctx, ps->doc_name, hooks);
     else
       ui->eng = txp_create_tex_engine(ps->ctx, engine_path, using_texlive,
-                                      ps->inclusion_path, ps->doc_name, hooks);
+                                      ps->stream_mode, ps->inclusion_path,
+                                      ps->doc_name, hooks);
   }
 
   ui->sdl_renderer = ps->renderer;
