@@ -63,6 +63,12 @@ Populate TeXpresso VFS with a file at "path" storing "contents".
 
 
 ```scheme
+(open-base64 "path" "base64-contents")
+```
+
+Populate TeXpresso VFS with a file at "path" transferring binary data in base64 format. TeXpresso decodes "base64-contents" into raw bytes before storing.
+
+```scheme
 (close "path")
 ```
 

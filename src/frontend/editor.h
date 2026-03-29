@@ -67,6 +67,7 @@ struct editor_command
       const char *path;
       const char *data;
       int length;
+      bool base64;
     } open;
 
     struct {
