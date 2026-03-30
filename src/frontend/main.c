@@ -1256,7 +1256,7 @@ bool texpresso_main(struct persistent_state *ps)
 
   while (1)
   {
-    bool running = true, rerender = false;
+    bool running = true, rerender = false, advance = false;
 
     // Process events
     for (SDL_Event e; SDL_PollEvent(&e); )
@@ -1304,8 +1304,7 @@ bool texpresso_main(struct persistent_state *ps)
     if (!running)
       break;
 
-    // Advance document
-    bool advance;
+    // Update document
     {
       pagecollection_invalidate_after(&ps->pcoll, send(page_count, ui->eng));
       advance = advance_engine(ps, ui);
@@ -1380,10 +1379,13 @@ bool texpresso_main(struct persistent_state *ps)
     // Wait for next event
     // - Idle: wait indefinitely for any event
     // - Animating: wait with timeout to continue animation
-    if (viewer_is_idle(&ui->viewer))
-      SDL_WaitEvent(NULL);
-    else if (!rerender)
-      SDL_WaitEventTimeout(NULL, 10);
+    if (!advance)
+    {
+      if (viewer_is_idle(&ui->viewer))
+        SDL_WaitEvent(NULL);
+      else if (!rerender)
+        SDL_WaitEventTimeout(NULL, 10);
+    }
 
     if (ps->initialize_only)
     {
