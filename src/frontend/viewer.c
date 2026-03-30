@@ -240,6 +240,7 @@ void viewer_init(Viewer *vwr)
   vwr->margin = 10;
   vwr->screen_margin = 10;
   vwr->scroll = (ViewerScroll){0,};
+  vwr->win_w = vwr->win_h = 1;
 }
 
 /**
@@ -570,9 +571,9 @@ void viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll, SD
           if (page_top < vwr->offset_y - screenful)
             vwr->target_offset_y = vwr->offset_y - screenful + vwr->screen_margin * 2;
           else if (page_top < vwr->offset_y)
-            vwr->target_offset_y = page_top - vwr->screen_margin / 2.0f;
+            vwr->target_offset_y = page_top - vwr->screen_margin;
           else
-            vwr->target_offset_y = page_top - screenful - vwr->screen_margin / 2.0f;
+            vwr->target_offset_y = page_top - screenful - vwr->screen_margin;
         }
       }
     }
@@ -609,9 +610,9 @@ void viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll, SD
           if (page_bot > vwr->offset_y + screenful * 2)
             vwr->target_offset_y = vwr->offset_y + screenful - vwr->screen_margin * 2;
           else if (page_bot > vwr->offset_y + screenful)
-            vwr->target_offset_y = page_bot - screenful + vwr->screen_margin / 2.0f;
+            vwr->target_offset_y = page_bot - screenful + vwr->screen_margin;
           else
-            vwr->target_offset_y = page_bot + vwr->screen_margin / 2.0f;
+            vwr->target_offset_y = page_bot + vwr->screen_margin;
         }
       }
     }
@@ -845,6 +846,6 @@ fz_irect fz_relative_clipped_area(fz_irect absolute, fz_irect canvas)
   inter.x0 -= absolute.x0;
   inter.y0 -= absolute.y0;
   inter.x1 -= absolute.x0;
-  inter.y1 -= absolute.x0;
+  inter.y1 -= absolute.y0;
   return inter;
 }

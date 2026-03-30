@@ -72,27 +72,13 @@ enum ui_mouse_status
 
 typedef struct
 {
-  float zoom, target_zoom;
-  float offset_y, target_offset_y;
-  float offset_x, target_offset_x;
-  float velocity_y;
-  float width_reference;
-  bool panning, panning_x, animating;
-
-  float friction, spring_k, border_friction, zoom_speed;
-  int margin;
-  int screen_margin;
-} view_state;
-
-typedef struct
-{
   txp_engine *eng;
   SDL_Renderer *sdl_renderer;
   SDL_Window *window;
   fd_poller *fdpoll;
   PageBuffer pbuff;
   int current_page;
-  view_state view;
+  Viewer viewer;
 
   // Mouse input state
   int last_mouse_x, last_mouse_y;
@@ -271,7 +257,7 @@ static fz_point get_scale_factor(SDL_Window *window)
                        wh != 0 ? (float)ph / wh : 1);
 }
 
-static void render(struct persistent_state *ps, ui_state *ui);
+static bool render(struct persistent_state *ps, ui_state *ui, bool need);
 
 struct repaint_on_resize_env
 {
@@ -286,7 +272,10 @@ static int repaint_on_resize(void *data, SDL_Event *event)
       event->window.event == SDL_WINDOWEVENT_RESIZED &&
       SDL_GetWindowFromID(event->window.windowID) == env->ui->window)
   {
-    render(env->ps, env->ui);
+    int win_w, win_h;
+    SDL_GetWindowSize(env->ps->window, &win_w, &win_h);
+    viewer_update(&env->ui->viewer, &env->ps->pcoll, 0.0, win_w, win_h);
+    render(env->ps, env->ui, true);
   }
   return 0;
 }
@@ -1099,124 +1088,6 @@ static bool poll_stdin(void)
 
 /* --- Main Event Handler --- */
 
-static void handle_sdl_event(SDL_Event *e,
-                             ui_state *ui,
-                             struct persistent_state *ps)
-{
-  fz_context *ctx = ps->ctx;
-  switch (e->type)
-  {
-    case SDL_KEYDOWN:
-      switch (e->key.keysym.sym)
-      {
-        case SDLK_LEFT:
-        case SDLK_PAGEUP:
-          previous_page(ps, ui, 0);
-          break;
-        case SDLK_UP:
-          ui_pan(ps, ui, 2.0f / 3.0f);
-          break;
-        case SDLK_DOWN:
-          ui_pan(ps, ui, -2.0f / 3.0f);
-          break;
-        case SDLK_RIGHT:
-        case SDLK_PAGEDOWN:
-          next_page(ps, ui, 0);
-          break;
-        case SDLK_p:
-        {
-          // txp_renderer_config *config =
-          //     txp_renderer_get_config(ctx, ui->doc_renderer);
-          // config->fit = (config->fit == FIT_PAGE) ? FIT_WIDTH : FIT_PAGE;
-          ps->schedule_event(UI_RENDER_EVENT);
-        }
-        break;
-        case SDLK_b:
-          SDL_SetWindowBordered(ui->window, !!(SDL_GetWindowFlags(ui->window) &
-                                               SDL_WINDOW_BORDERLESS));
-          break;
-        case SDLK_t:
-          SDL_SetWindowAlwaysOnTop(
-              ui->window,
-              !(SDL_GetWindowFlags(ui->window) & SDL_WINDOW_ALWAYS_ON_TOP));
-          break;
-        case SDLK_c:
-        {
-          // txp_renderer_config *config =
-          //     txp_renderer_get_config(ctx, ui->doc_renderer);
-          // config->crop = !config->crop;
-          ps->schedule_event(UI_RENDER_EVENT);
-        }
-        break;
-        case SDLK_i:
-        {
-          // txp_renderer_config *config =
-          //     txp_renderer_get_config(ctx, ui->doc_renderer);
-          // if ((SDL_GetModState() & KMOD_SHIFT))
-          //   config->themed_color = !config->themed_color;
-          // else
-          //   config->invert_color = !config->invert_color;
-          ps->schedule_event(UI_RENDER_EVENT);
-        }
-        break;
-        case SDLK_ESCAPE:
-          SDL_SetWindowFullscreen(ui->window, 0);
-          break;
-        case SDLK_F5:
-          SDL_SetWindowFullscreen(ui->window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-          {
-            // txp_renderer_config *config =
-            //     txp_renderer_get_config(ctx, ui->doc_renderer);
-            // config->fit = FIT_PAGE;
-            ps->schedule_event(UI_RENDER_EVENT);
-          }
-          break;
-      }
-      break;
-    case SDL_MOUSEWHEEL:
-    {
-      int mx = 0, my = 0;
-      float px = 0, py = 0;
-#if SDL_VERSION_ATLEAST(2, 0, 260)
-      mx = e->wheel.mouseX;
-      my = e->wheel.mouseY;
-#else
-      SDL_GetMouseState(&mx, &my);
-#endif
-#if SDL_VERSION_ATLEAST(2, 0, 18)
-      px = e->wheel.preciseX;
-      py = e->wheel.preciseY;
-#else
-      px = e->wheel.x;
-      py = e->wheel.y;
-#endif
-      bool ctrl = !!(SDL_GetModState() & KMOD_CTRL);
-      ui_mouse_wheel(ps, ui, px, py, mx, my, ctrl);
-    }
-    break;
-    case SDL_MOUSEBUTTONDOWN:
-      ui_mouse_down(ps, ui, e->button.x, e->button.y, e->button.clicks,
-                    SDL_GetModState() & KMOD_CTRL);
-      break;
-    case SDL_MOUSEBUTTONUP:
-      ui_mouse_up(ui);
-      break;
-    case SDL_MOUSEMOTION:
-      ui_mouse_move(ps, ui, e->motion.x, e->motion.y);
-      break;
-    case SDL_WINDOWEVENT:
-      switch (e->window.event)
-      {
-        case SDL_WINDOWEVENT_SIZE_CHANGED:
-        case SDL_WINDOWEVENT_RESIZED:
-        case SDL_WINDOWEVENT_EXPOSED:
-          ps->schedule_event(UI_RENDER_EVENT);
-          break;
-      }
-      break;
-  }
-}
-
 struct stdin_state {
   vstack *cmd_stack;
   prot_parser cmd_parser;
@@ -1290,135 +1161,44 @@ static void stdin_process(struct stdin_state *st,
 
 /* UI rendering */
 
-float engine_get_effective_zoom(view_state *v, int win_w)
+static bool prepare_rendering(struct persistent_state *ps,
+                              ui_state *ui,
+                              VisibleRange vr,
+                              fz_irect prect)
 {
-  float base_scale = (float)(win_w - v->screen_margin * 2) / v->width_reference;
-  return v->zoom * base_scale;
-}
-
-// Rigid clamping for horizontal offset
-float get_page_scroll_limit(float page_w, float win_w, float screen_margin)
-{
-  if (page_w <= win_w)
-    return 0.0f;
-  return (page_w - win_w) / 2.0f + screen_margin;
-}
-
-float get_page_screen_x(float page_w,
-                        float win_w,
-                        float offset_x,
-                        float screen_margin)
-{
-  float world_x_base = (win_w - page_w) / 2.0f;
-
-  float limit = get_page_scroll_limit(page_w, win_w, screen_margin);
-  float clamped_offset = offset_x;
-  if (clamped_offset < -limit)
-    clamped_offset = -limit;
-  if (clamped_offset > limit)
-    clamped_offset = limit;
-
-  return (world_x_base - clamped_offset);
-}
-
-fz_irect get_page_screen_position(fz_context *ctx, PageCollection *pcoll,
-                                  view_state *e, float ez, float win_w, int i)
-{
-  float w = 0, h = 0;
-  fz_display_list *dl = pagecollection_get(pcoll, i);
-  if (dl)
+  if (vr.first_page < 0)
+    return false;
+  
+  bool result = false;
+  for (int i = vr.first_page; i <= vr.last_page; i++)
   {
-    fz_rect bounds = fz_bound_display_list(ctx, dl);
-    w = (bounds.x1 - bounds.x0) * ez;
-    h = (bounds.y1 - bounds.y0) * ez;
+    fz_irect window_rect =
+        viewer_get_page_screen_rect(ps->ctx, &ui->viewer, &ps->pcoll, i);
+    fz_irect buffer_rect =
+        viewer_get_page_buffer_rect(ps->ctx, &ui->viewer, &ps->pcoll, i);
+    fz_irect visible_rect = fz_relative_clipped_area(window_rect, prect);
+    if (pagebuffer_update_entry_from_display_list(
+        ps->ctx, &ui->pbuff, i, buffer_rect, visible_rect,
+        pagecollection_get(&ps->pcoll, i), NULL, NULL))
+      result = true;
   }
-  fz_irect r;
-  r.x0 = get_page_screen_x(w, win_w, e->offset_x * ez, e->screen_margin);
-  r.y0 = (pagecollection_page_offset(pcoll, i, e->margin) - e->offset_y) * ez;
-  r.x1 = r.x0 + w;
-  r.y1 = r.y0 + h;
-  return r;
+  return result;
 }
 
-fz_irect get_page_buffer_position(fz_context *ctx,
-                                  PageCollection *pcoll,
-                                  view_state *e,
-                                  float ez,
-                                  float win_w,
-                                  int i)
+static void render_pages(struct persistent_state *ps,
+                         ui_state *ui,
+                         VisibleRange vr,
+                         fz_irect prect)
 {
-  float offset = pagecollection_page_offset(pcoll, i, 0) * ez;
-  float w = 0, h = 0;
-  fz_display_list *dl = pagecollection_get(pcoll, i);
-  if (dl)
-  {
-    fz_rect bounds = fz_bound_display_list(ctx, dl);
-    w = (bounds.x1 - bounds.x0) * ez;
-    h = (bounds.y1 - bounds.y0) * ez;
-  }
-  return fz_make_irect(0, offset, w, offset + h);
-}
-
-static void render_pages(struct persistent_state *ps, ui_state *ui)
-{
-  if (pagecollection_count(&ps->pcoll) == 0)
+  if (vr.first_page < 0)
     return;
-
-  int pw, ph;
-  SDL_GetRendererOutputSize(ps->renderer, &pw, &ph);
-  fz_irect prect = fz_make_irect(0, 0, pw, ph);
-  pagebuffer_reserve(&ui->pbuff, pw, ph);
-  float ez = engine_get_effective_zoom(&ui->view, pw);
-
-  int first_page =
-      pagecollection_page_below(&ps->pcoll, ui->view.offset_y, ui->view.margin);
-  int last_page = pagecollection_page_above(
-      &ps->pcoll, ui->view.offset_y + ph / ez, ui->view.margin);
-
-  printf("ez:%f, first_page:%d, last_page:%d\n", ez, first_page, last_page);
-  //#define prect(r) printf("rect " #r ": (%d,%d,%d,%d)\n", r.x0, r.y0, r.x1, r.y1)
-#define prect(r)
-
-  fz_irect win_first =
-      get_page_screen_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, first_page);
-  prect(win_first);
-  fz_irect buf_first =
-      get_page_buffer_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, first_page);
-  prect(buf_first);
-  fz_irect win_last =
-      get_page_screen_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, last_page);
-  prect(win_last);
-  fz_irect buf_last =
-      get_page_buffer_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, last_page);
-  prect(buf_last);
-  fz_irect vis_first = fz_relative_clipped_area(win_first, prect);
-  prect(vis_first);
-  fz_irect vis_last = fz_relative_clipped_area(win_last, prect);
-  prect(vis_last);
-
-  for (int i = first_page; i <= last_page; i++)
-  {
-    //printf("cache %d\n", i);
-    fz_irect window_rect =
-        get_page_screen_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, i);
-    prect(window_rect);
-    fz_irect buffer_rect =
-        get_page_buffer_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, i);
-    prect(buffer_rect);
-    fz_irect visible_rect =
-        fz_relative_clipped_area(window_rect, prect);
-    prect(visible_rect);
-    pagebuffer_update_entry_from_display_list(
-        ps->ctx, &ui->pbuff, i, buffer_rect, visible_rect, pagecollection_get(&ps->pcoll, i),
-        NULL, NULL);
-  }
-
-  for (int i = first_page; i <= last_page; i++)
+  
+  for (int i = vr.first_page; i <= vr.last_page; i++)
   {
     fz_irect window_rect =
-        get_page_screen_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, i);
+      viewer_get_page_screen_rect(ps->ctx, &ui->viewer, &ps->pcoll, i);
     fz_irect buffer_rect =
-        get_page_buffer_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, i);
+      viewer_get_page_buffer_rect(ps->ctx, &ui->viewer, &ps->pcoll, i);
     fz_irect visible_rect =
         fz_relative_clipped_area(window_rect, prect);
 
@@ -1428,23 +1208,31 @@ static void render_pages(struct persistent_state *ps, ui_state *ui)
     visible_rect.y0 += buffer_rect.y0;
     visible_rect.x1 += buffer_rect.x0;
     visible_rect.y1 += buffer_rect.y0;
-    printf("blit page %d: (%d,%d,%d,%d) -> %d, %d \n", i,
-           visible_rect.x0,
-           visible_rect.y0,
-           visible_rect.x1,
-           visible_rect.y1,
-           x, y
-           );
     pagebuffer_blit(&ui->pbuff, x, y, visible_rect);
   }
 }
 
-static void render(struct persistent_state *ps, ui_state *ui)
+static bool render(struct persistent_state *ps, ui_state *ui, bool need)
 {
-  SDL_SetRenderDrawColor(ps->renderer, 96, 96, 96, 255);
-  SDL_RenderClear(ps->renderer);
-  render_pages(ps, ui);
-  SDL_RenderPresent(ps->renderer);
+  int pw, ph;
+  SDL_GetRendererOutputSize(ps->renderer, &pw, &ph);
+  pagebuffer_reserve(&ui->pbuff, pw, ph);
+  fz_irect prect = fz_make_irect(0, 0, pw, ph);
+  VisibleRange vr = viewer_get_visible_range(ps->ctx, &ui->viewer, &ps->pcoll);
+  printf("first_page:%d last_page:%d\n", vr.first_page, vr.last_page);
+
+  if (prepare_rendering(ps, ui, vr, prect))
+    need = true;
+
+  if (need)
+  {
+    SDL_SetRenderDrawColor(ps->renderer, 96, 96, 96, 255);
+    SDL_RenderClear(ps->renderer);
+    render_pages(ps, ui, vr, prect);
+    viewer_draw_scrollbar(&ui->viewer, ps->renderer);
+    SDL_RenderPresent(ps->renderer);
+  }
+  return need;
 }
 
 /* --- Entry Point --- */
@@ -1456,8 +1244,7 @@ bool texpresso_main(struct persistent_state *ps)
 
   ui_state raw_ui, *ui = &raw_ui;
   ui->window = ps->window;
-  ui->view = (view_state){0,};
-  ui->view.zoom = 1.0;
+  viewer_init(&ui->viewer);
 
   bool using_texlive = false;
   if (ps->use_texlive)
@@ -1533,11 +1320,11 @@ bool texpresso_main(struct persistent_state *ps)
   ui->last_mouse_x = -1000;
   ui->last_mouse_y = -1000;
 
-  bool quit = false, hotload = false;
+  bool hotload = false;
   fz_context *ctx = ps->ctx;
 
   send(step, ui->eng, ctx, true);
-  render(ps, ui);
+  render(ps, ui, true);
   ps->schedule_event(UI_RENDER_EVENT);
 
   struct repaint_on_resize_env repaint_env = {.ps = ps, .ui = ui};
@@ -1549,10 +1336,68 @@ bool texpresso_main(struct persistent_state *ps)
   struct stdin_state stdin_st;
   stdin_init(ctx, &stdin_st, ps->protocol);
 
-  while (!quit)
+  Uint64 last_time = SDL_GetPerformanceCounter();
+  Uint64 freq = SDL_GetPerformanceFrequency();
+
+  while (1)
   {
-    SDL_Event e;
-    bool has_event = SDL_PollEvent(&e);
+    bool running = true, rerender = false;
+
+    // Process events
+    for (SDL_Event e; SDL_PollEvent(&e); )
+    {
+      // Delegate Input to Engine
+      viewer_handle_event(ctx, &ui->viewer, &ps->pcoll, &e, ps->window);
+
+      if (e.type == ps->custom_events + CUSTOM_EVENT_UI)
+      {
+        *(char *)e.user.data1 = 0;
+        switch (e.user.code)
+        {
+          case UI_SCAN_EVENT:
+            if (ps->should_hotload_binary())
+            {
+              running = false;
+              hotload = true;
+              continue;
+            }
+            send(begin_changes, ui->eng, ctx);
+            flush_changes(ps, ui);
+            send(detect_changes, ui->eng, ctx);
+            if (send(end_changes, ui->eng, ctx))
+            {
+              send(step, ui->eng, ctx, true);
+              ps->schedule_event(UI_RENDER_EVENT);
+            }
+            break;
+          case UI_RENDER_EVENT:
+            render(ps, ui, true);
+            send(begin_changes, ui->eng, ctx);
+            flush_changes(ps, ui);
+            if (send(end_changes, ui->eng, ctx))
+            {
+              send(step, ui->eng, ctx, true);
+              ps->schedule_event(UI_RENDER_EVENT);
+            }
+            break;
+          case UI_STEP_EVENT:
+            break;
+        }
+      }
+      if (e.type == ps->custom_events + CUSTOM_EVENT_FD)
+      {
+        if (e.user.code == STDIN_FILENO)
+          stdin_process(&stdin_st, ps, poller, ui);
+      }
+      if (e.type == SDL_QUIT ||
+          e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_q)
+        running = false;
+      if (e.type == SDL_WINDOWEVENT)
+        rerender = true;
+    }
+
+    if (!running)
+      break;
 
     // Advance document
     bool advance;
@@ -1569,11 +1414,6 @@ bool texpresso_main(struct persistent_state *ps)
         fz_display_list *dl = send(render_page, ui->eng, ps->ctx, i);
         pagecollection_set(ctx, &ps->pcoll, i, dl);
         pagebuffer_invalidate_page(&ui->pbuff, i);
-        if (i == 0)
-        {
-          fz_rect r = fz_bound_display_list(ctx, dl);
-          ui->view.width_reference = (r.x1 - r.x0);
-        }
         fz_drop_display_list(ps->ctx, dl);
       }
       if (send(get_status, ui->eng) == DOC_TERMINATED)
@@ -1584,18 +1424,19 @@ bool texpresso_main(struct persistent_state *ps)
         ps->schedule_event(UI_RENDER_EVENT);
     }
 
-    // Wait for event if needed
-    if (!has_event)
-    {
-      if (advance)
-        continue;
-      has_event = SDL_WaitEvent(&e);
-      if (!has_event)
-      {
-        fprintf(stderr, "SDL_WaitEvent error: %s\n", SDL_GetError());
-        break;
-      }
-    }
+    // Update physics
+    
+    Uint64 now = SDL_GetPerformanceCounter();
+    float dt = (float)(now - last_time) / freq;
+    last_time = now;
+    if (dt > 0.1f) dt = 0.1f;  // Clamp delta time
+    printf("dt: %.02f\n", dt);
+
+    int win_w, win_h;
+    SDL_GetWindowSize(ps->window, &win_w, &win_h);
+
+    viewer_update(&ui->viewer, &ps->pcoll, dt, win_w, win_h);
+    rerender = viewer_need_rerender(ctx, &ui->viewer, &ps->pcoll) || rerender;
 
     // Check synctex target
     fz_buffer *buf;
@@ -1637,63 +1478,22 @@ bool texpresso_main(struct persistent_state *ps)
       //   ps->schedule_event(UI_RENDER_EVENT);
     }
 
-    // Update scale to current window size
-    // txp_renderer_set_scale_factor(ctx, ui->doc_renderer,
-    //                               get_scale_factor(ui->window));
+    rerender = render(ps, ui, rerender);
 
-    // Process Event
-    if (e.type == ps->custom_events + CUSTOM_EVENT_UI)
-    {
-      *(char *)e.user.data1 = 0;
-      switch (e.user.code)
-      {
-        case UI_SCAN_EVENT:
-          if (ps->should_hotload_binary())
-          {
-            quit = hotload = true;
-            continue;
-          }
-          send(begin_changes, ui->eng, ctx);
-          flush_changes(ps, ui);
-          send(detect_changes, ui->eng, ctx);
-          if (send(end_changes, ui->eng, ctx))
-          {
-            send(step, ui->eng, ctx, true);
-            ps->schedule_event(UI_RENDER_EVENT);
-          }
-          break;
-        case UI_RENDER_EVENT:
-          render(ps, ui);
-          send(begin_changes, ui->eng, ctx);
-          flush_changes(ps, ui);
-          if (send(end_changes, ui->eng, ctx))
-          {
-            send(step, ui->eng, ctx, true);
-            ps->schedule_event(UI_RENDER_EVENT);
-          }
-          break;
-        case UI_STEP_EVENT:
-          break;
-      }
-    }
-    else if (e.type == ps->custom_events + CUSTOM_EVENT_FD)
-    {
-      if (e.user.code == STDIN_FILENO)
-        stdin_process(&stdin_st, ps, poller, ui);
-    }
-    else
-    {
-      handle_sdl_event(&e, ui, ps);
-      if (e.type == SDL_QUIT ||
-          e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_q)
-        quit = true;
-    }
+    // Wait for next event
+    // - Idle: wait indefinitely for any event
+    // - Animating: wait with timeout to continue animation
+    if (viewer_is_idle(&ui->viewer))
+      SDL_WaitEvent(NULL);
+    else if (!rerender)
+      SDL_WaitEventTimeout(NULL, 10);
 
     if (ps->initialize_only)
     {
       fprintf(stderr, "[info] Initialize mode: terminating engine process\n");
-      quit = true;
+      running = false;
     }
+
   }
 
   // Cleanup
@@ -1703,9 +1503,6 @@ bool texpresso_main(struct persistent_state *ps)
 
   ps->initial.initialized = true;
   ps->initial.page = ui->current_page;
-  // ps->initial.zoom = ui->zoom;
-  //ps->initial.config = *txp_renderer_get_config(ctx, ui->doc_renderer);
-  //txp_renderer_free(ctx, ui->doc_renderer);
 
   send(destroy, ui->eng, ctx);
   pagebuffer_finalize(&ui->pbuff);
