@@ -1207,7 +1207,7 @@ static bool render(struct persistent_state *ps, ui_state *ui, bool need)
   pagebuffer_reserve(&ui->pbuff, pw, ph);
   fz_irect prect = fz_make_irect(0, 0, pw, ph);
   VisibleRange vr = viewer_get_visible_range(ps->ctx, &ui->viewer, &ps->pcoll);
-  printf("first_page:%d last_page:%d\n", vr.first_page, vr.last_page);
+  //printf("first_page:%d last_page:%d\n", vr.first_page, vr.last_page);
 
   if (prepare_rendering(ps, ui, vr, prect))
     need = true;
@@ -1417,7 +1417,6 @@ bool texpresso_main(struct persistent_state *ps)
     float dt = (float)(now - last_time) / freq;
     last_time = now;
     if (dt > 0.1f) dt = 0.1f;  // Clamp delta time
-    printf("dt: %.02f\n", dt);
 
     int win_w, win_h;
     SDL_GetWindowSize(ps->window, &win_w, &win_h);
