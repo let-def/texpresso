@@ -66,6 +66,7 @@ struct tex_engine
   char *engine_path;
   char *inclusion_path;
   bool use_texlive;
+  bool stream_mode;
 
   filesystem_t *fs;
   state_t st;
@@ -482,7 +483,11 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       if (q->tag == Q_OPRD)
       {
         e = filesystem_lookup(self->fs, q->open.path);
-        if (!e || !entry_data(e))
+        if (self->stream_mode && e && entry_data(e))
+        {
+          // Stream mode: VFS data available, skip filesystem lookup
+        }
+        else if (!e || !entry_data(e))
         {
           fs_path = lookup_path(self, q->open.path, fs_path_buffer, NULL);
           if (!fs_path)
@@ -513,12 +518,22 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       {
         if (e->saved.level < FILE_READ)
         {
-          if (!fs_path)
+          if (!fs_path && !(self->stream_mode && e->edit_data))
             fs_path = lookup_path(self, q->open.path, fs_path_buffer, NULL);
           if (!fs_path)
           {
             if (!e->edit_data)
+            {
+              if (self->stream_mode)
+              {
+                log_fileentry(ctx, self->log, e);
+                record_seen(self, e, INT_MAX, q->time);
+                a.tag = A_PASS;
+                channel_write_answer(self->c, p->fd, &a);
+                break;
+              }
               mabort("path: %s\nmode:%c\n", q->open.path, (q->tag == Q_OPRD) ? 'r' : 'w');
+            }
             e->saved.level = FILE_READ;
             memset(&e->fs_stat, 0, sizeof(e->fs_stat));
           }
@@ -1361,6 +1376,7 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
 txp_engine *txp_create_tex_engine(fz_context *ctx,
                                   const char *engine_path,
                                   bool use_texlive,
+                                  bool stream_mode,
                                   const char *inclusion_path,
                                   const char *tex_name,
                                   dvi_reshooks hooks)
@@ -1383,6 +1399,7 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
 
   self->dvi = incdvi_new(ctx, hooks);
   self->use_texlive = use_texlive;
+  self->stream_mode = stream_mode;
 
   self->stex = synctex_new(ctx);
   self->rollback.trace_len = NOT_IN_TRANSACTION;

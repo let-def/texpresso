@@ -106,7 +106,7 @@ static void usage(void)
 {
   fprintf(stderr,
           "Usage: texpresso [-I path]* [-json] [-lines] [-texlive] [-tectonic] "
-          "[-test-initialize] root_file.tex\n");
+          "[-test-initialize] [-stream] root_file.tex\n");
   fprintf(stderr,
           " -I path    Add a path to included directories. \n"
           "    Files are looked up relative to document directory and all "
@@ -123,6 +123,8 @@ static void usage(void)
           "tectonic command)\n");
   fprintf(stderr,
           " -test-initialize  Run a single cycle for test purposes\n");
+  fprintf(stderr,
+          " -stream   Skip filesystem lookups; files are pushed via editor commands\n");
 }
 
 int main(int argc, const char **argv)
@@ -152,6 +154,7 @@ int main(int argc, const char **argv)
   bool use_tectonic = 0;
   bool use_texlive = 0;
   bool initialize_only = 0;
+  bool stream_mode = 0;
 
   int inclusion_path_size = 1;
   for (int i = 1; i < argc; i++)
@@ -190,6 +193,10 @@ int main(int argc, const char **argv)
       else if (strcmp(arg, "-test-initialize") == 0)
       {
         initialize_only = 1;
+      }
+      else if (strcmp(arg, "-stream") == 0)
+      {
+        stream_mode = 1;
       }
       else
       {
@@ -244,8 +251,17 @@ int main(int argc, const char **argv)
   char doc_path[PATH_MAX];
   if (!realpath(doc_arg, doc_path))
   {
-    perror("finding document path");
-    abort();
+    if (stream_mode)
+    {
+      // In stream mode, the file may not exist on disk yet.
+      // Construct doc_path from cwd + doc_arg basename.
+      snprintf(doc_path, PATH_MAX, "%s/%s", work_dir, doc_arg);
+    }
+    else
+    {
+      perror("finding document path");
+      abort();
+    }
   }
 
   char *doc_name = last_index(doc_path, '/');
@@ -322,7 +338,8 @@ int main(int argc, const char **argv)
       .line_output = line_output,
       .use_tectonic = use_tectonic,
       .use_texlive = use_texlive,
-      .initialize_only = initialize_only
+      .initialize_only = initialize_only,
+      .stream_mode = stream_mode
   };
 
   int exit_code = 0;
