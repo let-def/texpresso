@@ -77,7 +77,6 @@ typedef struct
   SDL_Window *window;
   fd_poller *fdpoll;
   PageBuffer pbuff;
-  int current_page;
   Viewer viewer;
 
   // Mouse input state
@@ -871,73 +870,6 @@ static void SDL_SetWindowAlwaysOnTop(SDL_Window *window, SDL_bool state)
 }
 #endif
 
-enum pan_to { PAN_TO_TOP, PAN_TO_BOTTOM };
-
-static void pan_to(fz_context *ctx, ui_state *ui, enum pan_to to)
-{
-  // FIXME
-  // txp_renderer_config *config = txp_renderer_get_config(ctx, ui->doc_renderer);
-  // txp_renderer_bounds bounds;
-  // if (txp_renderer_page_bounds(ctx, ui->doc_renderer, &bounds))
-  //   config->pan.y =
-  //       (to == PAN_TO_TOP) ? bounds.pan_interval.y : -bounds.pan_interval.y;
-}
-
-static void previous_page(struct persistent_state *ps, ui_state *ui, bool pan)
-{
-  synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
-  // if (get_current_page(ui) > 0)
-  // {
-  //   ui->current_page -= 1;
-  //   int page_count = send(page_count, ui->eng);
-  //   if (page_count > 0 && ui->current_page >= page_count &&
-  //       send(get_status, ui->eng) == DOC_TERMINATED)
-  //     ui->current_page = page_count - 1;
-
-  //   if (pan)
-  //     pan_to(ps->ctx, ui, PAN_TO_BOTTOM);
-
-  //   ps->schedule_event(UI_RENDER_EVENT);
-  // }
-}
-
-static void next_page(struct persistent_state *ps, ui_state *ui, bool pan)
-{
-  synctex_set_target(send(synctex, ui->eng, NULL), 0, NULL, 0);
-  ui->current_page += 1;
-  if (pan)
-    pan_to(ps->ctx, ui, PAN_TO_TOP);
-  ps->schedule_event(UI_RENDER_EVENT);
-}
-
-static void ui_pan(struct persistent_state *ps, ui_state *ui, float factor)
-{
-  // FIXME
-  // fz_point scale = get_scale_factor(ui->window);
-  // txp_renderer_config *config = txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-  // txp_renderer_bounds bounds;
-
-  // if (!txp_renderer_page_bounds(ps->ctx, ui->doc_renderer, &bounds))
-  //   return;
-
-  // float delta = bounds.window_size.y * scale.y * factor;
-  // float range = bounds.pan_interval.y < 0 ? 0 : bounds.pan_interval.y;
-
-  // if (config->pan.y == -range && factor < 0)
-  // {
-  //   next_page(ps, ui, 1);
-  //   return;
-  // }
-  // if (config->pan.y == range && factor > 0)
-  // {
-  //   previous_page(ps, ui, 1);
-  //   return;
-  // }
-
-  // config->pan.y += delta;
-  ps->schedule_event(UI_RENDER_EVENT);
-}
-
 static void interpret_command(struct persistent_state *ps,
                               ui_state *ui,
                               vstack *stack,
@@ -985,10 +917,12 @@ static void interpret_command(struct persistent_state *ps,
     }
     break;
     case EDIT_PREVIOUS_PAGE:
-      previous_page(ps, ui, 0);
+      // FIXME: Todo
+      //previous_page(ps, ui, 0);
       break;
     case EDIT_NEXT_PAGE:
-      next_page(ps, ui, 0);
+      // FIXME: Todo
+      //next_page(ps, ui, 0);
       break;
     case EDIT_MOVE_WINDOW:
     {
@@ -1289,18 +1223,11 @@ bool texpresso_main(struct persistent_state *ps)
 
   ui->sdl_renderer = ps->renderer;
   pagebuffer_init(&ui->pbuff, ui->sdl_renderer);
-  ui->current_page = 0;
-  // ui->zoom = 0;
   pagecollection_invalidate_after(&ps->pcoll, 0);
 
   if (ps->initial.initialized)
   {
     SDL_FlushEvents(ps->custom_events, ps->custom_events + CUSTOM_EVENT_COUNT - 1);
-    ui->current_page = ps->initial.page;
-    // ui->zoom = ps->initial.zoom;
-    // *txp_renderer_get_config(ps->ctx, ui->doc_renderer) = ps->initial.config;
-    // txp_renderer_set_contents(ps->ctx, ui->doc_renderer,
-    //                           ps->initial.display_list);
     editor_reset_sync();
   }
 
@@ -1355,17 +1282,7 @@ bool texpresso_main(struct persistent_state *ps)
             if (send(end_changes, ui->eng, ctx))
             {
               send(step, ui->eng, ctx, true);
-              ps->schedule_event(UI_RENDER_EVENT);
-            }
-            break;
-          case UI_RENDER_EVENT:
-            render(ps, ui, true);
-            send(begin_changes, ui->eng, ctx);
-            flush_changes(ps, ui);
-            if (send(end_changes, ui->eng, ctx))
-            {
-              send(step, ui->eng, ctx, true);
-              ps->schedule_event(UI_RENDER_EVENT);
+              rerender = true;
             }
             break;
           case UI_STEP_EVENT:
@@ -1407,8 +1324,8 @@ bool texpresso_main(struct persistent_state *ps)
         pagecollection_truncate(ctx, &ps->pcoll);
       fflush(stdout);
 
-      if (first_page <= after && before <= last_page)
-        ps->schedule_event(UI_RENDER_EVENT);
+      if (vr.first_page <= after && before <= vr.last_page)
+        rerender = true;
     }
 
     // Update physics
@@ -1433,12 +1350,6 @@ bool texpresso_main(struct persistent_state *ps)
       fprintf(stderr,
               "[synctex forward] sync: hit page %d, coordinates (%d, %d)\n",
               page, x, y);
-
-      // if (page != ui->current_page)
-      // {
-      //   ui->current_page = page;
-      //   display_page(ps, ui);
-      // }
 
       // float f = send(scale_factor, ui->eng);
       // fz_point p = fz_make_point(f * x, f * y);
@@ -1488,7 +1399,7 @@ bool texpresso_main(struct persistent_state *ps)
   SDL_DelEventWatch(repaint_on_resize, &repaint_env);
 
   ps->initial.initialized = true;
-  ps->initial.page = ui->current_page;
+  // FIXME: persist viewer state?
 
   send(destroy, ui->eng, ctx);
   pagebuffer_finalize(&ui->pbuff);
