@@ -26,6 +26,7 @@
 #include <signal.h>
 #include <mupdf/fitz.h>
 #include "logo.h"
+#include "pagecollection.h"
 #include "driver.h"
 
 #ifdef __APPLE__
@@ -327,7 +328,6 @@ int main(int argc, const char **argv)
       .window = window,
       .renderer = renderer,
       .ctx = ctx,
-      .mp = multipage_new(),
       .exe_path = exe_path,
       .doc_path = doc_path,
       .doc_name = doc_name,
@@ -342,6 +342,7 @@ int main(int argc, const char **argv)
       .initialize_only = initialize_only,
       .stream_mode = stream_mode
   };
+  pagecollection_init(&pstate.pcoll);
 
   int exit_code = 0;
 
@@ -360,7 +361,7 @@ int main(int argc, const char **argv)
   SDL_DestroyWindow(window);
   SDL_Quit();
 
-  multipage_free(ctx, pstate.mp);
+  pagecollection_finalize(ctx, &pstate.pcoll);
   fz_drop_context(ctx);
 
   return exit_code;

@@ -48,7 +48,7 @@ typedef struct fileentry_s {
 
   // Cached picture information
   struct pic_cache pic_cache;
-  
+
   // State of the file in the text editor (or NULL if unedited)
   fz_buffer *edit_data;
 

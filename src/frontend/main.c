@@ -35,12 +35,14 @@
 #include "engine.h"
 #include "fd_poll.h"
 #include "mydvi.h"
+#include "pagecollection.h"
 #include "prot_parser.h"
 #include "providers.h"
 #include "synctex.h"
 #include "utf_mapping.h"
 #include "vstack.h"
 #include "pagebuffer.h"
+#include "viewer.h"
 
 /* --- Configuration Constants --- */
 
@@ -88,7 +90,7 @@ typedef struct
   SDL_Renderer *sdl_renderer;
   SDL_Window *window;
   fd_poller *fdpoll;
-  pagebuffer_t *pb;
+  PageBuffer pbuff;
   int current_page;
   view_state view;
 
@@ -1319,11 +1321,11 @@ float get_page_screen_x(float page_w,
   return (world_x_base - clamped_offset);
 }
 
-fz_irect get_page_screen_position(fz_context *ctx, multipage_t *mp,
+fz_irect get_page_screen_position(fz_context *ctx, PageCollection *pcoll,
                                   view_state *e, float ez, float win_w, int i)
 {
   float w = 0, h = 0;
-  fz_display_list *dl = multipage_get(mp, i);
+  fz_display_list *dl = pagecollection_get(pcoll, i);
   if (dl)
   {
     fz_rect bounds = fz_bound_display_list(ctx, dl);
@@ -1332,22 +1334,22 @@ fz_irect get_page_screen_position(fz_context *ctx, multipage_t *mp,
   }
   fz_irect r;
   r.x0 = get_page_screen_x(w, win_w, e->offset_x * ez, e->screen_margin);
-  r.y0 = (multipage_page_offset(mp, i, e->margin) - e->offset_y) * ez;
+  r.y0 = (pagecollection_page_offset(pcoll, i, e->margin) - e->offset_y) * ez;
   r.x1 = r.x0 + w;
   r.y1 = r.y0 + h;
   return r;
 }
 
 fz_irect get_page_buffer_position(fz_context *ctx,
-                                  multipage_t *mp,
+                                  PageCollection *pcoll,
                                   view_state *e,
                                   float ez,
                                   float win_w,
                                   int i)
 {
-  float offset = multipage_page_offset(mp, i, 0) * ez;
+  float offset = pagecollection_page_offset(pcoll, i, 0) * ez;
   float w = 0, h = 0;
-  fz_display_list *dl = multipage_get(mp, i);
+  fz_display_list *dl = pagecollection_get(pcoll, i);
   if (dl)
   {
     fz_rect bounds = fz_bound_display_list(ctx, dl);
@@ -1359,69 +1361,66 @@ fz_irect get_page_buffer_position(fz_context *ctx,
 
 static void render_pages(struct persistent_state *ps, ui_state *ui)
 {
-  if (multipage_count(ps->mp) == 0)
+  if (pagecollection_count(&ps->pcoll) == 0)
     return;
-  
+
   int pw, ph;
   SDL_GetRendererOutputSize(ps->renderer, &pw, &ph);
   fz_irect prect = fz_make_irect(0, 0, pw, ph);
-  pagebuffer_reserve(ui->pb, pw, ph);
+  pagebuffer_reserve(&ui->pbuff, pw, ph);
   float ez = engine_get_effective_zoom(&ui->view, pw);
 
-  int first_page = multipage_page_below(ps->mp, ui->view.offset_y,
-                                        ui->view.margin);
-  int last_page = multipage_page_above(ps->mp, ui->view.offset_y + ph / ez,
-                                       ui->view.margin);
+  int first_page =
+      pagecollection_page_below(&ps->pcoll, ui->view.offset_y, ui->view.margin);
+  int last_page = pagecollection_page_above(
+      &ps->pcoll, ui->view.offset_y + ph / ez, ui->view.margin);
 
-  //printf("ez:%f, first_page:%d, last_page:%d\n", ez, first_page, last_page);
+  printf("ez:%f, first_page:%d, last_page:%d\n", ez, first_page, last_page);
   //#define prect(r) printf("rect " #r ": (%d,%d,%d,%d)\n", r.x0, r.y0, r.x1, r.y1)
 #define prect(r)
 
   fz_irect win_first =
-      get_page_screen_position(ps->ctx, ps->mp, &ui->view, ez, pw, first_page);
+      get_page_screen_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, first_page);
   prect(win_first);
   fz_irect buf_first =
-      get_page_buffer_position(ps->ctx, ps->mp, &ui->view, ez, pw, first_page);
+      get_page_buffer_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, first_page);
   prect(buf_first);
   fz_irect win_last =
-      get_page_screen_position(ps->ctx, ps->mp, &ui->view, ez, pw, last_page);
+      get_page_screen_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, last_page);
   prect(win_last);
   fz_irect buf_last =
-      get_page_buffer_position(ps->ctx, ps->mp, &ui->view, ez, pw, last_page);
+      get_page_buffer_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, last_page);
   prect(buf_last);
-  fz_irect vis_first = pagebuffer_relative_clipped_area(win_first, prect);
+  fz_irect vis_first = fz_relative_clipped_area(win_first, prect);
   prect(vis_first);
-  fz_irect vis_last = pagebuffer_relative_clipped_area(win_last, prect);
+  fz_irect vis_last = fz_relative_clipped_area(win_last, prect);
   prect(vis_last);
-
-  pagebuffer_scroll(ui->pb, buf_first.y0 + vis_first.y0,
-                    buf_last.y0 + vis_last.y1, first_page, last_page);
 
   for (int i = first_page; i <= last_page; i++)
   {
     //printf("cache %d\n", i);
     fz_irect window_rect =
-        get_page_screen_position(ps->ctx, ps->mp, &ui->view, ez, pw, i);
+        get_page_screen_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, i);
     prect(window_rect);
     fz_irect buffer_rect =
-        get_page_buffer_position(ps->ctx, ps->mp, &ui->view, ez, pw, i);
+        get_page_buffer_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, i);
     prect(buffer_rect);
     fz_irect visible_rect =
-        pagebuffer_relative_clipped_area(window_rect, prect);
+        fz_relative_clipped_area(window_rect, prect);
     prect(visible_rect);
     pagebuffer_update_entry_from_display_list(
-        ps->ctx, ui->pb, i, buffer_rect, visible_rect, multipage_get(ps->mp, i),
+        ps->ctx, &ui->pbuff, i, buffer_rect, visible_rect, pagecollection_get(&ps->pcoll, i),
         NULL, NULL);
   }
 
   for (int i = first_page; i <= last_page; i++)
   {
     fz_irect window_rect =
-        get_page_screen_position(ps->ctx, ps->mp, &ui->view, ez, pw, i);
+        get_page_screen_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, i);
     fz_irect buffer_rect =
-        get_page_buffer_position(ps->ctx, ps->mp, &ui->view, ez, pw, i);
+        get_page_buffer_position(ps->ctx, &ps->pcoll, &ui->view, ez, pw, i);
     fz_irect visible_rect =
-        pagebuffer_relative_clipped_area(window_rect, prect);
+        fz_relative_clipped_area(window_rect, prect);
 
     int x = window_rect.x0 + visible_rect.x0;
     int y = window_rect.y0 + visible_rect.y0;
@@ -1429,14 +1428,14 @@ static void render_pages(struct persistent_state *ps, ui_state *ui)
     visible_rect.y0 += buffer_rect.y0;
     visible_rect.x1 += buffer_rect.x0;
     visible_rect.y1 += buffer_rect.y0;
-    //printf("blit page %d: (%d,%d,%d,%d) -> %d, %d \n", i,
-    //       visible_rect.x0,
-    //       visible_rect.y0,
-    //       visible_rect.x1,
-    //       visible_rect.y1,
-    //       x, y
-    //       );
-    pagebuffer_blit(ui->pb, x, y, visible_rect);
+    printf("blit page %d: (%d,%d,%d,%d) -> %d, %d \n", i,
+           visible_rect.x0,
+           visible_rect.y0,
+           visible_rect.x1,
+           visible_rect.y1,
+           x, y
+           );
+    pagebuffer_blit(&ui->pbuff, x, y, visible_rect);
   }
 }
 
@@ -1457,6 +1456,7 @@ bool texpresso_main(struct persistent_state *ps)
 
   ui_state raw_ui, *ui = &raw_ui;
   ui->window = ps->window;
+  ui->view = (view_state){0,};
   ui->view.zoom = 1.0;
 
   bool using_texlive = false;
@@ -1513,10 +1513,10 @@ bool texpresso_main(struct persistent_state *ps)
   }
 
   ui->sdl_renderer = ps->renderer;
-  ui->pb = pagebuffer_new(ui->sdl_renderer);
+  pagebuffer_init(&ui->pbuff, ui->sdl_renderer);
   ui->current_page = 0;
   // ui->zoom = 0;
-  multipage_invalidate_after(ps->mp, 0);
+  pagecollection_invalidate_after(&ps->pcoll, 0);
 
   if (ps->initial.initialized)
   {
@@ -1557,18 +1557,18 @@ bool texpresso_main(struct persistent_state *ps)
     // Advance document
     bool advance;
     {
-      multipage_invalidate_after(ps->mp, send(page_count, ui->eng));
+      pagecollection_invalidate_after(&ps->pcoll, send(page_count, ui->eng));
       advance = advance_engine(ctx, ui);
       int first_page = get_first_visible_page(ui);
       int last_page = get_last_visible_page(ui);
 
-      int before = multipage_valid_count(ps->mp);
+      int before = pagecollection_valid_count(&ps->pcoll);
       int after = send(page_count, ui->eng);
       for (int i = before; i < after; i++)
       {
         fz_display_list *dl = send(render_page, ui->eng, ps->ctx, i);
-        multipage_set_page(ctx, ps->mp, i, dl);
-        pagebuffer_invalidate_page(ui->pb, i);
+        pagecollection_set(ctx, &ps->pcoll, i, dl);
+        pagebuffer_invalidate_page(&ui->pbuff, i);
         if (i == 0)
         {
           fz_rect r = fz_bound_display_list(ctx, dl);
@@ -1577,10 +1577,10 @@ bool texpresso_main(struct persistent_state *ps)
         fz_drop_display_list(ps->ctx, dl);
       }
       if (send(get_status, ui->eng) == DOC_TERMINATED)
-        multipage_truncate(ctx, ps->mp);
+        pagecollection_truncate(ctx, &ps->pcoll);
       fflush(stdout);
 
-      if (first_page <= after && before <= last_page) 
+      if (first_page <= after && before <= last_page)
         ps->schedule_event(UI_RENDER_EVENT);
     }
 
@@ -1706,9 +1706,9 @@ bool texpresso_main(struct persistent_state *ps)
   // ps->initial.zoom = ui->zoom;
   //ps->initial.config = *txp_renderer_get_config(ctx, ui->doc_renderer);
   //txp_renderer_free(ctx, ui->doc_renderer);
-  
+
   send(destroy, ui->eng, ctx);
-  pagebuffer_free(ui->pb);
+  pagebuffer_finalize(&ui->pbuff);
 
   return hotload;
 }

@@ -1,114 +1,246 @@
-#ifndef MULTIPAGE_H
-#define MULTIPAGE_H
+#ifndef PAGECOLLECTION_H
+#define PAGECOLLECTION_H
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <mupdf/fitz.h>
+#include "prefixsum.h"
+
+/**
+ * @brief Represents a collection of pages with cached display lists.
+ *
+ * PageCollection manages a dynamic array of pages, each containing a display list
+ * for rendering. It maintains a prefix sum structure (psum) to efficiently compute
+ * cumulative heights and perform scroll-based page lookups.
+ *
+ * It supports *valid* and *invalid* pages: valid pages are loaded and up-to-date;
+ * invalid pages (beyond `valid`) are stale or empty but still allocated.
+ * The structure allows forward-only population (with lookahead allocation) and
+ * backtracking via invalidation.
+ *
+ * Lifecycle semantics:
+ * - Pages are populated sequentially from index `0`.
+ * - Pages may be invalidated (marked stale) only by backtracking: `pagecollection_invalidate_after`.
+ * - `valid` tracks up-to-date pages; `count` is the total allocated size.
+ * - When the final document length is known, call `pagecollection_truncate` to drop invalid pages.
+ *
+ * Ownership:
+ * - PageCollection *owns* its display lists: it holds references and manages `fz_keep/hold`.
+ * - `pagecollection_finalize()` drops all references.
+ *
+ * Vertical layout semantics:
+ * - Y = 0 at top, increases downward.
+ * - Separator: vertical whitespace between pages.
+ * - Invalid pages are visible but *not* considered "up-to-date" (e.g., may show placeholders).
+ */
+typedef struct {
+  struct page_s *pages;         ///< Array of page entries
+  PrefixSum psum;               ///< Prefix sum of page heights
+  size_t capacity;              ///< Allocated array size (always >= count)
+  size_t count;                 ///< Total number of allocated pages (including invalid)
+  size_t valid;                 ///< Number of valid (loaded, up-to-date) pages
+  size_t extra1, extra2;        ///< Growth factors (Fibonacci-like)
+  float ref_width;              ///< Reference width for zoom calculations
+} PageCollection;
+
+/**
+ * @brief Initializes a PageCollection structure.
+ *
+ * Sets up the collection with:
+ * - Empty pages array (NULL)
+ * - Zero `count` and `valid`
+ * - Prefix sum initialized
+ * - `extra1 = extra2 = 1`
+ * - `ref_width = 500.0`
+ *
+ * @param pcoll Pointer to the PageCollection to initialize (must not be NULL).
+ */
+void pagecollection_init(PageCollection *pcoll);
+
+/**
+ * @brief Cleanup and destroy a PageCollection.
+ *
+ * Frees all resources:
+ * - Drops all display lists (valid and invalid)
+ * - Finalizes the prefix sum
+ * - Frees the pages array
+ *
+ * @param ctx MuPDF context for resource cleanup.
+ * @param pcoll Pointer to the PageCollection to finalize (may be NULL).
+ */
+void pagecollection_finalize(fz_context *ctx, PageCollection *pcoll);
 
 // ============================================================================
-// Multipage Document API
+// State Query
 // ============================================================================
 
-typedef struct multipage_s multipage_t;
+/**
+ * @brief Returns the total number of allocated pages (including invalid).
+ *
+ * This is the physical size of the internal array. Pages at indices `>= valid`
+ * are invalid (stale or empty).
+ *
+ * @param pcoll Pointer to the PageCollection (may be NULL).
+ * @return Total allocated pages, or 0 if `pcoll` is NULL.
+ */
+size_t pagecollection_count(const PageCollection *pcoll);
 
-// Terminology
-// ===========
-// 
-// Lifecycle: multipage_t manages a collection of fz_display_list objects and
-//   tracks their vertical positions.
-// Ownership: multipage_t holds a reference to each stored display list.
-//   multipage_free() decrements these references and frees resources.
-// Validity and Count:
-//   Documents are populated sequentially from index 0 and invalidated only
-//   by backtracking (marking all pages past a certain index as invalid).
-//   While populating, `count` grows automatically as needed.
-//
-// `valid_count` reflects pages that are set and known to be up-to-date.
-// `count` may exceed `valid_count` in two situations:
-// - Backtracking occurred (multipage_invalidate_after): valid_count decreases
-//   but count remains unchanged.
-// - Pages were added beyond current count (multipage_set_page): valid_count
-//   grows exactly as needed, but blank pages are added to count to prepare for
-//   future additions without flickering.
-//
-// A page is 'valid' if it contains loaded, up-to-date content.
-// Visually, pages beyond valid_count are 'invalid' (stale or empty).
-// multipage_truncate() drops invalid pages once the actual document length is known.
+/**
+ * @brief Returns the number of valid (loaded, up-to-date) pages.
+ *
+ * Always satisfies `valid <= count`. Pages beyond `valid - 1` are invalid.
+ *
+ * @param pcoll Pointer to the PageCollection (may be NULL).
+ * @return Number of valid pages.
+ */
+size_t pagecollection_valid_count(const PageCollection *pcoll);
 
-// Lifecycle
-// =========
+/**
+ * @brief Returns the display list at `index`.
+ *
+ * Returns NULL if:
+ * - `index >= count` (out of bounds)
+ * - `index >= valid` (page is invalid/stale)
+ * - `pcoll` is NULL
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @param index Zero-based page index.
+ * @return Display list (may be NULL for invalid pages).
+ */
+fz_display_list *pagecollection_get(const PageCollection *pcoll, size_t index);
 
-// Allocates and initializes a new multipage structure.
-// Returns NULL on allocation failure.
-multipage_t *multipage_new(void);
-
-// Frees the multipage structure and releases all internal display list references.
-// Requires fz_context *ctx for proper resource cleanup.
-void multipage_free(fz_context *ctx, multipage_t *mp);
-
-// State query
-// ===========
-
-// Returns the total number of visible pages.
-// Returns 0 if the structure is empty.
-size_t multipage_count(const multipage_t *mp);
-
-// Returns the number of valid (loaded, up-to-date) pages.
-// Always <= multipage_count(mp).
-size_t multipage_valid_count(const multipage_t *mp);
-
-// Returns the display list at `index`.
-// Returns NULL if `index` is out of bounds or the page is invalid.
-fz_display_list *multipage_get(const multipage_t *mp, size_t index);
-
-// State modification
-// ==================
-
-// Sets the display list for `index` and increments its reference count.
-// Marks all pages from 0 to `index` as valid.
-// Caller retains ownership; multipage_t acquires its own reference to dl.
-// If `index >= multipage_count()`, `multipage_count()` is grown to be higher
-// than `index` (possibly by many pages, to avoid visual instabilities caused by
-// repeatedly adding a single page).
-void multipage_set_page(fz_context *ctx, multipage_t *mp, size_t index, fz_display_list *dl);
-
-// Marks all pages at indices >= count as invalid (stale).
-// Pages are not freed; they remain displayed until replaced or truncated.
-// Updates valid_count to `count` (count remains unchanged).
-void multipage_invalidate_after(multipage_t *mp, size_t count);
-
-// Truncates the structure to `multipage_valid_count()` pages.
-// Updates `count` to `valid_count`.
-void multipage_truncate(fz_context *ctx, multipage_t *mp);
+/**
+ * @brief Returns the reference width of the collection.
+ *
+ * The reference width is set from the first page added (`index == 0`). It serves
+ * as the baseline for zoom calculations and page scaling.
+ *
+ * @param pcoll Pointer to the PageCollection (may be NULL).
+ * @return Reference width, or `0.0` if `pcoll` is NULL or not yet set.
+ */
+float pagecollection_reference_width(const PageCollection *pcoll);
 
 // ============================================================================
-// Vertical layout
+// State Modification
 // ============================================================================
-//
-// Terminology
-// ===========
-// 
-// Terminology
-// - Coordinate System: Y=0 is at the top; Y increases downwards.
-// - Page Index: Valid indices range from `0` to `multipage_count(mp) - 1`.
-// - Empty Document: If count is 0, index functions return -1; height functions return 0.
-// - Separator: Vertical space between pages (two contiguous pages are separated by `separator`).
-// - Clamping: Query results are clamped to the valid index range if `offset` is out of bounds.
 
-// Returns the index of the page visually above `offset` (rounds down).
-// If the document is empty, returns -1. If `offset` is out of bounds, result is clamped.
-ssize_t multipage_page_above(multipage_t *mp, float offset, float separator);
+/**
+ * @brief Sets or replaces a page's display list and marks all prior pages as valid.
+ *
+ * - If `index >= count`, the array grows (using Fibonacci-like expansion).
+ * - All pages `0 .. index` are marked **valid** (`valid = index + 1`).
+ * - If intermediate pages existed, they are preserved; blank display lists are inserted
+ *   as needed to maintain continuity.
+ * - The display list’s reference count is incremented (`fz_keep_display_list`).
+ * - If `index == 0`, `ref_width` is updated from the first page'sbbox.
+ *
+ * This is the primary way to populate pages *forward*. Backtracking requires
+ * `pagecollection_invalidate_after` first.
+ *
+ * @param ctx MuPDF context for resource management.
+ * @param pcoll Pointer to the PageCollection.
+ * @param index Zero-based page index to update.
+ * @param dl Display list to store (must not be NULL).
+ */
+void pagecollection_set(fz_context *ctx, PageCollection *pcoll,
+                        size_t index, fz_display_list *dl);
 
-// Returns the index of the page visually below `offset` (rounds up).
-// If the document is empty, returns -1. If `offset` is out of bounds, result is clamped.
-ssize_t multipage_page_below(multipage_t *mp, float offset, float separator);
+/**
+ * @brief Marks all pages at indices >= `count` as invalid (stale).
+ *
+ * Pages remain allocated and retain their display lists until truncated or replaced.
+ * `valid` is set to `count`; `count` itself is unchanged.
+ *
+ * This supports **backtracking** during incremental document loading: e.g., if
+ * re-parsing reveals fewer pages than initially anticipated.
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @param count New effective `valid`. Pages `>= count` become invalid.
+ */
+void pagecollection_invalidate_after(PageCollection *pcoll, size_t count);
 
-// Returns the vertical offset (Y-coordinate) at which `page` starts.
-float multipage_page_offset(multipage_t *mp, ssize_t page, float separator);
+/**
+ * @brief Truncates the collection to its current `valid`.
+ *
+ * Drops all pages beyond `valid - 1`, freeing their display lists and
+ * shrinking the logical size:
+ *   - `count = valid`
+ *   - Memory is *not* reclaimed (capacity remains), but `pages[]` beyond new count
+ *     are cleared (display lists dropped, set to NULL).
+ *   - `extra1` and `extra2` are reset to `1` (growth factors reset for new forward loads).
+ *
+ * This is called once the final document length is known (e.g., after full parse).
+ *
+ * @param ctx MuPDF context for display list cleanup.
+ * @param pcoll Pointer to the PageCollection.
+ */
+void pagecollection_truncate(fz_context *ctx, PageCollection *pcoll);
 
-// Returns the total height of the document.
-// Formula: sum(page_heights) + separator * (multipage_count(mp) - 1)
-// Returns 0 if the document is empty.
-float multipage_total_height(multipage_t *mp, float separator);
+// ============================================================================
+// Vertical Layout / Scrolling Support
+// ============================================================================
 
-#endif // MULTIPAGE_H
+/**
+ * @brief Finds the page whose content *starts at or below* `offset`.
+ *
+ * Returns the index of the page that is *visually below* the given offset
+ * (rounds up). Handles boundaries and empty documents robustly.
+ *
+ * - Empty document (`count == 0`): returns `-1`.
+ * - `offset <= 0`: returns `0`.
+ * - Beyond total height: returns `count - 1`.
+ * - Invalid page: still returns its index (layout considers physical size).
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @param offset Vertical scroll position (in world coordinates; Y = 0 at top).
+ * @param separator Vertical spacing between pages.
+ * @return Page index (>= 0) or `-1` if document is empty.
+ */
+ssize_t pagecollection_page_below(PageCollection *pcoll, float offset, float separator);
+
+/**
+ * @brief Finds the page *above* a given scroll offset (rounds down).
+ *
+ * Equivalent to `pagecollection_page_below(offset - separator, separator)`.
+ * Useful for determining visible page ranges.
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @param offset Vertical scroll position.
+ * @param separator Vertical spacing between pages.
+ * @return Page index (>= 0) or `-1` if document is empty.
+ */
+ssize_t pagecollection_page_above(PageCollection *pcoll, float offset, float separator);
+
+/**
+ * @brief Computes the vertical position (Y-coordinate) where `page` starts.
+ *
+ * Formula:  
+ * `sum(page_heights[0 .. page-1]) + page * separator`
+ *
+ * - If `page < 0` → `0.0`
+ * - If `page >= count` → clamped to last page’s offset.
+ * - Invalid pages still have a valid geometric offset.
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @param page Zero-based page index.
+ * @param separator Vertical spacing between pages.
+ * @return Y-coordinate of the page’s top edge.
+ */
+float pagecollection_page_offset(PageCollection *pcoll, ssize_t page, float separator);
+
+/**
+ * @brief Computes the total height of all pages including separators.
+ *
+ * Formula:  
+ * `sum(all_page_heights) + (count - 1) * separator`
+ *
+ * Returns `0.0` if `count == 0`.
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @param separator Vertical spacing between pages.
+ * @return Total document height (in world coordinates).
+ */
+float pagecollection_total_height(PageCollection *pcoll, float separator);
+
+#endif // PAGECOLLECTION_H
+

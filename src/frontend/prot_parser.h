@@ -32,7 +32,7 @@
 typedef struct
 {
     int is_json;
-    union 
+    union
     {
         sexp_parser sexp;
         json_parser json;

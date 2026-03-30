@@ -60,7 +60,7 @@ static ssize_t read_(channel_t *t, int fd, void *data, size_t len)
   msg.msg_control = &msg_control;
 
   ssize_t recvd;
-  do { recvd = recvmsg(fd, &msg, 0); } 
+  do { recvd = recvmsg(fd, &msg, 0); }
   while (recvd == -1 && errno == EINTR);
 
   if (recvd == -1)

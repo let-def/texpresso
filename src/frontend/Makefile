@@ -1,6 +1,6 @@
 OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o engine_tex.o \
   engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o \
-  editor.o fd_poll.o pagecollection.o prefixsum.o pagebuffer.o
+  editor.o fd_poll.o pagecollection.o prefixsum.o pagebuffer.o viewer.o
 
 BUILD=../../build
 DIR=$(BUILD)/frontend

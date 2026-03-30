@@ -761,8 +761,8 @@ static bool synctex_find_input(fz_context *ctx, synctex_t *stx, fz_buffer *buf)
       continue;
     }
 
-    int page = 0, 
-      pages = synctex_page_count(stx), 
+    int page = 0,
+      pages = synctex_page_count(stx),
       offset = int_abs(stx->input_off.ptr[stx->input_tag]);
     while (page < pages && stx->page_off.ptr[page * 2 + 1] < offset)
       page += 1;
