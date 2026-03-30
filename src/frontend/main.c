@@ -280,32 +280,21 @@ static int repaint_on_resize(void *data, SDL_Event *event)
   return 0;
 }
 
-/* --- Engine & Document Logic --- */
-
-static int get_first_visible_page(ui_state *ui)
-{
-  return ui->current_page;
-}
-
-static int get_last_visible_page(ui_state *ui)
-{
-  return ui->current_page;
-}
-
 // Always compute SyncTeX for now
 static bool need_synctex(void)
 {
   return true;
 }
 
-static bool need_advance(fz_context *ctx, ui_state *ui)
+static bool need_advance(struct persistent_state *ps, ui_state *ui)
 {
   // 1. No need to advance if the document is fully rendered
   if (send(get_status, ui->eng) == DOC_TERMINATED)
     return false;
 
   // Set the target to the last page currently visible to the user
-  int target_page = get_last_visible_page(ui);
+  VisibleRange vr = viewer_get_visible_range(ps->ctx, &ui->viewer, &ps->pcoll);
+  int target_page = vr.last_page < 0 ? 1 : vr.last_page + 1;
 
   // 2. Proceed if the target page has not been rendered yet.
   if (send(page_count, ui->eng) <= target_page)
@@ -338,11 +327,11 @@ static bool need_advance(fz_context *ctx, ui_state *ui)
  * @param ui The UI state structure.
  * @return true if the engine still has work to do (needs another slice), false if idle or done.
  */
-static bool advance_engine(fz_context *ctx, ui_state *ui)
+static bool advance_engine(struct persistent_state *ps, ui_state *ui)
 {
   // 1. Determine if we need to render more pages or resolve SyncTeX targets.
   //    This checks against the last visible page and engine status.
-  bool need = need_advance(ctx, ui);
+  bool need = need_advance(ps, ui);
 
   // 2. Handle State Transition: Rendering -> Idle
   //    If we were previously advancing (ui->advancing is true) but now we don't
@@ -377,14 +366,14 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
   {
     // Execute one step of the rendering engine.
     // If the engine terminates or errors, break immediately.
-    if (!send(step, ui->eng, ctx, false))
+    if (!send(step, ui->eng, ps->ctx, false))
       break;
 
     // Decrement the step counter for this time slice.
     steps -= 1;
 
     // Re-evaluate if we still need to render.
-    need = need_advance(ctx, ui);
+    need = need_advance(ps, ui);
 
     // 7. Time Budget Check
     //    If we have exhausted our step limit for this slice, check the elapsed
@@ -754,10 +743,9 @@ static void interpret_change(struct persistent_state *ps,
 {
   int plen = strlen(op->path);
   int page_count = send(page_count, ui->eng);
-  int first_page = get_first_visible_page(ui);
-  int last_page = get_last_visible_page(ui);
+  VisibleRange vr = viewer_get_visible_range(ps->ctx, &ui->viewer, &ps->pcoll);
   int cursor = delayed_changes.cursor;
-  if ((page_count >= first_page - 2 && page_count <= last_page) &&
+  if ((page_count >= vr.first_page - 2 && page_count <= vr.last_page) &&
       send(get_status, ui->eng) == DOC_RUNNING &&
       delayed_changes.count < MAX_BUFFERED_OPS &&
       cursor + plen + 1 + op->length <= MAX_BUFFERED_CHARS)
@@ -1403,9 +1391,8 @@ bool texpresso_main(struct persistent_state *ps)
     bool advance;
     {
       pagecollection_invalidate_after(&ps->pcoll, send(page_count, ui->eng));
-      advance = advance_engine(ctx, ui);
-      int first_page = get_first_visible_page(ui);
-      int last_page = get_last_visible_page(ui);
+      advance = advance_engine(ps, ui);
+      VisibleRange vr = viewer_get_visible_range(ps->ctx, &ui->viewer, &ps->pcoll);
 
       int before = pagecollection_valid_count(&ps->pcoll);
       int after = send(page_count, ui->eng);
