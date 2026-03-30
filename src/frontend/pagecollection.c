@@ -1,5 +1,5 @@
 #include "pagecollection.h"
-#include "psum.h"
+#include "prefixsum.h"
 #include <mupdf/fitz.h>
 #include <stdlib.h>
 #include <string.h>
