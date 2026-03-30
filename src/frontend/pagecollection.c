@@ -1,4 +1,4 @@
-#include "multipage.h"
+#include "pagecollection.h"
 #include "psum.h"
 #include <mupdf/fitz.h>
 #include <stdlib.h>
