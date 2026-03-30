@@ -293,10 +293,11 @@ static bool need_advance(struct persistent_state *ps, ui_state *ui)
 
   // Set the target to the last page currently visible to the user
   VisibleRange vr = viewer_get_visible_range(ps->ctx, &ui->viewer, &ps->pcoll);
-  int target_page = vr.last_page < 0 ? 1 : vr.last_page + 1;
+  int target_page = vr.last_page < 0 ? 1 : vr.last_page;
 
   // 2. Proceed if the target page has not been rendered yet.
-  if (send(page_count, ui->eng) <= target_page)
+  if (send(page_count, ui->eng) <= target_page ||
+      pagecollection_count(&ps->pcoll) == target_page + 1)
     return true;
 
   // 3. Proceed also if synctex has not yet reached the target page
