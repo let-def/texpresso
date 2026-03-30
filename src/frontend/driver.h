@@ -28,7 +28,7 @@
 #include <stdbool.h>
 #include <SDL2/SDL.h>
 #include <mupdf/fitz/context.h>
-#include "multipage.h"
+#include "pagecollection.h"
 
 enum custom_events
 {

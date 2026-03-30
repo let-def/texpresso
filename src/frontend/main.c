@@ -34,7 +34,6 @@
 #include "editor.h"
 #include "engine.h"
 #include "fd_poll.h"
-#include "multipage.h"
 #include "mydvi.h"
 #include "prot_parser.h"
 #include "providers.h"

@@ -26,7 +26,6 @@
 #include <signal.h>
 #include <mupdf/fitz.h>
 #include "logo.h"
-#include "multipage.h"
 #include "driver.h"
 
 #ifdef __APPLE__
