@@ -72,7 +72,7 @@ enum ui_mouse_status
 
 typedef struct
 {
-  txp_engine *eng;
+  Engine *eng;
   SDL_Renderer *sdl_renderer;
   SDL_Window *window;
   fd_poller *fdpoll;
@@ -303,7 +303,7 @@ static bool need_advance(struct persistent_state *ps, ui_state *ui)
   // 3. Proceed also if synctex has not yet reached the target page
   //    (this can happen because of buffering).
   fz_buffer *buf;
-  synctex_t *stx = send(synctex, ui->eng, &buf);
+  TexSynctex *stx = send(synctex, ui->eng, &buf);
   if (need_synctex() && synctex_page_count(stx) <= target_page)
     return true;
 
@@ -435,7 +435,7 @@ static void ui_mouse_down(struct persistent_state *ps,
     //   diff = txp_renderer_select_char(ps->ctx, ui->doc_renderer, p) || diff;
 
     //   fz_buffer *buf;
-    //   synctex_t *stx = send(synctex, ui->eng, &buf);
+    //   TexSynctex *stx = send(synctex, ui->eng, &buf);
     //   if (stx && buf)
     //   {
     //     fz_point pt =
@@ -585,7 +585,7 @@ static void realize_change(struct persistent_state *ps,
     return;
   }
 
-  fileentry_t *e = send(find_file, ui->eng, ps->ctx, path);
+  FileEntry *e = send(find_file, ui->eng, ps->ctx, path);
   if (!e)
   {
     fprintf(stderr, "[command] change %s: file not found, skipping\n", path);
@@ -785,7 +785,7 @@ static void interpret_open(struct persistent_state *ps,
     return;
   }
 
-  fileentry_t *e = send(find_file, ui->eng, ps->ctx, path);
+  FileEntry *e = send(find_file, ui->eng, ps->ctx, path);
   if (!e)
   {
     fprintf(stderr, "[command] open %s: file not found, skipping\n", path);
@@ -829,7 +829,7 @@ static void interpret_close(struct persistent_state *ps,
     return;
   }
 
-  fileentry_t *e = send(find_file, ui->eng, ps->ctx, path);
+  FileEntry *e = send(find_file, ui->eng, ps->ctx, path);
   if (!e)
   {
     fprintf(stderr, "[command] close %s: file not found, skipping\n", path);
@@ -963,7 +963,7 @@ static void interpret_command(struct persistent_state *ps,
     case EDIT_SYNCTEX_FORWARD:
     {
       fz_buffer *buf;
-      synctex_t *stx = send(synctex, ui->eng, &buf);
+TexSynctex *stx = send(synctex, ui->eng, &buf);
       int go_up = 0;
       const char *path =
           relative_path(cmd.synctex_forward.path, ps->doc_path, &go_up);
@@ -1205,7 +1205,7 @@ bool texpresso_main(struct persistent_state *ps)
   fprintf(stderr, "[info] engine path: %s\n", engine_path);
 
   if (doc_ext && strcmp(doc_ext, "pdf") == 0)
-    ui->eng = txp_create_pdf_engine(ps->ctx, ps->doc_name);
+    ui->eng = create_pdf_engine(ps->ctx, ps->doc_name);
   else
   {
     dvi_reshooks hooks;
@@ -1215,11 +1215,11 @@ bool texpresso_main(struct persistent_state *ps)
       hooks = dvi_tectonic_hooks(ps->ctx, ps->doc_path);
 
     if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
-      ui->eng = txp_create_dvi_engine(ps->ctx, ps->doc_name, hooks);
+      ui->eng = create_dvi_engine(ps->ctx, ps->doc_name, hooks);
     else
-      ui->eng = txp_create_tex_engine(ps->ctx, engine_path, using_texlive,
-                                      ps->stream_mode, ps->inclusion_path,
-                                      ps->doc_name, hooks);
+      ui->eng = create_tex_engine(ps->ctx, engine_path, using_texlive,
+                                  ps->stream_mode, ps->inclusion_path,
+                                  ps->doc_name, hooks);
   }
 
   ui->sdl_renderer = ps->renderer;
@@ -1343,7 +1343,7 @@ bool texpresso_main(struct persistent_state *ps)
 
     // Check synctex target
     fz_buffer *buf;
-    synctex_t *stx = send(synctex, ui->eng, &buf);
+    TexSynctex *stx = send(synctex, ui->eng, &buf);
     int page = -1, x = -1, y = -1;
     if (synctex_find_target(ctx, stx, buf, &page, &x, &y))
     {

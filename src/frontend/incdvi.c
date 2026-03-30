@@ -38,7 +38,7 @@ struct incdvi_s
   dvi_context *dc;
 };
 
-static int add_page(fz_context *ctx, incdvi_t *d)
+static int add_page(fz_context *ctx, IncDVI *d)
 {
   int result = d->page_len;
   if (result == d->page_cap)
@@ -61,14 +61,14 @@ static int add_page(fz_context *ctx, incdvi_t *d)
   return result;
 }
 
-incdvi_t *incdvi_new(fz_context *ctx, dvi_reshooks hooks)
+IncDVI *incdvi_new(fz_context *ctx, dvi_reshooks hooks)
 {
-  incdvi_t *d = fz_malloc_struct(ctx, incdvi_t);
+  IncDVI *d = fz_malloc_struct(ctx, IncDVI);
   d->dc = dvi_context_new(ctx, hooks);
   return d;
 }
 
-void incdvi_free(fz_context *ctx, incdvi_t *d)
+void incdvi_free(fz_context *ctx, IncDVI *d)
 {
   if (d->pages)
     fz_free(ctx, d->pages);
@@ -76,14 +76,14 @@ void incdvi_free(fz_context *ctx, incdvi_t *d)
   fz_free(ctx, d);
 }
 
-void incdvi_reset(incdvi_t *d)
+void incdvi_reset(IncDVI *d)
 {
   d->offset = 0;
   d->fontdef_offset = 0;
   d->page_len = 0;
 }
 
-void incdvi_update(fz_context *ctx, incdvi_t *d, fz_buffer *buf)
+void incdvi_update(fz_context *ctx, IncDVI *d, fz_buffer *buf)
 {
   if (buf == NULL)
   {
@@ -140,17 +140,17 @@ void incdvi_update(fz_context *ctx, incdvi_t *d, fz_buffer *buf)
     d->fontdef_offset = d->offset;
 }
 
-bool incdvi_output_started(incdvi_t *d)
+bool incdvi_output_started(IncDVI *d)
 {
   return (d->page_len > 0);
 }
 
-int incdvi_page_count(incdvi_t *d)
+int incdvi_page_count(IncDVI *d)
 {
   return (d->page_len / 2);
 }
 
-static void incdvi_parse_fontdef(fz_context *ctx, incdvi_t *restrict d, fz_buffer *buf, int offset)
+static void incdvi_parse_fontdef(fz_context *ctx, IncDVI *restrict d, fz_buffer *buf, int offset)
 {
   if (offset > buf->len) abort();
   enum dvi_version version = dvi_context_state(d->dc)->version;
@@ -173,7 +173,7 @@ static void incdvi_parse_fontdef(fz_context *ctx, incdvi_t *restrict d, fz_buffe
   }
 }
 
-void incdvi_page_dim(incdvi_t *d, fz_buffer *buf, int page, float *width, float *height, bool *landscape)
+void incdvi_page_dim(IncDVI *d, fz_buffer *buf, int page, float *width, float *height, bool *landscape)
 {
   bool _landscape;
   if (!landscape) landscape = &_landscape;
@@ -190,7 +190,7 @@ void incdvi_page_dim(incdvi_t *d, fz_buffer *buf, int page, float *width, float 
   }
 }
 
-void incdvi_render_page(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page, fz_device *dev)
+void incdvi_render_page(fz_context *ctx, IncDVI *d, fz_buffer *buf, int page, fz_device *dev)
 {
   if (page < 0 || page >= incdvi_page_count(d)) abort();
   int offset = d->pages[page * 2];
@@ -210,7 +210,7 @@ void incdvi_render_page(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page, 
   dvi_context_end_frame(ctx, dc);
 }
 
-float incdvi_tex_scale_factor(incdvi_t *d)
+float incdvi_tex_scale_factor(IncDVI *d)
 {
   if (d->page_len == 0)
     return 1;

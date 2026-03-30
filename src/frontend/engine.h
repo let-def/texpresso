@@ -53,11 +53,11 @@
  */
 #define send(method, ...)                 \
   (send__extract_first(__VA_ARGS__, NULL) \
-       ->_class->method((txp_engine *)__VA_ARGS__))
+       ->_class->method((Engine *)__VA_ARGS__))
 
 #define send__extract_first(x, ...) (x)
 
-typedef struct txp_engine_s txp_engine;
+typedef struct Engine Engine;
 
 /**
  * @brief Create a new TeX engine for compiling documents
@@ -74,13 +74,13 @@ typedef struct txp_engine_s txp_engine;
  * The engine runs as a separate process and communicates with the main
  * application through a protocol-based channel.
  */
-txp_engine *txp_create_tex_engine(fz_context *ctx,
-                                  const char *engine_path,
-                                  bool use_texlive,
-                                  bool stream_mode,
-                                  const char *inclusion_path,
-                                  const char *tex_name,
-                                  dvi_reshooks hooks);
+Engine *create_tex_engine(fz_context *ctx,
+                          const char *engine_path,
+                          bool use_texlive,
+                          bool stream_mode,
+                          const char *inclusion_path,
+                          const char *tex_name,
+                          dvi_reshooks hooks);
 
 /**
  * @brief Create a new PDF engine for displaying PDF documents
@@ -91,7 +91,7 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
  * This creates a read-only engine for displaying pre-compiled PDF documents.
  * It uses MuPDF's built-in PDF rendering capabilities.
  */
-txp_engine *txp_create_pdf_engine(fz_context *ctx, const char *pdf_path);
+Engine *create_pdf_engine(fz_context *ctx, const char *pdf_path);
 
 /**
  * @brief Create a new DVI engine for displaying DVI documents
@@ -103,9 +103,9 @@ txp_engine *txp_create_pdf_engine(fz_context *ctx, const char *pdf_path);
  * This creates a read-only engine for displaying pre-compiled DVI documents.
  * DVI files are intermediate output format from TeX compilers.
  */
-txp_engine *txp_create_dvi_engine(fz_context *ctx,
-                                  const char *dvi_path,
-                                  dvi_reshooks hooks);
+Engine *create_dvi_engine(fz_context *ctx,
+                          const char *dvi_path,
+                          dvi_reshooks hooks);
 
 /**
  * @brief Current status of a document engine
@@ -114,7 +114,7 @@ typedef enum
 {
   DOC_RUNNING,   /**< Engine is actively processing */
   DOC_TERMINATED /**< Engine has finished or failed */
-} txp_engine_status;
+} EngineStatus;
 
 /**
  * @brief Base engine structure
@@ -123,9 +123,9 @@ typedef enum
  * only a pointer to the virtual method table (class structure).
  * Actual engine implementations embed this structure as their first member.
  */
-struct txp_engine_s
+struct Engine
 {
-  struct txp_engine_class *_class;
+  struct EngineClass *_class;
 };
 
 /**
@@ -134,7 +134,7 @@ struct txp_engine_s
  * This structure defines the interface that all engine types must implement.
  * Each method handles a specific aspect of document lifecycle management.
  */
-struct txp_engine_class
+struct EngineClass
 {
   /**
    * @brief Destroy the engine and free all associated resources
@@ -144,7 +144,7 @@ struct txp_engine_class
    * Called when the engine is no longer needed. Must free all memory
    * allocated during engine initialization and operation.
    */
-  void (*destroy)(txp_engine *self, fz_context *ctx);
+  void (*destroy)(Engine *self, fz_context *ctx);
 
   /**
    * @brief Advance the engine by processing one message from the child process
@@ -158,7 +158,7 @@ struct txp_engine_class
    * back an answer. When 'restart_if_needed' is true, it will automatically
    * spawn a new process if the engine has terminated.
    */
-  bool (*step)(txp_engine *self, fz_context *ctx, bool restart_if_needed);
+  bool (*step)(Engine *self, fz_context *ctx, bool restart_if_needed);
 
   /**
    * @brief Begin a transaction for batch file change detection
@@ -169,7 +169,7 @@ struct txp_engine_class
    * as a single atomic operation. After all changes are detected, call
    * end_changes() to commit or rollback.
    */
-  void (*begin_changes)(txp_engine *self, fz_context *ctx);
+  void (*begin_changes)(Engine *self, fz_context *ctx);
 
   /**
    * @brief Check if any tracked files have been modified
@@ -179,7 +179,7 @@ struct txp_engine_class
    * Scans all tracked files for changes by comparing file metadata.
    * Should only be called between begin_changes() and end_changes().
    */
-  void (*detect_changes)(txp_engine *self, fz_context *ctx);
+  void (*detect_changes)(Engine *self, fz_context *ctx);
 
   /**
    * @brief End a transaction and apply or revert changes
@@ -192,7 +192,7 @@ struct txp_engine_class
    * the changes and restart compilation. Returns true if changes were
    * actually applied, false if compilation was rolled back instead.
    */
-  bool (*end_changes)(txp_engine *self, fz_context *ctx);
+  bool (*end_changes)(Engine *self, fz_context *ctx);
 
   /**
    * @brief Get the total number of pages in the document
@@ -203,7 +203,7 @@ struct txp_engine_class
    * current DVI output. For PDF engines, it's the number of pages
    * in the PDF document.
    */
-  int (*page_count)(txp_engine *self);
+  int (*page_count)(Engine *self);
 
   /**
    * @brief Render a page to a display list for later drawing
@@ -216,14 +216,14 @@ struct txp_engine_class
    * when no longer needed. The display list can be rendered multiple times
    * to different devices or at different scales.
    */
-  fz_display_list *(*render_page)(txp_engine *self, fz_context *ctx, int page);
+  fz_display_list *(*render_page)(Engine *self, fz_context *ctx, int page);
 
   /**
    * @brief Get the current execution status of the engine
    * @param self    Engine instance
    * @return Engine status (running or terminated)
    */
-  txp_engine_status (*get_status)(txp_engine *self);
+  EngineStatus (*get_status)(Engine *self);
 
   /**
    * @brief Get the scaling factor for the document
@@ -234,7 +234,7 @@ struct txp_engine_class
    * units. For TeX documents, this typically returns the TeX point
    * scaling factor. PDF documents usually return 1.0.
    */
-  float (*scale_factor)(txp_engine *self);
+  float (*scale_factor)(Engine *self);
 
   /**
    * @brief Get the Synctex data structure for forward/backward search
@@ -245,7 +245,7 @@ struct txp_engine_class
    * Synctex enables synchronization between the source files and the
    * rendered output. The returned instance should not be freed by caller.
    */
-  synctex_t *(*synctex)(txp_engine *self, fz_buffer **buf);
+  TexSynctex *(*synctex)(Engine *self, fz_buffer **buf);
 
   /**
    * @brief Look up or create a file entry for tracking
@@ -258,7 +258,7 @@ struct txp_engine_class
    * tracking structure. If the file is already tracked, returns the
    * existing entry; otherwise creates a new one.
    */
-  fileentry_t *(*find_file)(txp_engine *self,
+  FileEntry *(*find_file)(Engine *self,
                             fz_context *ctx,
                             const char *path);
 
@@ -272,9 +272,9 @@ struct txp_engine_class
    * Called by the editor when the user modifies a source file.
    * The engine uses this to determine what needs to be recompiled.
    */
-  void (*notify_file_changes)(txp_engine *self,
-                              fz_context *ctx,
-                              fileentry_t *entry,
+void (*notify_file_changes)(Engine *self,
+                            fz_context *ctx,
+                            FileEntry *entry,
                               int offset);
 };
 
@@ -292,37 +292,37 @@ struct txp_engine_class
  * // Then implement each declared method
  * @endcode
  */
-#define TXP_ENGINE_DEF_CLASS                                                \
-  static void engine_destroy(txp_engine *_self, fz_context *ctx);           \
-  static fz_display_list *engine_render_page(txp_engine *_self,             \
-                                             fz_context *ctx, int page);    \
-  static bool engine_step(txp_engine *_self, fz_context *ctx,               \
-                          bool restart_if_needed);                          \
-  static void engine_begin_changes(txp_engine *_self, fz_context *ctx);     \
-  static void engine_detect_changes(txp_engine *_self, fz_context *ctx);    \
-  static bool engine_end_changes(txp_engine *_self, fz_context *ctx);       \
-  static int engine_page_count(txp_engine *_self);                          \
-  static txp_engine_status engine_get_status(txp_engine *_self);            \
-  static float engine_scale_factor(txp_engine *_self);                      \
-  static synctex_t *engine_synctex(txp_engine *_self, fz_buffer **buf);     \
-  static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx,  \
-                                       const char *path);                   \
-  static void engine_notify_file_changes(txp_engine *self, fz_context *ctx, \
-                                         fileentry_t *entry, int offset);   \
-                                                                            \
-  static struct txp_engine_class _class = {                                 \
-      .destroy = engine_destroy,                                            \
-      .step = engine_step,                                                  \
-      .page_count = engine_page_count,                                      \
-      .render_page = engine_render_page,                                    \
-      .get_status = engine_get_status,                                      \
-      .scale_factor = engine_scale_factor,                                  \
-      .synctex = engine_synctex,                                            \
-      .find_file = engine_find_file,                                        \
-      .begin_changes = engine_begin_changes,                                \
-      .detect_changes = engine_detect_changes,                              \
-      .end_changes = engine_end_changes,                                    \
-      .notify_file_changes = engine_notify_file_changes,                    \
+#define TXP_ENGINE_DEF_CLASS                                                 \
+  static void engine_destroy(Engine *_self, fz_context *ctx);                \
+  static fz_display_list *engine_render_page(Engine *_self, fz_context *ctx, \
+                                             int page);                      \
+  static bool engine_step(Engine *_self, fz_context *ctx,                    \
+                          bool restart_if_needed);                           \
+  static void engine_begin_changes(Engine *_self, fz_context *ctx);          \
+  static void engine_detect_changes(Engine *_self, fz_context *ctx);         \
+  static bool engine_end_changes(Engine *_self, fz_context *ctx);            \
+  static int engine_page_count(Engine *_self);                               \
+  static EngineStatus engine_get_status(Engine *_self);                      \
+  static float engine_scale_factor(Engine *_self);                           \
+  static TexSynctex *engine_synctex(Engine *_self, fz_buffer **buf);         \
+  static FileEntry *engine_find_file(Engine *_self, fz_context *ctx,         \
+                                     const char *path);                      \
+  static void engine_notify_file_changes(Engine *self, fz_context *ctx,      \
+                                         FileEntry *entry, int offset);      \
+                                                                             \
+  static struct EngineClass _class = {                                       \
+      .destroy = engine_destroy,                                             \
+      .step = engine_step,                                                   \
+      .page_count = engine_page_count,                                       \
+      .render_page = engine_render_page,                                     \
+      .get_status = engine_get_status,                                       \
+      .scale_factor = engine_scale_factor,                                   \
+      .synctex = engine_synctex,                                             \
+      .find_file = engine_find_file,                                         \
+      .begin_changes = engine_begin_changes,                                 \
+      .detect_changes = engine_detect_changes,                               \
+      .end_changes = engine_end_changes,                                     \
+      .notify_file_changes = engine_notify_file_changes,                     \
   }
 
 #endif  // GENERIC_ENGINE_H_
