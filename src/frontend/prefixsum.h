@@ -1,5 +1,5 @@
-#ifndef PSUM_H_
-#define PSUM_H_
+#ifndef PREFIXSUM_H_
+#define PREFIXSUM_H_
 
 #include <stdlib.h>
 #include <stdbool.h>
@@ -85,4 +85,4 @@ size_t psum_reverse_query_with_offset(psum_t *psum, float sum, float offset);
  */
 float psum_total(psum_t *psum);
 
-#endif // PSUM_H_
+#endif // PREFIXSUM_H_

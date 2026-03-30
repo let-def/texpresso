@@ -1,4 +1,4 @@
-#include "psum.h"
+#include "prefixsum.h"
 #include <stdlib.h>
 #include <string.h>
 
