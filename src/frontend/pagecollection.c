@@ -5,114 +5,198 @@
 #include <string.h>
 #include <assert.h>
 
-// Internal page representation
-typedef struct
+/**
+ * @brief Internal representation of a page in the collection.
+ *
+ * Each page stores a display list that can be rendered to produce
+ * the page's visual content.
+ */
+struct page_s
 {
-  fz_display_list *dl;        // Display list (owned)
-} page_t;
-
-struct multipage_s
-{
-  page_t *pages;
-  psum_t *psum;
-  size_t capacity;       // allocated slots
-  size_t count;          // logical count (0 <= count <= capacity)
-  size_t valid;          // valid pages (0 <= valid <= count)
-  size_t extra1, extra2; // fibonacci sequence for growing count
+  fz_display_list *dl;        ///< Display list for rendering (owned by this page)
 };
 
-// Helper: ensure at least `needed` pages are allocated
-static bool ensure_capacity(multipage_t *mp, size_t needed)
+/**
+ * @brief Ensures the pages array has capacity for at least `needed` pages.
+ *
+ * Grows the array by doubling capacity until it meets the requirement.
+ * New slots are zero-initialized to ensure safe cleanup even if not all
+ * slots are populated.
+ *
+ * Growth strategy: Start with 4 if empty, otherwise double capacity until
+ * we meet the requirement. This provides O(log n) growth with amortized
+ * O(1) insertions.
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @param needed Minimum required capacity.
+ * @return true if allocation succeeded, false if out of memory.
+ */
+static bool ensure_capacity(PageCollection *pcoll, size_t needed)
 {
-  if (needed <= mp->capacity)
+  if (needed <= pcoll->capacity)
     return true;
 
-  size_t new_cap = mp->capacity ? mp->capacity : 4;
+  // Double capacity until we meet the requirement
+  size_t new_cap = pcoll->capacity ? pcoll->capacity : 4;
   while (new_cap < needed) new_cap *= 2;
 
-  page_t *new_pages = realloc(mp->pages, new_cap * sizeof(page_t));
+  struct page_s *new_pages = realloc(pcoll->pages, new_cap * sizeof(struct page_s));
   if (!new_pages)
     return false;
 
-  // Zero newly allocated pages
-  memset(new_pages + mp->capacity, 0, (new_cap - mp->capacity) * sizeof(page_t));
+  // Zero-initialize newly allocated slots to ensure safeCleanup
+  memset(new_pages + pcoll->capacity, 0, (new_cap - pcoll->capacity) * sizeof(struct page_s));
 
-  mp->pages = new_pages;
-  mp->capacity = new_cap;
+  pcoll->pages = new_pages;
+  pcoll->capacity = new_cap;
   return true;
 }
 
-// Public: constructor
-multipage_t *multipage_new(void)
+/**
+ * @brief Initialize a new PageCollection.
+ *
+ * Sets up default values for a fresh page collection:
+ * - Empty pages array (NULL pointer)
+ * - Zero capacity
+ * - Prefix sum initialized via psum_init()
+ * - count, extra1, extra2 set to 0 or 1
+ * - ref_width set to a reasonable default of 500.0
+ *
+ * Must be called before using any other PageCollection functions.
+ * Paired with pagecollection_finalize() for cleanup.
+ */
+void pagecollection_init(PageCollection *pcoll)
 {
-  multipage_t *mp = calloc(1, sizeof(multipage_t));
-  if (!mp) return NULL;
-  mp->pages = NULL;
-  mp->capacity = 0;
-  mp->psum = psum_new();
-  mp->count = 0;
-  mp->valid = 0;
-  mp->extra1 = 1;
-  mp->extra2 = 1;
-  return mp;
+  pcoll->pages = NULL;
+  pcoll->capacity = 0;
+  psum_init(&pcoll->psum);
+  pcoll->count = 0;
+  pcoll->valid = 0;
+  pcoll->extra1 = 1;
+  pcoll->extra2 = 1;
+  pcoll->ref_width = 500.0;
 }
 
-// Public: destructor
-void multipage_free(fz_context *ctx, multipage_t *mp)
+/**
+ * @brief Cleanup and free all resources in a PageCollection.
+ *
+ * This is the destructor for PageCollection. It must be called
+ * to prevent memory leaks and to properly release MuPDF resources:
+ * - Drops all display lists in the pages array
+ * - Finalizes the prefix sum structure
+ * - Frees the pages array itself
+ *
+ * @param ctx MuPDF context for display list cleanup.
+ * @param pcoll Pointer to the PageCollection to finalize (may be NULL).
+ */
+void pagecollection_finalize(fz_context *ctx, PageCollection *pcoll)
 {
-  if (!mp) return;
-  for (size_t i = 0; i < mp->count; ++i)
+  if (!pcoll) return;
+
+  // Drop all display lists
+  for (size_t i = 0; i < pcoll->count; ++i)
   {
-    fz_drop_display_list(ctx, mp->pages[i].dl);
+    fz_drop_display_list(ctx, pcoll->pages[i].dl);
   }
-  psum_free(mp->psum);
-  free(mp->pages);
-  free(mp);
+
+  // Cleanup prefix sum and free pages array
+  psum_finalize(&pcoll->psum);
+  free(pcoll->pages);
 }
 
-size_t multipage_count(const multipage_t *mp)
+/**
+ * @brief Get the count of pages in the collection.
+ */
+size_t pagecollection_count(const PageCollection *pcoll)
 {
-  return mp ? mp->count : 0;
+  return pcoll ? pcoll->count : 0;
 }
 
-// Returns NULL if index < 0 or >= count
-fz_display_list *multipage_get(const multipage_t *mp, size_t index)
+/**
+ * @brief Returns the number of valid (loaded, up-to-date) pages.
+ */
+size_t pagecollection_valid_count(const PageCollection *pcoll)
 {
-  if (!mp || index >= mp->count)
+  return pcoll ? pcoll->valid : 0;
+}
+
+/**
+ * @brief Get a display list for a specific page.
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @param index Zero-based page index.
+ * @return Display list for the page, or NULL if index is out of bounds.
+ */
+fz_display_list *pagecollection_get(const PageCollection *pcoll, size_t index)
+{
+  if (!pcoll || index >= pcoll->count)
     return NULL;
-  return mp->pages[index].dl;
+  return pcoll->pages[index].dl;
 }
 
-// fz_rect multipage_get_bounds(const multipage_t *mp, int index)
-// {
-//   static const fz_rect undefined_rect = {0, 0, 0, 0};
-//   if (!mp || index < 0 || (size_t)index >= mp->count)
-//   {
-//     return undefined_rect;
-//   }
-//   // In real MuPDF, bounds may be cached — here, just return stored value
-//   return mp->pages[index].bounds;
-// }
-
-static void multipage_set_raw(fz_context *ctx, multipage_t *mp, size_t index, fz_display_list *dl, float height)
+/**
+ * @brief Low-level page setter that stores a display list without bounds checking.
+ *
+ * This is an internal helper function that:
+ * - Keeps a reference to the new display list (fz_keep_display_list)
+ * - Drops the old display list (fz_drop_display_list)
+ * - Updates the prefix sum with the provided height
+ *
+ * @note Caller must ensure index is valid and dl is not NULL.
+ * @note This does not update reference_width or perform capacity checks.
+ */
+static void pagecollection_set_raw(fz_context *ctx, PageCollection *pcoll, size_t index, fz_display_list *dl, float height)
 {
   fz_keep_display_list(ctx, dl);
-  fz_drop_display_list(ctx, mp->pages[index].dl);
-  mp->pages[index].dl = dl;
-  psum_set(mp->psum, index, height);
+  fz_drop_display_list(ctx, pcoll->pages[index].dl);
+  pcoll->pages[index].dl = dl;
+  psum_set(&pcoll->psum, index, height);
 }
 
-void multipage_set_page(fz_context *ctx, multipage_t *mp, size_t index, fz_display_list *dl)
+/**
+ * @brief Add or replace a page's display list.
+ *
+ * This function handles the full lifecycle of page management:
+ *
+ * 1. Capacity expansion (if needed):
+ *    - Uses Fibonacci-like growth strategy for efficient reallocations
+ *    - extra1, extra2 track the growth increment pattern
+ *    - Each expansion increases count by extra2, then updates extra1/extra2
+ *
+ * 2. Gap filling:
+ *    - If expanding past the current count, fills gaps with empty display lists
+ *    - This ensures all page indices in [0, new_count) are valid
+ *
+ * 3. Reference width tracking:
+ *    - If setting page 0, updates ref_width from the page's bounds
+ *    - This establishes the baseline for zoom calculations
+ *
+ * 4. Actual storage:
+ *    - Calls pagecollection_set_raw() to store the display list
+ *    - Updates prefix sum with page height
+ *
+ * @param ctx MuPDF context for display list management.
+ * @param pcoll Pointer to the PageCollection.
+ * @param index Zero-based page index where the display list will be stored.
+ * @param dl Display list to store (must not be NULL).
+ */
+void pagecollection_set(fz_context *ctx, PageCollection *pcoll,
+                        size_t index, fz_display_list *dl)
 {
-  if (!mp) return;
+  if (!pcoll) return;
 
+  // Get page bounds to compute height
   fz_rect bounds = fz_bound_display_list(ctx, dl);
   float height = bounds.y1 - bounds.y0;
 
-  if (index >= mp->count)
+  // Expand if necessary
+  if (index >= pcoll->count)
   {
-    size_t new_count = mp->count, extra1 = mp->extra1, extra2 = mp->extra2;
+    size_t new_count = pcoll->count;
+    size_t extra1 = pcoll->extra1, extra2 = pcoll->extra2;
 
+    // Grow using Fibonacci-like strategy
+    // This provides good amortized performance for sequential additions
     while (new_count <= index)
     {
       new_count += extra2;
@@ -121,82 +205,191 @@ void multipage_set_page(fz_context *ctx, multipage_t *mp, size_t index, fz_displ
       extra2 = extra;
     }
 
-    if (!ensure_capacity(mp, new_count))
+    // Ensure capacity
+    if (!ensure_capacity(pcoll, new_count))
       return;
 
+    // Fill gaps with empty display lists if there's a gap
+    // (e.g., adding page 10 when count is 3 creates pages 3-9 as empty)
     if (new_count != index + 1)
     {
       fz_display_list *empty = fz_new_display_list(ctx, bounds);
-      for (size_t i = mp->count; i < new_count; i++)
-        multipage_set_raw(ctx, mp, i, empty, height);
+      for (size_t i = pcoll->count; i < new_count; i++)
+        pagecollection_set_raw(ctx, pcoll, i, empty, height);
       fz_drop_display_list(ctx, empty);
     }
 
-    mp->count = new_count;
-    mp->extra1 = extra1;
-    mp->extra2 = extra2;
+    pcoll->count = new_count;
+    pcoll->extra1 = extra1;
+    pcoll->extra2 = extra2;
   }
 
-  multipage_set_raw(ctx, mp, index, dl, height);
-  if (index >= mp->valid)
-    mp->valid = index + 1;
+  // Update reference width from first page
+  if (index == 0)
+    pcoll->ref_width = bounds.x1 - bounds.x0;
+
+  // Store the display list
+  pagecollection_set_raw(ctx, pcoll, index, dl, height);
+
+  if (index >= pcoll->valid)
+    pcoll->valid = index + 1;
 }
 
-void multipage_truncate(fz_context *ctx, multipage_t *mp)
+/**
+ * @brief Marks all pages at indices >= `count` as invalid (stale).
+ *
+ * Pages remain allocated and retain their display lists until truncated or replaced.
+ * `valid` is set to `count`; `count` itself is unchanged.
+ *
+ * This supports **backtracking** during incremental document loading: e.g., if
+ * re-parsing reveals fewer pages than initially anticipated.
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @param count New effective `valid`. Pages `>= count` become invalid.
+ */
+void pagecollection_invalidate_after(PageCollection *pcoll, size_t count)
 {
-  if (!mp)
+  if (pcoll && pcoll->valid > count)
+    pcoll->valid = count;
+}
+
+/**
+ * @brief Truncates the collection to its current `valid`.
+ *
+ * Drops all pages beyond `valid - 1`, freeing their display lists and
+ * shrinking the logical size:
+ *   - `count = valid`
+ *   - Memory is *not* reclaimed (capacity remains), but `pages[]` beyond new count
+ *     are cleared (display lists dropped, set to NULL).
+ *   - `extra1` and `extra2` are reset to `1` (growth factors reset for new forward loads).
+ *
+ * This is called once the final document length is known (e.g., after full parse).
+ *
+ * @param ctx MuPDF context for display list cleanup.
+ * @param pcoll Pointer to the PageCollection.
+ */
+void pagecollection_truncate(fz_context *ctx, PageCollection *pcoll)
+{
+  size_t count = pcoll->valid;
+  if (!pcoll || pcoll->count == count)
     return;
 
-  size_t count = mp->valid, old_count = mp->count;
-
   // Free pages >= count
-  for (size_t i = count, old_count = mp->count; i < old_count; ++i)
+  for (size_t i = count, old_count = pcoll->count; i < old_count; ++i)
   {
-    fz_drop_display_list(ctx, mp->pages[i].dl);
-    mp->pages[i].dl = NULL;
+    fz_drop_display_list(ctx, pcoll->pages[i].dl);
+    pcoll->pages[i].dl = NULL;
   }
 
-  psum_truncate(mp->psum, count);
-  mp->count = count;
-  mp->extra1 = 1;
-  mp->extra2 = 1;
+  psum_truncate(&pcoll->psum, count);
+  pcoll->count = count;
+  pcoll->extra1 = 1;
+  pcoll->extra2 = 1;
 }
 
-
-// Marks pages >= count as invalidated (still displayed but marked out of date)
-void multipage_invalidate_after(multipage_t *mp, size_t count)
+/**
+ * @brief Binary search for the page at a given scroll offset.
+ *
+ * Uses the prefix sum structure to efficiently find which page contains
+ * the given scroll offset. The offset is in world coordinates, which
+ * accounts for both page heights and separator spacing.
+ *
+ * Algorithm:
+ * - Uses psum_reverse_query_with_offset() which performs binary search
+ *   on the prefix sum array with linear offset compensation
+ * - Result is clamped to [0, count-1] to handle edge cases
+ *
+ * Examples:
+ * - offset = 0: Returns page 0 (top of document)
+ * - offset = page_offset(N): Returns page N+1 (start of next page)
+ * - offset = page_offset(N) + page_height(N)/2: Returns page N
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @param offset Vertical scroll position (in world coordinates).
+ * @param separator Vertical spacing between pages (in world coordinates).
+ * @return Page index containing the offset, clamped to [0, count-1].
+ */
+ssize_t pagecollection_page_below(PageCollection *pcoll, float offset, float separator)
 {
-  if (mp && mp->valid > count)
-    mp->valid = count;
-}
-
-// Returns true if pages >= count were invalidated (i.e., need rebuilding)
-size_t multipage_valid_count(const multipage_t *mp)
-{
-  return mp ? mp->valid : 0;
-}
-
-ssize_t multipage_page_below(multipage_t *mp, float offset, float separator)
-{
-  int candidate = psum_reverse_query_with_offset(mp->psum, offset, separator);
-  if (candidate >= mp->count)
-    candidate = mp->count - 1;
+  int candidate = psum_reverse_query_with_offset(&pcoll->psum, offset, separator);
+  if (candidate >= pcoll->count)
+    candidate = pcoll->count - 1;
   return candidate;
 }
 
-ssize_t multipage_page_above(multipage_t *mp, float offset, float separator)
+/**
+ * @brief Find the page above a given offset.
+ *
+ * This function determines which page would be visible just above a given
+ * scroll position. It's useful for computing scroll ranges when rendering.
+ *
+ * Implementation: Simply delegates to pagecollection_page_below()
+ * with offset - separator, effectively moving the query point up by
+ * one separator unit.
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @param offset Vertical scroll position (in world coordinates).
+ * @param separator Vertical spacing between pages (in world coordinates).
+ * @return Page index above the offset, clamped to [0, count-1].
+ */
+ssize_t pagecollection_page_above(PageCollection *pcoll, float offset, float separator)
 {
-  return multipage_page_below(mp, offset - separator, separator);
+  return pagecollection_page_below(pcoll, offset - separator, separator);
 }
 
-float multipage_total_height(multipage_t *mp, float separator)
+/**
+ * @brief Get the vertical position of a page's top edge.
+ *
+ * Calculates the world-space Y coordinate where the page begins.
+ * This accounts for:
+ * - Cumulative height of all preceding pages (via prefix sum)
+ * - Separator spacing for each page boundary
+ *
+ * Formula: page_offset(page) = psum_query(page) + page * separator
+ *
+ * Where psum_query(page) = sum of heights[0..page-1]
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @param page Zero-based page index.
+ * @param separator Vertical spacing between pages (in world coordinates).
+ * @return Y coordinate of the page's top edge (in world coordinates).
+ */
+float pagecollection_page_offset(PageCollection *pcoll, ssize_t page, float separator)
 {
-  if (mp->count == 0)
-    return 0;
-  return psum_total(mp->psum) + separator * (mp->count - 1);
+  return psum_query(&pcoll->psum, page) + page * separator;
 }
 
-float multipage_page_offset(multipage_t *mp, ssize_t page, float separator)
+/**
+ * @brief Compute the total document height with separators.
+ *
+ * Formula: total_height = psum_total() + (count - 1) * separator
+ *
+ * Where psum_total() = sum of all page heights
+ *
+ * This represents the full document height including:
+ * - All page content heights
+ * - Spacer gaps between pages (count-1 separators)
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @param separator Vertical spacing between pages (in world coordinates).
+ * @return Total document height including separators.
+ */
+float pagecollection_total_height(PageCollection *pcoll, float separator)
 {
-  return psum_query(mp->psum, page) + page * separator;
+  return psum_total(&pcoll->psum) + separator * (pcoll->count - 1);
+}
+
+/**
+ * @brief Get the reference width of the document.
+ *
+ * The reference width is established when the first page is added
+ * and is used for consistent zoom calculations throughout the viewer.
+ * All pages are scaled relative to this width.
+ *
+ * @param pcoll Pointer to the PageCollection.
+ * @return Reference width, or 0.0 if pcoll is NULL.
+ */
+float pagecollection_reference_width(const PageCollection *pcoll)
+{
+  return pcoll->ref_width;
 }

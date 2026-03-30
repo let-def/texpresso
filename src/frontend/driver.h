@@ -73,7 +73,7 @@ struct persistent_state {
 
   const char *exe_path, *doc_path, *doc_name, *inclusion_path;
 
-  multipage_t *mp;
+  PageCollection pcoll;
   bool line_output, use_tectonic, use_texlive, initialize_only, stream_mode;
 };
 
