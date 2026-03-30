@@ -22,33 +22,32 @@
  * IN THE SOFTWARE.
  */
 
-#include <stdlib.h>
 #include <mupdf/fitz.h>
 #include "engine.h"
 
-struct pdf_engine
+struct PdfEngine
 {
-  struct txp_engine_class *_class;
+  struct EngineClass *_class;
   char *path;
   int page_count;
   fz_document *doc;
   bool changed;
 };
 
-#define SELF struct pdf_engine *self = (struct pdf_engine*)_self
+#define SELF struct PdfEngine *self = (struct PdfEngine*)_self
 
 // Useful routines
 
 TXP_ENGINE_DEF_CLASS;
 
-static void engine_destroy(txp_engine *_self, fz_context *ctx)
+static void engine_destroy(Engine *_self, fz_context *ctx)
 {
   SELF;
   fz_free(ctx, self->path);
   fz_drop_document(ctx, self->doc);
 }
 
-static fz_display_list *engine_render_page(txp_engine *_self,
+static fz_display_list *engine_render_page(Engine *_self,
                                            fz_context *ctx,
                                            int index)
 {
@@ -59,18 +58,18 @@ static fz_display_list *engine_render_page(txp_engine *_self,
   return dl;
 }
 
-static bool engine_step(txp_engine *_self,
+static bool engine_step(Engine *_self,
                         fz_context *ctx,
                         bool restart_if_needed)
 {
   return 0;
 }
 
-static void engine_begin_changes(txp_engine *_self, fz_context *ctx)
+static void engine_begin_changes(Engine *_self, fz_context *ctx)
 {
 }
 
-static void engine_detect_changes(txp_engine *_self, fz_context *ctx)
+static void engine_detect_changes(Engine *_self, fz_context *ctx)
 {
   SELF;
   fz_document *doc = fz_open_document(ctx, self->path);
@@ -83,7 +82,7 @@ static void engine_detect_changes(txp_engine *_self, fz_context *ctx)
   self->changed = 1;
 }
 
-static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
+static bool engine_end_changes(Engine *_self, fz_context *ctx)
 {
   SELF;
   if (self->changed)
@@ -95,51 +94,51 @@ static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
   return 0;
 }
 
-static int engine_page_count(txp_engine *_self)
+static int engine_page_count(Engine *_self)
 {
   SELF;
   return self->page_count;
 }
 
-static txp_engine_status engine_get_status(txp_engine *_self)
+static EngineStatus engine_get_status(Engine *_self)
 {
   return DOC_TERMINATED;
 }
 
-static float engine_scale_factor(txp_engine *_self)
+static float engine_scale_factor(Engine *_self)
 {
   return 1;
 }
 
-static synctex_t *engine_synctex(txp_engine *_self, fz_buffer **buf)
+static TexSynctex *engine_synctex(Engine *_self, fz_buffer **buf)
 {
   return NULL;
 }
 
-static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const char *path)
+static FileEntry *engine_find_file(Engine *_self, fz_context *ctx, const char *path)
 {
   return NULL;
 }
 
-static void engine_notify_file_changes(txp_engine *_self,
+static void engine_notify_file_changes(Engine *_self,
                                        fz_context *ctx,
-                                       fileentry_t *entry,
+                                       FileEntry *entry,
                                        int offset)
 {
 }
 
-txp_engine *txp_create_pdf_engine(fz_context *ctx, const char *pdf_path)
+Engine *create_pdf_engine(fz_context *ctx, const char *pdf_path)
 {
   fz_document *doc = fz_open_document(ctx, pdf_path);
   if (!doc)
     return NULL;
 
-  struct pdf_engine *self = fz_malloc_struct(ctx, struct pdf_engine);
+  struct PdfEngine *self = fz_malloc_struct(ctx, struct PdfEngine);
   self->_class = &_class;
 
   self->path = fz_strdup(ctx, pdf_path);
   self->doc = doc;
   self->page_count = fz_count_pages(ctx, doc);
 
-  return (txp_engine*)self;
+  return (Engine*)self;
 }

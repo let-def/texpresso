@@ -30,7 +30,7 @@
 #include <stdbool.h>
 #include "myabort.h"
 
-typedef struct channel_s channel_t;
+typedef struct channel_s IOChannel;
 typedef int file_id;
 
 #define LOG 0
@@ -49,7 +49,7 @@ typedef int file_id;
 
 /* QUERIES */
 
-enum query {
+enum ProtocolQuery {
   Q_OPRD = PACK('O','P','R','D'),
   Q_OPWR = PACK('O','P','W','R'),
   Q_READ = PACK('R','E','A','D'),
@@ -63,7 +63,7 @@ enum query {
   Q_CHLD = PACK('C','H','L','D'),
 };
 
-enum txp_file_kind
+enum TxpFileKind
 {
   TXP_KIND_AFM           = PACK('A','F','M', 0 ),
   TXP_KIND_BIB           = PACK('B','I','B', 0 ),
@@ -98,12 +98,12 @@ struct pic_cache {
 
 typedef struct {
   int time;
-  enum query tag;
+  enum ProtocolQuery tag;
   union {
     struct {
       file_id fid;
       char *path;
-      enum txp_file_kind kind;
+      enum TxpFileKind kind;
     } open;
     struct {
       file_id fid;
@@ -140,11 +140,11 @@ typedef struct {
       struct pic_cache cache;
     } spic;
   };
-} query_t;
+} ProtocolQuery;
 
 /* ANSWERS */
 
-enum answer {
+enum ProtocolAnswer {
   A_DONE = PACK('D','O','N','E'),
   A_PASS = PACK('P','A','S','S'),
   A_SIZE = PACK('S','I','Z','E'),
@@ -158,7 +158,7 @@ enum answer {
 #define READ_FORK (-1)
 
 typedef struct {
-  enum answer tag;
+  enum ProtocolAnswer tag;
   union {
     struct {
       uint32_t size;
@@ -176,43 +176,43 @@ typedef struct {
       float bounds[4];
     } gpic;
   };
-} answer_t;
+} ProtocolAnswer;
 
 /* "ASK" :P */
 
-enum ask {
+enum ProtocolAsk {
   C_FLSH = PACK('F','L','S','H'),
 };
 
 typedef struct {
-  enum ask tag;
+  enum ProtocolAsk tag;
   union {
     struct {
       int pid;
     } term;
     struct {
       int fid, pos;
-    } fenc;
+    } Fence;
     struct {
       int fid;
     } flsh;
   };
-} ask_t;
+} ProtocolAsk;
 
 /* Functions */
 
-channel_t *channel_new(void);
-void channel_free(channel_t *c);
+IOChannel *channel_new(void);
+void channel_free(IOChannel *c);
 
-bool channel_handshake(channel_t *c, int fd);
-bool channel_has_pending_query(channel_t *t, int fd, int timeout);
-enum query channel_peek_query(channel_t *t, int fd);
-bool channel_read_query(channel_t *t, int fd, query_t *r);
-void channel_write_ask(channel_t *t, int fd, ask_t *a);
-void channel_write_answer(channel_t *t, int fd, answer_t *a);
-void *channel_get_buffer(channel_t *t, size_t n);
-void channel_flush(channel_t *t, int fd);
-void channel_reset(channel_t *t);
+bool channel_handshake(IOChannel *c, int fd);
+bool channel_has_pending_query(IOChannel *t, int fd, int timeout);
+enum ProtocolQuery channel_peek_query(IOChannel *t, int fd);
+bool channel_read_query(IOChannel *t, int fd, ProtocolQuery *r);
+void channel_write_ask(IOChannel *t, int fd, ProtocolAsk *a);
+void channel_write_answer(IOChannel *t, int fd, ProtocolAnswer *a);
+void *channel_get_buffer(IOChannel *t, size_t n);
+void channel_flush(IOChannel *t, int fd);
+void channel_reset(IOChannel *t);
 
-void log_query(FILE *f, query_t *q);
+void log_query(FILE *f, ProtocolQuery *q);
 #endif /*!SPROTOCOL_H*/
