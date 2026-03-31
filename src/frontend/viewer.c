@@ -933,7 +933,7 @@ void viewer_scroll_to_doc_coord(fz_context *ctx,
 
   // Compute new offsets to center the target (if scrolling)
   if (scroll_y)
-    vwr->target_offset_y = target_y - win_h_world * 0.5f;
+    vwr->target_offset_y = target_y - win_h_world * 0.25f;
 
   if (scroll_x)
     vwr->target_offset_x = target_x;
