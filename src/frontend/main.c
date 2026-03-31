@@ -1263,7 +1263,16 @@ bool texpresso_main(struct persistent_state *ps)
     for (SDL_Event e; SDL_PollEvent(&e); )
     {
       // Delegate Input to Engine
-      viewer_handle_event(ctx, &ui->viewer, &ps->pcoll, &e, ps->window);
+      DocCoord dc = viewer_handle_event(ctx, &ui->viewer, &ps->pcoll, &e, ps->window);
+      if (dc.page_index > 0)
+      {
+        float f = send(scale_factor, ui->eng);
+        fz_buffer *buf;
+        TexSynctex *stx = send(synctex, ui->eng, &buf);
+        if (f > 0 && stx && buf)
+          synctex_scan(ps->ctx, stx, buf, ps->doc_path, dc.page_index, dc.x / f,
+                       dc.y / f);
+      }
 
       if (e.type == ps->custom_events + CUSTOM_EVENT_UI)
       {

@@ -364,14 +364,17 @@ void viewer_update(Viewer *vwr, PageCollection *pcoll, float dt, int win_w, int 
  * - Keyboard navigation (UP/DOWN)
  * - Mouse wheel scrolling and zoom (with SHIFT)
  */
-void viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll, SDL_Event *ev, SDL_Window *win)
+DocCoord viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll, SDL_Event *ev, SDL_Window *win)
 {
+  DocCoord dc = {-1, 0, 0};
   if (ev->type == SDL_MOUSEBUTTONDOWN ||
       ev->type == SDL_MOUSEBUTTONUP)
     hover_scrollbar(&vwr->scroll, ev->button.x, ev->button.y);
 
   if (ev->type == SDL_MOUSEMOTION)
     hover_scrollbar(&vwr->scroll, ev->motion.x, ev->motion.y);
+
+  static int click_ticks, click_x, click_y;
 
   if (ev->type == SDL_MOUSEBUTTONDOWN)
   {
@@ -413,6 +416,10 @@ void viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll, SD
         }
       }
     } else if (ev->button.button == SDL_BUTTON_LEFT) {
+      click_ticks = ev->button.timestamp;
+      click_x = ev->button.x;
+      click_y = ev->button.y;
+
       // Mouse click on document
       DocCoord dc = viewer_screen_to_doc(ctx, vwr, pcoll, ev->button.x, ev->button.y);
 
@@ -480,6 +487,13 @@ void viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll, SD
     vwr->scroll.dragging = false;
     vwr->panning = false;
     SDL_SetRelativeMouseMode(SDL_FALSE);
+    if (ev->button.button == SDL_BUTTON_LEFT &&
+        ev->button.clicks == 1 &&
+        fz_absi(ev->button.timestamp - click_ticks) < 100 &&
+        fz_absi(ev->button.x - click_x) < 10 &&
+        fz_absi(ev->button.y - click_y) < 10)
+      dc = viewer_screen_to_doc(ctx, vwr, pcoll, ev->button.x, ev->button.y);
+
   } else if (ev->type == SDL_MOUSEMOTION)
   {
     if (vwr->scroll.dragging)
@@ -618,6 +632,7 @@ void viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll, SD
       }
     }
   }
+  return dc;
 }
 
 /**
