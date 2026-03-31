@@ -248,22 +248,22 @@ void viewer_draw_scrollbar(Viewer *vwr, SDL_Renderer *ren);
 fz_irect fz_relative_clipped_area(fz_irect absolute, fz_irect canvas);
 
 /**
- * @brief Scroll to a document coordinate, optionally with hysteresis.
+ * @brief Scroll to a document coordinate, with optional horizontal/vertical hysteresis.
  *
  * @param ctx MuPDF context (for page metrics).
  * @param vwr Viewer state to update.
  * @param pcoll Page collection (for page dimensions).
  * @param coord Target DocCoord.
- * @param center_tolerance [0, 0.5] Fraction of viewport height to consider "centered"
- *        (e.g., 0.15 means: if target is within top/bottom 15% of viewport, no scroll).
- *
- * @note Sets `vwr->animating = true` if scrolling occurs.
- * @note Does *not* modify zoom—only vertical/horizontal offsets.
+ * @param center_tolerance [0, 0.5] Fraction of viewport *height* to consider "centered" vertically.
+ * @param h_center_tolerance [0, 0.5] Fraction of viewport *width* to consider "centered" horizontally.
+ *        (Set to 0.0 to disable horizontal hysteresis.)
+ * @note Sets `vwr->animating = true` if *either* axis scrolls.
  */
 void viewer_scroll_to_doc_coord(fz_context *ctx,
                                 Viewer *vwr,
                                 PageCollection *pcoll,
                                 DocCoord coord,
-                                float center_tolerance);
+                                float center_tolerance,
+                                float h_center_tolerance);
 
 #endif
