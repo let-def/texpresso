@@ -809,23 +809,26 @@ fz_irect viewer_get_page_buffer_rect(fz_context *ctx, Viewer *vwr, PageCollectio
 DocCoord viewer_screen_to_doc(fz_context *ctx, Viewer *vwr, PageCollection *pcoll, int sx, int sy) {
   DocCoord dc = {-1, 0, 0};
   float world_y = (sy / vwr->ez) + vwr->offset_y;
-  float current_top = 0;
-  for (int i = 0, count = pagecollection_count(pcoll); i < count; i++) {
-    fz_display_list *dl = pagecollection_get(pcoll, i);
+  ssize_t page = pagecollection_page_below(pcoll, world_y, vwr->margin);
+  float top = pagecollection_page_offset(pcoll, page, vwr->margin);
+  fz_display_list *dl = pagecollection_get(pcoll, page);
+  if (dl)
+  {
     fz_rect bounds = fz_bound_display_list(ctx, dl);
     float w = bounds.x1 - bounds.x0;
     float h = bounds.y1 - bounds.y0;
-    if (world_y >= current_top && world_y <= current_top + h) {
-      float page_x = get_page_screen_x(w, vwr->win_w, vwr->offset_x, vwr->ez, vwr->screen_margin);
+    if (world_y >= top && world_y <= top + h)
+    {
+      float page_x = get_page_screen_x(w, vwr->win_w, vwr->offset_x, vwr->ez,
+                                       vwr->screen_margin);
       float local_x = (sx - page_x) / vwr->ez;
-      if (local_x >= 0 && local_x <= w) {
-        dc.page_index = i;
+      if (local_x >= 0 && local_x <= w)
+      {
+        dc.page_index = page;
         dc.x = local_x;
-        dc.y = world_y - current_top;
-        return dc;
+        dc.y = world_y - top;
       }
     }
-    current_top += h + vwr->margin;
   }
   return dc;
 }
