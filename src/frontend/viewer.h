@@ -247,4 +247,32 @@ void viewer_draw_scrollbar(Viewer *vwr, SDL_Renderer *ren);
  */
 fz_irect fz_relative_clipped_area(fz_irect absolute, fz_irect canvas);
 
+typedef enum {
+  VIEWER_SCROLL_IF_HIDDEN,   // Scroll only if target is not visible (default hysteresis)
+  VIEWER_SCROLL_ALWAYS,      // Force scroll, regardless of current position
+  VIEWER_SCROLL_IF_NOT_CENTERED, // Scroll if target not centered (within some tolerance)
+} ViewerScrollPolicy;
+
+/**
+ * @brief Scroll to a document coordinate, optionally with hysteresis.
+ *
+ * @param ctx MuPDF context (for page metrics).
+ * @param vwr Viewer state to update.
+ * @param pcoll Page collection (for page dimensions).
+ * @param coord Target DocCoord.
+ * @param policy Scroll behavior policy.
+ * @param center_tolerance [0, 0.5] Fraction of viewport height to consider "centered"
+ *        (e.g., 0.15 means: if target is within top/bottom 15% of viewport, no scroll).
+ *        Ignored if `policy != VIEWER_SCROLL_IF_NOT_CENTERED`.
+ *
+ * @note Sets `vwr->animating = true` if scrolling occurs.
+ * @note Does *not* modify zoom—only vertical/horizontal offsets.
+ */
+void viewer_scroll_to_doc_coord(fz_context *ctx,
+                                Viewer *vwr,
+                                PageCollection *pcoll,
+                                DocCoord coord,
+                                ViewerScrollPolicy policy,
+                                float center_tolerance);
+
 #endif

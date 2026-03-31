@@ -963,7 +963,7 @@ static void interpret_command(struct persistent_state *ps,
     case EDIT_SYNCTEX_FORWARD:
     {
       fz_buffer *buf;
-TexSynctex *stx = send(synctex, ui->eng, &buf);
+      TexSynctex *stx = send(synctex, ui->eng, &buf);
       int go_up = 0;
       const char *path =
           relative_path(cmd.synctex_forward.path, ps->doc_path, &go_up);
@@ -976,8 +976,8 @@ TexSynctex *stx = send(synctex, ui->eng, &buf);
       }
       else
       {
-        // synctex_set_target(stx, get_current_page(ui), path, cmd.synctex_forward.line);
-        ps->schedule_event(UI_STEP_EVENT);
+        VisibleRange vr = viewer_get_visible_range(ps->ctx, &ui->viewer, &ps->pcoll);
+        synctex_set_target(stx, (vr.first_page + vr.last_page) / 2, path, cmd.synctex_forward.line);
       }
     }
     break;
@@ -1091,7 +1091,7 @@ static bool prepare_rendering(struct persistent_state *ps,
 {
   if (vr.first_page < 0)
     return false;
-  
+
   bool result = false;
   for (int i = vr.first_page; i <= vr.last_page; i++)
   {
@@ -1115,7 +1115,7 @@ static void render_pages(struct persistent_state *ps,
 {
   if (vr.first_page < 0)
     return;
-  
+
   for (int i = vr.first_page; i <= vr.last_page; i++)
   {
     fz_irect window_rect =
@@ -1329,7 +1329,7 @@ bool texpresso_main(struct persistent_state *ps)
     }
 
     // Update physics
-    
+
     Uint64 now = SDL_GetPerformanceCounter();
     float dt = (float)(now - last_time) / freq;
     last_time = now;
@@ -1350,29 +1350,9 @@ bool texpresso_main(struct persistent_state *ps)
       fprintf(stderr,
               "[synctex forward] sync: hit page %d, coordinates (%d, %d)\n",
               page, x, y);
-
-      // float f = send(scale_factor, ui->eng);
-      // fz_point p = fz_make_point(f * x, f * y);
-      // fz_point pt = txp_renderer_document_to_screen(ctx, ui->doc_renderer, p);
-      // fprintf(stderr, "[synctex forward] position on screen: (%.02f, %.02f)\n",
-      //         pt.x, pt.y);
-      // int w, h;
-      // txp_renderer_screen_size(ctx, ui->doc_renderer, &w, &h);
-      // float margin_lo = h / 4.0f;
-      // float margin_hi = h / 3.0f;
-
-      // txp_renderer_config *config =
-      //     txp_renderer_get_config(ctx, ui->doc_renderer);
-      // float delta = 0.0f;
-      // if (pt.y < margin_lo)
-      //   delta = -pt.y + margin_hi;
-      // else if (pt.y >= h - margin_lo)
-      //   delta = h - pt.y - margin_hi;
-      // fprintf(stderr, "[synctex forward] pan.y = %.02f + %.02f = %.02f\n",
-      //         config->pan.y, delta, config->pan.y + delta);
-      // config->pan.y += delta;
-      // if (delta != 0.0f)
-      //   ps->schedule_event(UI_RENDER_EVENT);
+      float f = send(scale_factor, ui->eng);
+      DocCoord coord = {.page_index = page, .x = f * x, .y = f * y};
+      viewer_scroll_to_doc_coord(ctx, &ui->viewer, &ps->pcoll, coord, VIEWER_SCROLL_IF_NOT_CENTERED, 0.2);
     }
 
     rerender = render(ps, ui, rerender);
