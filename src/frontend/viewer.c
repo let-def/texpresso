@@ -872,7 +872,6 @@ void viewer_scroll_to_doc_coord(fz_context *ctx,
                                 Viewer *vwr,
                                 PageCollection *pcoll,
                                 DocCoord coord,
-                                ViewerScrollPolicy policy,
                                 float center_tolerance)
 {
   // 1. Compute target world Y (and X if horizontal scroll matters)
@@ -888,24 +887,7 @@ void viewer_scroll_to_doc_coord(fz_context *ctx,
   float target_rel_y = (target_y - view_top_y) / viewport_height_world;
 
   // 4. Apply policy
-  bool should_scroll = false;
-
-  switch (policy)
-  {
-    case VIEWER_SCROLL_IF_HIDDEN:
-      // If target is *not* fully inside viewport (with 10% margin)
-      should_scroll = target_rel_y < 0.1f || target_rel_y > 0.9f;
-      break;
-
-    case VIEWER_SCROLL_IF_NOT_CENTERED:
-      // If target is more than `tolerance` away from center (0.5)
-      should_scroll = fabsf(target_rel_y - 0.5f) > center_tolerance;
-      break;
-
-    case VIEWER_SCROLL_ALWAYS:
-      should_scroll = true;
-      break;
-  }
+  bool should_scroll = fabsf(target_rel_y - 0.5f) > center_tolerance;
 
   if (!should_scroll) return; // ✅ Hysteresis: no scroll needed!
 
