@@ -31,7 +31,7 @@
 
 typedef struct incdvi_s IncDVI;
 
-IncDVI *incdvi_new(fz_context *ctx, dvi_reshooks hooks);
+IncDVI *incdvi_new(fz_context *ctx, dvi_resloader loader);
 void incdvi_free(fz_context *ctx, IncDVI *d);
 void incdvi_reset(IncDVI *d);
 void incdvi_update(fz_context *ctx, IncDVI *d, fz_buffer *buf);

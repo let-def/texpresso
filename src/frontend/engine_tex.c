@@ -1837,7 +1837,7 @@ static FileEntry *engine_find_file(Engine *_self, fz_context *ctx, const char *p
  * @param stream_mode    If true, enable stream mode for VFS handling
  * @param inclusion_path Additional directories for finding included files
  * @param tex_name       Name of the main .tex input file
- * @param hooks          DVI resource hooks for custom resource loading
+ * @param loader         DVI resource loader for custom resource loading
  * @return Engine instance, or NULL if memory allocation fails
  *
  * @see create_pdf_engine Create a PDF engine
@@ -1849,7 +1849,7 @@ Engine *create_tex_engine(fz_context *ctx,
                           bool stream_mode,
                           const char *inclusion_path,
                           const char *tex_name,
-                          dvi_reshooks hooks)
+                          dvi_resloader loader)
 {
   struct TexEngine *self = fz_malloc_struct(ctx, struct TexEngine);
   self->_class = &_class;
@@ -1867,7 +1867,7 @@ Engine *create_tex_engine(fz_context *ctx,
   self->c = channel_new();
   self->process_count = 0;
 
-  self->dvi = incdvi_new(ctx, hooks);
+  self->dvi = incdvi_new(ctx, loader);
   self->use_texlive = use_texlive;
   self->stream_mode = stream_mode;
 
