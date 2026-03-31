@@ -277,18 +277,18 @@ static void engine_notify_file_changes(Engine *_self,
  *
  * @param ctx      MuPDF context for memory allocation
  * @param dvi_path Path to the DVI file to display
- * @param hooks    DVI resource hooks for custom resource loading
+ * @param loader   DVI resource loader for custom resource loading
  * @return Engine instance, or NULL on error
  */
 Engine *create_dvi_engine(fz_context *ctx,
                           const char *dvi_path,
-                          dvi_reshooks hooks)
+                          dvi_resloader loader)
 {
   fz_buffer *buffer = fz_read_file(ctx, dvi_path);
   struct DviEngine *self = fz_malloc_struct(ctx, struct DviEngine);
   self->_class = &_class;
   self->buffer = buffer;
-  self->dvi = incdvi_new(ctx, hooks);
+  self->dvi = incdvi_new(ctx, loader);
   incdvi_update(ctx, self->dvi, buffer);
   return (Engine*)self;
 }

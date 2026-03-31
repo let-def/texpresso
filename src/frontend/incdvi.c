@@ -61,10 +61,10 @@ static int add_page(fz_context *ctx, IncDVI *d)
   return result;
 }
 
-IncDVI *incdvi_new(fz_context *ctx, dvi_reshooks hooks)
+IncDVI *incdvi_new(fz_context *ctx, dvi_resloader loader)
 {
   IncDVI *d = fz_malloc_struct(ctx, IncDVI);
-  d->dc = dvi_context_new(ctx, hooks);
+  d->dc = dvi_context_new(ctx, loader);
   return d;
 }
 

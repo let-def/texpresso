@@ -1208,19 +1208,19 @@ bool texpresso_main(struct persistent_state *ps)
     ui->eng = create_pdf_engine(ps->ctx, ps->doc_name);
   else
   {
-    dvi_reshooks hooks;
-    if (using_texlive)
-      hooks = dvi_texlive_hooks(ps->ctx, ps->doc_path);
-    else
-      hooks = dvi_tectonic_hooks(ps->ctx, ps->doc_path);
+     dvi_resloader loader;
+     if (using_texlive)
+       loader = dvi_texlive_loader(ps->ctx, ps->doc_path);
+     else
+       loader = dvi_tectonic_loader(ps->ctx, ps->doc_path);
 
-    if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
-      ui->eng = create_dvi_engine(ps->ctx, ps->doc_name, hooks);
-    else
-      ui->eng = create_tex_engine(ps->ctx, engine_path, using_texlive,
-                                  ps->stream_mode, ps->inclusion_path,
-                                  ps->doc_name, hooks);
-  }
+     if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
+       ui->eng = create_dvi_engine(ps->ctx, ps->doc_name, loader);
+     else
+       ui->eng = create_tex_engine(ps->ctx, engine_path, using_texlive,
+                                   ps->stream_mode, ps->inclusion_path,
+                                   ps->doc_name, loader);
+   }
 
   ui->sdl_renderer = ps->renderer;
   pagebuffer_init(&ui->pbuff, ui->sdl_renderer);

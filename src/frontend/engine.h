@@ -86,7 +86,7 @@ typedef struct Engine Engine;
  * @param stream_mode    If true, enable stream mode for VFS data handling
  * @param inclusion_path Additional directories to search for included files
  * @param tex_name       Name of the main .tex input file
- * @param hooks          DVI resource hooks for custom resource loading
+ * @param loader         DVI resource loader for custom resource loading
  * @return Engine instance if successful, NULL otherwise
  *
  * @see engine_tex.c Implementation details
@@ -99,7 +99,7 @@ Engine *create_tex_engine(fz_context *ctx,
                           bool stream_mode,
                           const char *inclusion_path,
                           const char *tex_name,
-                          dvi_reshooks hooks);
+                          dvi_resloader loader);
 
 /**
  * @brief Create a new PDF engine for displaying PDF documents
@@ -125,7 +125,7 @@ Engine *create_pdf_engine(fz_context *ctx, const char *pdf_path);
  *
  * @param ctx      MuPDF context for memory allocation
  * @param dvi_path Path to the DVI file to display
- * @param hooks    DVI resource hooks for custom resource loading
+ * @param loader   DVI resource loader for custom resource loading
  * @return Engine instance if successful, NULL otherwise
  *
  * @see create_tex_engine For incremental TeX compilation
@@ -133,7 +133,7 @@ Engine *create_pdf_engine(fz_context *ctx, const char *pdf_path);
  */
 Engine *create_dvi_engine(fz_context *ctx,
                           const char *dvi_path,
-                          dvi_reshooks hooks);
+                          dvi_resloader loader);
 
 /**
  * @brief Current status of a document engine
