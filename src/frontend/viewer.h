@@ -142,7 +142,7 @@ void viewer_update(Viewer *vwr, PageCollection *pcoll, float dt, int win_w, int 
  * @param ev SDL event to process.
  * @param win SDL window (for mouse grab control).
  */
-void viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll, SDL_Event *ev, SDL_Window *win);
+DocCoord viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll, SDL_Event *ev, SDL_Window *win);
 
 /**
  * @brief Check if viewer is idle (no animation or movement).
