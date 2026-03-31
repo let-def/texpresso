@@ -31,14 +31,59 @@
  * protocol to communicate with a TeX compiler process (either TeXLive or
  * tectonic) and maintains a multi-branch history for efficient rollback.
  *
- * The engine implements a sophisticated rollback mechanism that allows it to
- * revert to any previous checkpoint and restart compilation from that point.
- * This is essential for handling source file changes during interactive
- * editing.
+ * @par Architecture Overview
  *
- * @note The engine maintains up to 32 concurrent processes to support forking
- *       behavior, which enablesefficient incremental recompilation without
- *       starting from scratch after each file change.
+ * The engine maintains a state machine with the following key components:
+ *
+ * - **Filesystem State**: Tracks all files touched during compilation
+ *   through a virtual filesystem with snapshot/rollback support
+ *
+ * - **Process Management**: Maintains up to MAX_PROCESS forked processes to
+ *   support incremental recompilation. Each process represents a checkpoint in
+ *   the compilation history.
+ *
+ * - **Trace Logging**: Records every file access in order, enabling precise
+ *   rollback to any previous state by replaying the trace
+ *
+ * - **Fence System**: Marks safe points where recompilation can restart,
+ *   avoiding re-reading files that haven't changed
+ *
+ * @par Rollback Mechanism
+ *
+ * When a source file changes, the engine:
+ * 1. Records the change via notify_file_changes()
+ * 2. Begins a transaction with begin_changes()
+ * 3. Detects affected files with detect_changes()
+ * 4. Computes rollback position and fence points
+ * 5. Pops processes until reaching the checkpoint
+ * 6. Replays the trace to restore filesystem state
+ * 7. Restarts compilation from the checkpoint
+ *
+ * @par Fork Strategy
+ *
+ * The engine periodically forks during compilation to create checkpoints.
+ * On macOS, forking is delayed until after font loading to avoid system
+ * restrictions. Process decimation prevents unbounded growth by merging
+ * every other process when reaching the MAX_PROCESS process limit.
+ *
+ * @par Protocol
+ *
+ * Communication with the child process uses a simple request/response
+ * protocol:
+ * - OPEN: Open a file (read or write)
+ * - READ: Read from an open file
+ * - APND: Append to an open file (write)
+ * - CLOS: Close an open file
+ * - SIZE: Get file size
+ * - MTIM: Get file modification time
+ * - SEEN: Update "seen" position for rollback
+ * - GPIC/SPIC: Get/Set picture cache
+ * - CHLD: Child process created (fork)
+ * - FLSH: Flush child state
+ *
+ * @see engine.h Common engine interface
+ * @see engine_pdf.c PDF engine implementation
+ * @see engine_dvi.c DVI engine implementation
  */
 
 #include <fcntl.h>
@@ -482,6 +527,15 @@ static void decimate_processes(struct TexEngine *self)
 
 // Engine class implementation
 
+/**
+ * @brief Destroy the TeX engine and free all resources
+ *
+ * Closes all child processes, frees DVI and Synctex data, and deallocates
+ * all memory associated with the TeX engine.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param ctx   MuPDF context for resource deallocation
+ */
 static void engine_destroy(Engine *_self, fz_context *ctx)
 {
   SELF;
@@ -1329,12 +1383,31 @@ static int compute_fences(fz_context *ctx, struct TexEngine *self, int trace, in
   return trace;
 }
 
+/**
+ * @brief Get the number of pages in the DVI output
+ *
+ * Returns the page count from the internal DVI parser.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @return Number of pages in the DVI document
+ */
 static int engine_page_count(Engine *_self)
 {
   SELF;
   return incdvi_page_count(self->dvi);
 }
 
+/**
+ * @brief Render a page from the DVI output
+ *
+ * Extracts page dimensions and renders the specified page using
+ * the internal DVI parser into a display list.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param ctx   MuPDF context for rendering
+ * @param page  Page number (0-indexed)
+ * @return Display list containing the page content, or NULL on error
+ */
 static fz_display_list *engine_render_page(Engine *_self, fz_context *ctx, int page)
 {
   SELF;
@@ -1353,6 +1426,19 @@ static fz_display_list *engine_render_page(Engine *_self, fz_context *ctx, int p
   return dl;
 }
 
+/**
+ * @brief Step the TeX engine and process messages
+ *
+ * Processes one message from the TeX child process. If restart_if_needed
+ * is true and no process is running, it starts a new xetex process.
+ *
+ * @param _self              Engine instance (cast to TexEngine)
+ * @param ctx               MuPDF context
+ * @param restart_if_needed If true, start a new process if needed
+ * @return true if a message was processed
+ *
+ * @see answer_query Handle child process queries
+ */
 static bool engine_step(Engine *_self, fz_context *ctx, bool restart_if_needed)
 {
   SELF;
@@ -1381,6 +1467,21 @@ static bool engine_step(Engine *_self, fz_context *ctx, bool restart_if_needed)
   return 0;
 }
 
+/**
+ * @brief Scan a file for changes
+ *
+ * Reads the current file from disk and compares it to the stored data.
+ * Returns the byte offset where the first difference occurs, or -1 if
+ * no change was detected.
+ *
+ * @param ctx   MuPDF context
+ * @param self  Engine instance (cast to TexEngine)
+ * @param e     File entry to scan
+ * @return Byte offset of first change, or -1 if no change
+ *
+ * @note Uses the file system stat to check for changes first, then
+ *       does byte-by-byte comparison if timestamps differ.
+ */
 static int scan_entry(fz_context *ctx, struct TexEngine *self, FileEntry *e)
 {
   if (e->saved.level < FILE_READ || e->fs_stat.st_ino == 0 || e->edit_data)
@@ -1599,6 +1700,17 @@ static void rollback_add_change(fz_context *ctx, struct TexEngine *self, FileEnt
   self->rollback.offset = changed;
 }
 
+/**
+ * @brief Record a file change that requires rollback
+ *
+ * Adds the modified file and change position to the rollback transaction.
+ * The engine will roll back to before this change when end_changes() is called.
+ *
+ * @param _self  Engine instance (cast to TexEngine)
+ * @param ctx    MuPDF context
+ * @param entry  File entry that was modified
+ * @param offset Byte offset where change occurred
+ */
 static void engine_notify_file_changes(Engine *_self,
                                        fz_context *ctx,
                                        FileEntry *entry,
@@ -1608,12 +1720,36 @@ static void engine_notify_file_changes(Engine *_self,
   rollback_add_change(ctx, self, entry, offset);
 }
 
+/**
+ * @brief Begin a file change transaction
+ *
+ * Starts tracking changes for a rollback transaction.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param ctx   MuPDF context
+ *
+ * @see detect_changes Scan for file modifications
+ * @see end_changes  Commit or rollback changes
+ */
 static void engine_begin_changes(Engine *_self, fz_context *ctx)
 {
   SELF;
   rollback_begin(ctx, self);
 }
 
+/**
+ * @brief Detect file changes by scanning the filesystem
+ *
+ * Iterates over all tracked files and compares their current state
+ * (size, modification time) against the recorded state. When a change
+ * is detected, it's added to the rollback transaction.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param ctx   MuPDF context
+ *
+ * @see begin_changes Start a change transaction
+ * @see end_changes  Commit or rollback changes
+ */
 static void engine_detect_changes(Engine *_self, fz_context *ctx)
 {
   SELF;
@@ -1627,6 +1763,20 @@ static void engine_detect_changes(Engine *_self, fz_context *ctx)
   }
 }
 
+/**
+ * @brief End a file change transaction
+ *
+ * Finalizes the rollback transaction. If changes were detected, the engine
+ * rolls back to before the changes, computes fence points, and restarts
+ * compilation. Returns true if changes were applied and recompilation is needed.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param ctx   MuPDF context
+ * @return true if changes were applied (requiring recompilation)
+ *
+ * @see begin_changes  Start a change transaction
+ * @see detect_changes Scan for file modifications
+ */
 static bool engine_end_changes(Engine *_self, fz_context *ctx)
 {
   SELF;
@@ -1641,6 +1791,15 @@ static bool engine_end_changes(Engine *_self, fz_context *ctx)
   return true;
 }
 
+/**
+ * @brief Get the engine status (running or terminated)
+ *
+ * For TeX engines, returns DOC_RUNNING while the child process
+ * is alive and processing, DOC_TERMINATED when it has finished.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @return Current engine status
+ */
 static EngineStatus engine_get_status(Engine *_self)
 {
   SELF;
@@ -1649,12 +1808,30 @@ static EngineStatus engine_get_status(Engine *_self)
   return get_process(self)->fd > -1 ? DOC_RUNNING : DOC_TERMINATED;
 }
 
+/**
+ * @brief Get the scaling factor for TeX rendering
+ *
+ * Returns the TeX point scaling factor from the internal DVI parser.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @return Scaling factor for TeX document units
+ */
 static float engine_scale_factor(Engine *_self)
 {
   SELF;
   return incdvi_tex_scale_factor(self->dvi);
 }
 
+/**
+ * @brief Get Synctex data for source synchronization
+ *
+ * TeX engines generate Synctex data that enables forward and backward
+ * search between source files and the rendered output.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param buf   If non-NULL, set to buffer containing raw Synctex data
+ * @return Synctex parser instance, or NULL if not available
+ */
 static TexSynctex *engine_synctex(Engine *_self, fz_buffer **buf)
 {
   SELF;
@@ -1663,12 +1840,42 @@ static TexSynctex *engine_synctex(Engine *_self, fz_buffer **buf)
   return self->stex;
 }
 
+/**
+ * @brief Find or create a file entry for tracking
+ *
+ * TeX engines track all files touched during compilation. This function
+ * ensures a file entry exists in the filesystem tracking structure.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param ctx   MuPDF context for memory allocation
+ * @param path  File path to look up
+ * @return File entry for the specified path
+ */
 static FileEntry *engine_find_file(Engine *_self, fz_context *ctx, const char *path)
 {
   SELF;
   return filesystem_lookup_or_create(ctx, self->fs, path);
 }
 
+/**
+ * @brief Create a new TeX engine from configuration
+ *
+ * Allocates and initializes a new TeX engine with the specified
+ * configuration. The engine is ready to start compilation when
+ * step() is called with restart_if_needed=true.
+ *
+ * @param ctx            MuPDF context for memory allocation
+ * @param engine_path    Path to xetex executable
+ * @param use_texlive    If true, use TexLive provider, otherwise tectonic
+ * @param stream_mode    If true, enable stream mode for VFS handling
+ * @param inclusion_path Additional directories for finding included files
+ * @param tex_name       Name of the main .tex input file
+ * @param hooks          DVI resource hooks for custom resource loading
+ * @return Engine instance, or NULL if memory allocation fails
+ *
+ * @see create_pdf_engine Create a PDF engine
+ * @see create_dvi_engine Create a DVI engine
+ */
 Engine *create_tex_engine(fz_context *ctx,
                           const char *engine_path,
                           bool use_texlive,
