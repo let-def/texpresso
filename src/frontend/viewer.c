@@ -17,14 +17,15 @@
  * @param screen_margin Margin from window edge.
  * @return Maximum horizontal offset (positive right, negative left).
  */
-static float get_page_scroll_limit(int page_w, int win_w,
-                                   float ez, int screen_margin)
+static float get_page_scroll_limit(float page_w,
+                                   int win_w,
+                                   float ez,
+                                   int screen_margin)
 {
   float vis_world_w = (float)win_w / ez;
-  float page_world_w = (float)page_w;
-  if (page_world_w <= vis_world_w)
+  if (page_w <= vis_world_w)
     return 0.0f;
-  return (page_world_w - vis_world_w) / 2.0f + ((float)screen_margin / ez);
+  return (page_w - vis_world_w) / 2.0f + ((float)screen_margin / ez);
 }
 
 /**
@@ -853,47 +854,57 @@ fz_irect fz_relative_clipped_area(fz_irect absolute, fz_irect canvas)
   return inter;
 }
 
-/**
- * @brief Scroll to a document coordinate, optionally with hysteresis.
- *
- * @param ctx MuPDF context (for page metrics).
- * @param vwr Viewer state to update.
- * @param pcoll Page collection (for page dimensions).
- * @param coord Target DocCoord.
- * @param policy Scroll behavior policy.
- * @param center_tolerance [0, 0.5] Fraction of viewport height to consider "centered"
- *        (e.g., 0.15 means: if target is within top/bottom 15% of viewport, no scroll).
- *        Ignored if `policy != VIEWER_SCROLL_IF_NOT_CENTERED`.
- *
- * @note Sets `vwr->animating = true` if scrolling occurs.
- * @note Does *not* modify zoom—only vertical/horizontal offsets.
- */
 void viewer_scroll_to_doc_coord(fz_context *ctx,
                                 Viewer *vwr,
                                 PageCollection *pcoll,
                                 DocCoord coord,
-                                float center_tolerance)
+                                float center_tolerance,
+                                float h_center_tolerance)
 {
-  // 1. Compute target world Y (and X if horizontal scroll matters)
+  // Get viewport dimensions in world units
+  float scale = vwr->ez;
+  float win_w_world = (vwr->win_w - 2 * vwr->screen_margin) / scale;
+  float win_h_world = (vwr->win_h - 2 * vwr->screen_margin) / scale;
+
+  // Current viewport bounds (in world coordinates)
+  float view_top    = vwr->offset_y;
+  float view_bottom = vwr->offset_y + win_h_world;
+
+  // Vertical: scroll if |rel_y - 0.5| > center_tolerance
   float target_y = coord.y + pagecollection_page_offset(pcoll, coord.page_index,
                                                         vwr->margin);
+  float rel_y = (target_y - view_top) / win_h_world;  // ∈ [0, 1]
+  bool scroll_y = fabsf(rel_y - 0.5f) > center_tolerance;
 
-  // 2. Compute current viewport Y range (in world units)
-  float view_top_y = vwr->offset_y;
-  float view_bottom_y = vwr->offset_y + (vwr->win_h - 2*vwr->margin) * (1.0f / vwr->ez);
+  // Horizontal: scroll if page does not fit and
+  //             |rel_x - 0.5| > h_center_tolerance
+  float target_x = 0;
+  bool scroll_x = false;
+  if (h_center_tolerance < INFINITY)
+  {
+    fz_display_list *dl = pagecollection_get(pcoll, coord.page_index);
+    if (dl)
+    {
+      fz_rect bounds = fz_bound_display_list(ctx, dl);
+      float w = bounds.x1 - bounds.x0;
+      if (w > win_w_world)
+      {
+        target_x = coord.x - w / 2.0;
+        float rel_x = (target_x - vwr->offset_x) / win_w_world;
+        scroll_x = fabs(rel_x) > h_center_tolerance;
+      }
+    }
+  }
 
-  // 3. Compute target Y in viewport coords (0 = top, 1 = bottom)
-  float viewport_height_world = view_bottom_y - view_top_y;
-  float target_rel_y = (target_y - view_top_y) / viewport_height_world;
+  if (!scroll_y && !scroll_x) return; // Hysteresis: no scroll
 
-  // 4. Apply policy
-  bool should_scroll = fabsf(target_rel_y - 0.5f) > center_tolerance;
+  // Compute new offsets to center the target (if scrolling)
+  if (scroll_y)
+    vwr->target_offset_y = target_y - win_h_world * 0.5f;
 
-  if (!should_scroll) return; // ✅ Hysteresis: no scroll needed!
+  if (scroll_x)
+    vwr->target_offset_x = target_x;
 
-  // 5. Compute new offset_y to center (or align) target
-  float target_center_y = target_y - viewport_height_world * 0.5f;
-  vwr->target_offset_y = target_center_y;
-  vwr->animating = true; // ensures update() will animate
   vwr->velocity_y = 0.0;
+  vwr->animating = true;
 }
