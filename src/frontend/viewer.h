@@ -56,6 +56,11 @@ typedef struct {
   // Interaction flags
   bool panning, panning_x, animating, crop;  ///< Interaction state
 
+  // Click tracking
+  Uint32 click_timestamp;   ///< Timestamp of last click (for double-click detection)
+  int click_x, click_y;      ///< Screen coordinates of last click
+  bool click_pending;         ///< Whether we're waiting for potential double-click
+
   // Physics parameters
   float friction;        ///< Velocity decay per frame
   float spring_k;        ///< Spring constant for centering

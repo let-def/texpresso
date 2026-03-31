@@ -1,6 +1,9 @@
 #include "viewer.h"
 #include "pagecollection.h"
 
+#include <SDL2/SDL.h>
+#include <stdlib.h>
+
 /**
  * @brief Calculate maximum horizontal scroll range for apage.
  *
@@ -234,6 +237,10 @@ void viewer_init(Viewer *vwr)
   vwr->offset_x = vwr->target_offset_x = 0.0f;
   vwr->velocity_y = 0.0f;
   vwr->panning = vwr->panning_x = vwr->animating = vwr->crop = false;
+  vwr->click_pending = false;
+  vwr->click_timestamp = 0;
+  vwr->click_x = 0;
+  vwr->click_y = 0;
   vwr->friction = 0.95f;        // Velocity decay per frame
   vwr->spring_k = 0.15f;        // Spring constant for centering
   vwr->border_friction = 0.20f; // Friction at document boundaries
@@ -374,21 +381,24 @@ DocCoord viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll
   if (ev->type == SDL_MOUSEMOTION)
     hover_scrollbar(&vwr->scroll, ev->motion.x, ev->motion.y);
 
-  static int click_ticks, click_x, click_y;
-
-  if (ev->type == SDL_MOUSEBUTTONDOWN)
+  // Mouse click on scrollbar or document
+  if (ev->type == SDL_MOUSEBUTTONDOWN && ev->button.button == SDL_BUTTON_LEFT)
   {
-    if (ev->button.button == SDL_BUTTON_LEFT &&
-        is_in_scrollbar(&vwr->scroll, ev->button.x, ev->button.y))
+    // Store click coordinates for double-click detection
+    vwr->click_timestamp = ev->button.timestamp;
+    vwr->click_x = ev->button.x;
+    vwr->click_y = ev->button.y;
+    vwr->click_pending = true;
+
+    // Scrollbar interaction
+    if (is_in_scrollbar(&vwr->scroll, ev->button.x, ev->button.y))
     {
       vwr->scroll.dragging = true;
       if (is_in_thumb(&vwr->scroll, ev->button.x, ev->button.y))
       {
-        // Click on thumb: store click offset for dragging
         vwr->scroll.drag_offset = ev->button.y - vwr->scroll.thumb_y;
       } else
       {
-        // Click on track: jump to position
         vwr->scroll.drag_offset = vwr->scroll.thumb_h / 2.0f;
 
         float min_off = -vwr->screen_margin / vwr->ez;
@@ -415,87 +425,95 @@ DocCoord viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll
           vwr->panning = false;
         }
       }
-    } else if (ev->button.button == SDL_BUTTON_LEFT) {
-      click_ticks = ev->button.timestamp;
-      click_x = ev->button.x;
-      click_y = ev->button.y;
+    }
 
-      // Mouse click on document
-      DocCoord dc = viewer_screen_to_doc(ctx, vwr, pcoll, ev->button.x, ev->button.y);
+    // Mouse click on document
+    DocCoord dc = viewer_screen_to_doc(ctx, vwr, pcoll, ev->button.x, ev->button.y);
 
-      // --- RE-ANCHOR LOGIC ---
-      // When clicking on a page, determine if horizontal panning is possible
-      if (dc.page_index != -1)
+    // --- RE-ANCHOR LOGIC ---
+    // When clicking on a page, determine if horizontal panning is possible
+    if (dc.page_index != -1)
+    {
+      fz_display_list *dl = pagecollection_get(pcoll, dc.page_index);
+      fz_rect bounds = fz_bound_display_list(ctx, dl);
+      float doc_w = bounds.x1 - bounds.x0;
+      float limit = get_page_scroll_limit(doc_w, vwr->win_w, vwr->ez, vwr->screen_margin);
+
+      vwr->panning_x = limit > 0.01f;
+
+      if (vwr->panning_x)
       {
-        fz_display_list *dl = pagecollection_get(pcoll, dc.page_index);
-        fz_rect bounds = fz_bound_display_list(ctx, dl);
-        float doc_w = bounds.x1 - bounds.x0;
-        float limit = get_page_scroll_limit(doc_w, vwr->win_w, vwr->ez, vwr->screen_margin);
-
-        vwr->panning_x = limit > 0.01f;
-
-        if (vwr->panning_x)
-        {
-          // Clamp to horizontal scroll limits
-          if (vwr->offset_x < -limit) vwr->offset_x = -limit;
-          if (vwr->offset_x > limit) vwr->offset_x = limit;
-        }
-      }
-
-      if (ev->button.clicks >= 2 && dc.page_index != -1)
-      {
-        // Double-click: toggle crop mode and zoom to page
-        if (ev->button.clicks > 2)
-          vwr->crop = !vwr->crop;
-        vwr->animating = true;
-
-        fz_display_list *dl = pagecollection_get(pcoll, dc.page_index);
-        float doc_w;
-        fz_rect bounds = fz_bound_display_list(ctx, dl);
-        if (vwr->crop)
-        {
-          // Crop mode: zoom to content bounds only
-          fz_rect cropped = fz_empty_rect;
-          fz_device *dev = fz_new_bbox_device(ctx, &cropped);
-          fz_run_display_list(ctx, dl, dev, fz_identity, bounds, NULL);
-          fz_close_device(ctx, dev);
-          fz_drop_device(ctx, dev);
-          float mid = (bounds.x0 + bounds.x1) / 2;
-          cropped = fz_intersect_rect(bounds, cropped);
-          doc_w = fz_max(fz_abs(mid - cropped.x0), fz_abs(mid - cropped.x1)) * 2.0;
-        }
-        else
-          doc_w = bounds.x1 - bounds.x0;
-
-        float ref_width = pagecollection_reference_width(pcoll);
-        vwr->target_zoom = ref_width / doc_w;
-
-        float n_ez = vwr->target_zoom * ((float)(vwr->win_w - 20) / ref_width);
-        float world_y = dc.y + pagecollection_page_offset(pcoll, dc.page_index, vwr->margin);
-        vwr->target_offset_y = world_y - (vwr->win_h / 2.0f) / n_ez;
-        vwr->target_offset_x = 0;
-      } else
-      {
-        // Single click: start panning
-        vwr->panning = true;
-        vwr->animating = false;
-        vwr->velocity_y = 0;
+        // Clamp to horizontal scroll limits
+        if (vwr->offset_x < -limit) vwr->offset_x = -limit;
+        if (vwr->offset_x > limit) vwr->offset_x = limit;
       }
     }
+
+    if (ev->button.clicks >= 2 && dc.page_index != -1)
+    {
+      // Double-click: toggle crop mode and zoom to page
+      if (ev->button.clicks > 2)
+        vwr->crop = !vwr->crop;
+      vwr->animating = true;
+
+      fz_display_list *dl = pagecollection_get(pcoll, dc.page_index);
+      float doc_w;
+      fz_rect bounds = fz_bound_display_list(ctx, dl);
+      if (vwr->crop)
+      {
+        // Crop mode: zoom to content bounds only
+        fz_rect cropped = fz_empty_rect;
+        fz_device *dev = fz_new_bbox_device(ctx, &cropped);
+        fz_run_display_list(ctx, dl, dev, fz_identity, bounds, NULL);
+        fz_close_device(ctx, dev);
+        fz_drop_device(ctx, dev);
+        float mid = (bounds.x0 + bounds.x1) / 2;
+        cropped = fz_intersect_rect(bounds, cropped);
+        doc_w = fz_max(fz_abs(mid - cropped.x0), fz_abs(mid - cropped.x1)) * 2.0;
+      }
+      else
+        doc_w = bounds.x1 - bounds.x0;
+
+      float ref_width = pagecollection_reference_width(pcoll);
+      vwr->target_zoom = ref_width / doc_w;
+
+      float n_ez = vwr->target_zoom * ((float)(vwr->win_w - 20) / ref_width);
+      float world_y = dc.y + pagecollection_page_offset(pcoll, dc.page_index, vwr->margin);
+      vwr->target_offset_y = world_y - (vwr->win_h / 2.0f) / n_ez;
+      vwr->target_offset_x = 0;
+    } else
+    {
+   // Single click: start panning
+    vwr->panning = true;
+    vwr->animating = false;
+    vwr->velocity_y = 0;
+  }
   } else if (ev->type == SDL_MOUSEBUTTONUP)
   {
     vwr->scroll.dragging = false;
     vwr->panning = false;
     SDL_SetRelativeMouseMode(SDL_FALSE);
-    if (ev->button.button == SDL_BUTTON_LEFT &&
+
+    // Check if this was a short-click (single click, not drag) to determine DocCoord
+    if (vwr->click_pending && SDL_GetTicks() - vwr->click_timestamp < 100 &&
+        ev->button.button == SDL_BUTTON_LEFT &&
         ev->button.clicks == 1 &&
-        fz_absi(ev->button.timestamp - click_ticks) < 100 &&
-        fz_absi(ev->button.x - click_x) < 10 &&
-        fz_absi(ev->button.y - click_y) < 10)
+        abs(ev->button.x - vwr->click_x) < 10 &&
+        abs(ev->button.y - vwr->click_y) < 10)
       dc = viewer_screen_to_doc(ctx, vwr, pcoll, ev->button.x, ev->button.y);
+
+    // Reset click tracking
+    vwr->click_pending = false;
 
   } else if (ev->type == SDL_MOUSEMOTION)
   {
+    // Reset click tracking if mouse moves significantly
+    if (vwr->click_pending)
+    {
+      vwr->click_pending = false;
+      vwr->click_timestamp = 0;
+    }
+
     if (vwr->scroll.dragging)
     {
       // Thumb dragging: update position directly
