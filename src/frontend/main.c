@@ -1354,6 +1354,36 @@ bool texpresso_main(struct persistent_state *ps)
         if (e.user.code == STDIN_FILENO)
           stdin_process(&stdin_st, ps, poller, ui);
       }
+      if (e.type == SDL_KEYDOWN)
+      {
+        switch (e.key.keysym.sym)
+        {
+          case SDLK_b:
+            SDL_SetWindowBordered(
+                ui->window,
+                !!(SDL_GetWindowFlags(ui->window) & SDL_WINDOW_BORDERLESS));
+            break;
+
+          case SDLK_t:
+            SDL_SetWindowAlwaysOnTop(
+                ui->window,
+                !(SDL_GetWindowFlags(ui->window) & SDL_WINDOW_ALWAYS_ON_TOP));
+            break;
+
+          case SDLK_i:
+            if ((SDL_GetModState() & KMOD_SHIFT))
+              ui->theme.themed = !ui->theme.themed;
+            else
+            {
+              ui->theme.inverted = !ui->theme.inverted;
+              invert_colormap(ui->theme.colormap);
+            }
+            pagebuffer_flush(&ui->pbuff);
+            ps->schedule_event(UI_RENDER_EVENT);
+            break;
+        }
+      }
+
       if (e.type == SDL_QUIT ||
           e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_q)
         running = false;
