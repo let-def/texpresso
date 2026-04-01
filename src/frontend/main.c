@@ -1361,7 +1361,7 @@ bool texpresso_main(struct persistent_state *ps)
               page, x, y);
       float f = send(scale_factor, ui->eng);
       DocCoord coord = {.page_index = page, .x = f * x, .y = f * y};
-      viewer_scroll_to_doc_coord(ctx, &ui->viewer, &ps->pcoll, coord, 0.2, 0.3);
+      viewer_scroll_to_doc_coord(ctx, &ui->viewer, &ps->pcoll, coord, 0.3, 0.3);
     }
 
     rerender = render(ps, ui, rerender);
