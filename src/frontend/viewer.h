@@ -68,12 +68,13 @@ typedef struct {
   float zoom_speed;      ///< Animation speed for zoom changes
 
   // Layout parameters
-  int margin;         ///< Page margin in world units
-  int screen_margin;  ///< Margin from screen edge
+  float setting_margin; ///< Page margin in world units
+  float screen_margin;  ///< Margin from screen edge
 
   // Viewport
   int win_w, win_h;   ///< Window dimensions in pixels
   float ez;           ///< Effective zoom = zoom * (win_w - 2*margin) / ref_width
+  float margin;       ///< min(setting_margin, screen_margin / ez)
 
   // UI
   ViewerScroll scroll;    ///< Scrollbar state

@@ -245,8 +245,8 @@ void viewer_init(Viewer *vwr)
   vwr->spring_k = 0.15f;        // Spring constant for centering
   vwr->border_friction = 0.20f; // Friction at document boundaries
   vwr->zoom_speed = 0.20f;      // Zoom interpolation speed
-  vwr->margin = 10;
-  vwr->screen_margin = 10;
+  vwr->setting_margin = vwr->margin = 10;
+  vwr->screen_margin = 15;
   vwr->scroll = (ViewerScroll){0,};
   vwr->win_w = vwr->win_h = 1;
 }
@@ -271,6 +271,7 @@ static void viewer_update_effective_zoom(Viewer *vwr, PageCollection *pcoll)
 {
   vwr->ez = vwr->zoom * (float)(vwr->win_w - vwr->screen_margin * 2) /
           pagecollection_reference_width(pcoll);
+  vwr->margin = fz_min(vwr->setting_margin, vwr->screen_margin / vwr->ez);
 }
 
 /**
