@@ -86,6 +86,11 @@ typedef struct
   // Internal state of the advance_engine function to detect transitions from
   // advancing to idle.
   bool advancing;
+
+  struct {
+    bool themed, inverted;
+    uint8_t colormap[6];
+  } theme;
 } ui_state;
 
 /* --- Delayed Change Buffer --- */
@@ -852,12 +857,21 @@ static void interpret_close(struct persistent_state *ps,
   send(notify_file_changes, ui->eng, ps->ctx, e, changed);
 }
 
-static uint32_t convert_color(fz_context *ctx, vstack *stack, float frgb[3])
+static void convert_color(fz_context *ctx,
+                          vstack *stack,
+                          const float input[3],
+                          uint8_t output[3])
 {
-  uint8_t rgb[3];
   for (int i = 0; i < 3; ++i)
-    rgb[i] = fz_clampi(frgb[i] * 255.0, 0, 255) & 0xFF;
-  return (rgb[0] << 16) | (rgb[1] << 8) | (rgb[2]);
+    output[i] = fz_clampi(input[i] * 255.0, 0, 255) & 0xFF;
+}
+
+static void invert_colormap(uint8_t colors[6])
+{
+  uint8_t reverse[6] = {colors[3], colors[4], colors[5],
+                        colors[0], colors[1], colors[2]};
+  for (int i = 0; i < 6; i++)
+    colors[i] = reverse[i];
 }
 
 #if !SDL_VERSION_ATLEAST(2, 0, 16)
@@ -909,12 +923,24 @@ static void interpret_command(struct persistent_state *ps,
       break;
     case EDIT_THEME:
     {
-      // txp_renderer_config *config =
-      //     txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-      // config->background_color = convert_color(ps->ctx, stack, cmd.theme.bg);
-      // config->foreground_color = convert_color(ps->ctx, stack, cmd.theme.fg);
-      // config->themed_color = 1;
-      // ps->schedule_event(UI_RENDER_EVENT);
+      uint8_t *colors = ui->theme.colormap;
+      convert_color(ps->ctx, stack, cmd.theme.bg, colors + 0);
+      convert_color(ps->ctx, stack, cmd.theme.fg, colors + 3);
+      ui->theme.themed =
+          (colors[0] != 0x00 || colors[1] != 0x00 || colors[2] != 0x00 ||
+           colors[3] != 0xFF || colors[4] != 0xFF || colors[5] != 0xFF);
+      if (ui->theme.inverted)
+        invert_colormap(ui->theme.colormap);
+      pagebuffer_flush(&ui->pbuff);
+      ps->schedule_event(UI_RENDER_EVENT);
+    }
+    break;
+    case EDIT_INVERT:
+    {
+      ui->theme.inverted = !ui->theme.inverted;
+      invert_colormap(ui->theme.colormap);
+      pagebuffer_flush(&ui->pbuff);
+      ps->schedule_event(UI_RENDER_EVENT);
     }
     break;
     case EDIT_PREVIOUS_PAGE:
@@ -986,14 +1012,6 @@ static void interpret_command(struct persistent_state *ps,
       // txp_renderer_config *config =
       //     txp_renderer_get_config(ps->ctx, ui->doc_renderer);
       // config->crop = !config->crop;
-      ps->schedule_event(UI_RENDER_EVENT);
-    }
-    break;
-    case EDIT_INVERT:
-    {
-      // txp_renderer_config *config =
-      //     txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-      // config->invert_color = !config->invert_color;
       ps->schedule_event(UI_RENDER_EVENT);
     }
     break;
@@ -1082,7 +1100,25 @@ static void stdin_process(struct stdin_state *st,
   }
 }
 
+/* Filtering colors */
+
+#define remap_color(v, bp, wp) (bp) + ((v) * (wp - bp)) / 255
+
+static void remap_colors(void * restrict user_data, uint8_t *pixels, size_t width)
+{
+  uint8_t *colors = user_data;
+
+  for (int x = 0; x < width; ++x, pixels += 3)
+  {
+    pixels[0] = remap_color(pixels[0], colors[0], colors[3]);
+    pixels[1] = remap_color(pixels[1], colors[1], colors[4]);
+    pixels[2] = remap_color(pixels[2], colors[2], colors[5]);
+  }
+}
+
 /* UI rendering */
+
+static uint8_t reverse_colormap[6] = {0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00};
 
 static bool prepare_rendering(struct persistent_state *ps,
                               ui_state *ui,
@@ -1093,6 +1129,20 @@ static bool prepare_rendering(struct persistent_state *ps,
     return false;
 
   bool result = false;
+
+  uint8_t *colors;
+  pagebuffer_filter filter = NULL;
+  if (ui->theme.themed)
+  {
+    colors = ui->theme.colormap;
+    filter = remap_colors;
+  }
+  else if (ui->theme.inverted)
+  {
+    colors = reverse_colormap;
+    filter = remap_colors;
+  }
+
   for (int i = vr.first_page; i <= vr.last_page; i++)
   {
     fz_irect window_rect =
@@ -1102,7 +1152,7 @@ static bool prepare_rendering(struct persistent_state *ps,
     fz_irect visible_rect = fz_relative_clipped_area(window_rect, prect);
     if (pagebuffer_update_entry_from_display_list(
         ps->ctx, &ui->pbuff, i, buffer_rect, visible_rect,
-        pagecollection_get(&ps->pcoll, i), NULL, NULL))
+        pagecollection_get(&ps->pcoll, i), filter, colors))
       result = true;
   }
   return result;
