@@ -91,6 +91,10 @@ test-tectonic:
 	build/texpresso-xetex -tectonic test/simple.tex
 	rm simple.aux simple.log simple.xdv
 
+test-open-base64:
+	printf '(open-base64 "test/simple.tex" "%s")\n' "$$(base64 < test/simple.tex | tr -d '\n')" | \
+	SDL_VIDEODRIVER=dummy build/texpresso -test-initialize test/simple.tex
+
 test-texpresso:
 	SDL_VIDEODRIVER=dummy build/texpresso -test-initialize test/simple.tex
 
@@ -106,4 +110,4 @@ test-stream:
 test-stream-pipe:
 	test/test_stream.sh
 
-.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-stream-pipe
+.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-stream-pipe test-open-base64

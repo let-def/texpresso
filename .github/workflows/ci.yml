@@ -85,6 +85,9 @@ jobs:
       - name: Run tests – Texpresso
         run: make test-texpresso || echo "fail" > texpresso.status
 
+      - name: Run tests – open-base64
+        run: make test-open-base64 || echo "fail" > open-base64.status
+
       - name: Run tests – TeXpresso with TeX Live
         run: make test-texpresso-texlive || echo "fail" > texpresso-texlive.status
 
@@ -104,6 +107,7 @@ jobs:
           [ ! -f texlive.status ]   && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f tectonic.status ]  && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f texpresso.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f open-base64.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f texpresso-texlive.status ]  && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f texpresso-tectonic.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f stream.status ]      && pass=$((pass+1)) || fail=$((fail+1))

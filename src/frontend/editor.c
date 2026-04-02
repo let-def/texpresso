@@ -61,7 +61,7 @@ bool editor_parse(fz_context *ctx,
     return 0;
   }
 
-  if (strcmp(verb, "open") == 0)
+  if (strcmp(verb, "open") == 0 || strcmp(verb, "open-base64") == 0)
   {
     if (len != 3)
       goto arity;
@@ -76,6 +76,7 @@ bool editor_parse(fz_context *ctx,
                 .path = val_string(ctx, stack, path),
                 .data = val_string(ctx, stack, data),
                 .length = val_string_length(ctx, stack, data),
+                .base64 = strcmp(verb, "open-base64") == 0,
             },
 
     };
