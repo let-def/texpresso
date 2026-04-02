@@ -88,6 +88,12 @@ struct tex_engine
   struct {
     int trace_len, offset, flush;
   } rollback;
+
+  struct {
+    bool active;
+    query_t query;
+    char path[1024];
+  } deferred;
 };
 
 // Backtrackable process state & VFS representation
@@ -191,6 +197,7 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
 {
   if (self->process_count == 0)
   {
+    self->deferred.active = false;
     log_rollback(ctx, self->log, self->restart);
     self->process_count = 1;
     process_t *p = get_process(self);
@@ -493,6 +500,16 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
           if (!fs_path)
           {
             e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
+            if (e->promised && !self->deferred.active)
+            {
+              self->deferred.active = true;
+              self->deferred.query = *q;
+              strncpy(self->deferred.path, q->open.path, sizeof(self->deferred.path) - 1);
+              self->deferred.path[sizeof(self->deferred.path) - 1] = '\0';
+              self->deferred.query.open.path = self->deferred.path;
+              editor_request_file(q->open.path, strlen(q->open.path));
+              break;
+            }
             log_fileentry(ctx, self->log, e);
             record_seen(self, e, INT_MAX, q->time);
             a.tag = A_PASS;
@@ -917,6 +934,7 @@ static void revert_trace(trace_entry_t *te)
 
 static void rollback_processes(fz_context *ctx, struct tex_engine *self, int reverted, int trace)
 {
+  self->deferred.active = false;
   fprintf(
     stderr,
     "rolling back to position %d\nbefore rollback: %d bytes of output\n",
@@ -1077,6 +1095,20 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
   SELF;
   if (restart_if_needed)
     prepare_process(ctx, self);
+
+  if (self->deferred.active)
+  {
+    fileentry_t *e = filesystem_lookup(self->fs, self->deferred.path);
+    if (e && e->edit_data)
+    {
+      e->seen = -1;
+      self->deferred.active = false;
+      answer_query(ctx, self, &self->deferred.query);
+      channel_flush(self->c, get_process(self)->fd);
+      return 1;
+    }
+    return 0;
+  }
 
   if (engine_get_status(_self) == DOC_RUNNING)
   {
@@ -1417,6 +1449,7 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
 
   self->stex = synctex_new(ctx);
   self->rollback.trace_len = NOT_IN_TRANSACTION;
+  self->deferred.active = false;
 
   return (txp_engine*)self;
 }

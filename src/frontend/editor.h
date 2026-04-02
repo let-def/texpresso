@@ -32,6 +32,7 @@ enum EDITOR_COMMAND
   EDIT_UNMAP_WINDOW,
   EDIT_CROP,
   EDIT_INVERT,
+  EDIT_REGISTER,
 };
 
 struct editor_change
@@ -114,6 +115,10 @@ struct editor_command
 
     struct {
     } invert;
+
+    struct {
+      const char *path;
+    } reg;
   };
 };
 
