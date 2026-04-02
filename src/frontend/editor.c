@@ -586,3 +586,24 @@ void editor_notify_file_opened(int index, const char *path, int len)
     case EDITOR_JSON: fprintf(stdout, "\"]\n"); break;
   }
 }
+
+void editor_request_file(const char *path, int len)
+{
+  if (len == 0)
+    return;
+  switch (protocol)
+  {
+    case EDITOR_SEXP:
+      fprintf(stdout, "(request-file \"");
+      break;
+    case EDITOR_JSON:
+      fprintf(stdout, "[\"request-file\", \"");
+      break;
+  }
+  output_data_string(stdout, path, len);
+  switch (protocol)
+  {
+    case EDITOR_SEXP: fprintf(stdout, "\")\n"); break;
+    case EDITOR_JSON: fprintf(stdout, "\"]\n"); break;
+  }
+}
