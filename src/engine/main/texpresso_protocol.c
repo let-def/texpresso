@@ -26,6 +26,7 @@ enum tag
   T_FORK = FOURCC('F', 'O', 'R', 'K'),
   T_GPIC = FOURCC('G', 'P', 'I', 'C'),
   T_OPRD = FOURCC('O', 'P', 'R', 'D'),
+  T_OPRL = FOURCC('O', 'P', 'R', 'L'),
   T_OPWR = FOURCC('O', 'P', 'W', 'R'),
   T_OPEN = FOURCC('O', 'P', 'E', 'N'),
   T_PASS = FOURCC('P', 'A', 'S', 'S'),
@@ -226,6 +227,39 @@ char *txp_open(txp_client *io,
 {
   fprintf(stderr, "txp_open(\"%s\", %s)\n", path, mode == TXP_READ ? "READ" : "WRITE");
   txp_io_send_tag(io, (mode == TXP_READ) ? T_OPRD : T_OPWR);
+  txp_io_send_u32(io, file);
+  txp_io_send_str(io, path);
+  txp_io_send_u32(io, kind);
+  enum tag t = txp_io_recv_tag(io);
+  switch (t)
+  {
+    case T_PASS:
+      return NULL;
+    case T_OPEN:
+    {
+      uint32_t size = txp_io_recv_u32(io);
+      char *buf = calloc(1, size + 1);
+      if (buf == NULL)
+      {
+        fprintf(stderr, "Cannot allocate filename (length: %d)\n", size);
+        exit(1);
+      }
+      read_exact(io->file, buf, size);
+      buf[size] = 0;
+      return buf;
+    }
+    default:
+      panic_tag(t);
+  }
+}
+
+char *txp_open_last_resort(txp_client *io,
+                           txp_file_id file,
+                           const char *path,
+                           enum txp_file_kind kind)
+{
+  fprintf(stderr, "txp_open_last_resort(\"%s\")\n", path);
+  txp_io_send_tag(io, T_OPRL);
   txp_io_send_u32(io, file);
   txp_io_send_str(io, path);
   txp_io_send_u32(io, kind);

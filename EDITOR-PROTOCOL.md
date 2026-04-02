@@ -129,6 +129,12 @@ Check the filesystem for changes. This will reload and reprocess any changed fil
 Asking the window manager to keep TeXpresso window above the others, or not. This can be convenient to keep a TeXpresso window floating on top of the editor. (`t` and `nil` are the closest approximation of "true" and "false" in emacs-sexp).
 
 ```scheme
+(register "path")
+```
+
+Pre-register a filename that the editor will provide later via `open`. When the engine tries to read this file and it is not yet available, the driver pauses the engine and emits `request-file`. Once the editor sends `open` for the path, the engine resumes without restarting.
+
+```scheme
 (synctex-forward "path" line)
 ```
 
@@ -193,6 +199,18 @@ SyncTeX backward synchronisation: the user clicked on text produced by LaTeX sou
 
 Output by TeXpresso when the contents of its VFS has been lost. The editor should re-`open` any file before sharing `change`s.
 Not urgent: this notification is used mainly when debugging TeXpresso, it should not happen during normal use.
+
+### File requests
+
+```
+(request-file "path")
+```
+
+Output by TeXpresso when the engine needs a file that cannot be resolved locally. The resolution order is: driver VFS, disk, kpathsea/tectonic. Only after all these fail does TeXpresso emit `request-file`.
+
+This message is non-blocking: the engine continues (and may fail if the file is critical, e.g. `\input`). When the editor responds with an `open` command, TeXpresso stores the file and restarts the engine, which then finds the file in the VFS.
+
+The path is relative to the root document directory. Note that `request-file` may be emitted for auxiliary files (e.g. `.aux` on first run) that TeX handles gracefully when missing — the editor can safely ignore requests for files it cannot provide.
 
 ### Files used by the document
 

@@ -51,6 +51,7 @@ typedef struct fileentry_s {
   
   // State of the file in the text editor (or NULL if unedited)
   fz_buffer *edit_data;
+  bool promised;
 
   // State observed and/or produced by TeX process
   struct {

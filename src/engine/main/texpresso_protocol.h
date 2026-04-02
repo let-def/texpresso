@@ -70,6 +70,9 @@ void txp_flush(txp_client *client);
 // Open a file
 char *txp_open(txp_client *client, txp_file_id file, const char *path, enum txp_file_kind kind, enum txp_open_mode mode);
 
+// Open a file (last resort, after all local fallbacks failed)
+char *txp_open_last_resort(txp_client *client, txp_file_id file, const char *path, enum txp_file_kind kind);
+
 // Read from a file
 size_t txp_read(txp_client *client, txp_file_id file, uint32_t pos, void *buf, size_t len);
 

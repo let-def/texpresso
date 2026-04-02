@@ -281,6 +281,18 @@ bool editor_parse(fz_context *ctx,
       goto arity;
     *out = (struct editor_command){.tag = EDIT_INVERT, .invert = {}};
   }
+  else if (strcmp(verb, "register") == 0)
+  {
+    if (len != 2)
+      goto arity;
+    val path = val_array_get(ctx, stack, command, 1);
+    if (!val_is_string(path))
+      goto arguments;
+    *out = (struct editor_command){
+        .tag = EDIT_REGISTER,
+        .reg = { .path = val_string(ctx, stack, path) },
+    };
+  }
   else
   {
     fprintf(stderr, "[command] unknown verb: %s\n", verb);
@@ -577,6 +589,27 @@ void editor_notify_file_opened(int index, const char *path, int len)
       break;
     case EDITOR_JSON:
       fprintf(stdout, "[\"input-file\", %d, \"", index);
+      break;
+  }
+  output_data_string(stdout, path, len);
+  switch (protocol)
+  {
+    case EDITOR_SEXP: fprintf(stdout, "\")\n"); break;
+    case EDITOR_JSON: fprintf(stdout, "\"]\n"); break;
+  }
+}
+
+void editor_request_file(const char *path, int len)
+{
+  if (len == 0)
+    return;
+  switch (protocol)
+  {
+    case EDITOR_SEXP:
+      fprintf(stdout, "(request-file \"");
+      break;
+    case EDITOR_JSON:
+      fprintf(stdout, "[\"request-file\", \"");
       break;
   }
   output_data_string(stdout, path, len);
