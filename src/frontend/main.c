@@ -1415,6 +1415,18 @@ bool texpresso_main(struct persistent_state *ps)
 
       if (vr.first_page <= after && before <= vr.last_page)
         rerender = true;
+
+      if (before < after)
+      {
+        send(begin_changes, ui->eng, ctx);
+        flush_changes(ps, ui);
+        send(detect_changes, ui->eng, ctx);
+        if (send(end_changes, ui->eng, ctx))
+        {
+          send(step, ui->eng, ctx, true);
+          advance = true;
+        }
+      }
     }
 
     // Update physics
