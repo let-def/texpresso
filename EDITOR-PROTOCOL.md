@@ -129,6 +129,12 @@ Check the filesystem for changes. This will reload and reprocess any changed fil
 Asking the window manager to keep TeXpresso window above the others, or not. This can be convenient to keep a TeXpresso window floating on top of the editor. (`t` and `nil` are the closest approximation of "true" and "false" in emacs-sexp).
 
 ```scheme
+(register "path")
+```
+
+Pre-register a filename that the editor will provide later via `open`. When the engine tries to read this file and it is not yet available, the driver pauses the engine and emits `request-file`. Once the editor sends `open` for the path, the engine resumes without restarting.
+
+```scheme
 (synctex-forward "path" line)
 ```
 
