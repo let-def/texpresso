@@ -806,6 +806,7 @@ static void interpret_open(struct persistent_state *ps,
   flush_changes(ps, ui);
 
   int changed = -1;
+  bool had_edit_data = (e->edit_data != NULL);
 
   if (e->edit_data)
   {
@@ -828,8 +829,13 @@ static void interpret_open(struct persistent_state *ps,
 
   if (changed >= 0)
   {
-    fprintf(stderr, "[command] open %s: changed offset is %d\n", path, changed);
-    send(notify_file_changes, ui->eng, ps->ctx, e, changed);
+    if (e->promised && !had_edit_data)
+      fprintf(stderr, "[command] open %s: resolving deferred query\n", path);
+    else
+    {
+      fprintf(stderr, "[command] open %s: changed offset is %d\n", path, changed);
+      send(notify_file_changes, ui->eng, ps->ctx, e, changed);
+    }
   }
 }
 
@@ -903,6 +909,32 @@ SDL_SetWindowAlwaysOnTop(SDL_Window *window, SDL_bool state)
 }
 #endif
 
+
+static void interpret_register(struct persistent_state *ps,
+                               ui_state *ui,
+                               const char *path)
+{
+  if (path[0] == '/')
+  {
+    int go_up = 0;
+    path = relative_path(path, ps->doc_path, &go_up);
+    if (go_up > 0)
+    {
+      fprintf(stderr, "[command] register %s: file has a different root, skipping\n", path);
+      return;
+    }
+  }
+
+  fileentry_t *e = send(find_file, ui->eng, ps->ctx, path);
+  if (!e)
+  {
+    fprintf(stderr, "[command] register %s: file not found, skipping\n", path);
+    return;
+  }
+
+  e->promised = true;
+  fprintf(stderr, "[command] register %s: marked as promised\n", path);
+}
 
 static void interpret_command(struct persistent_state *ps,
                               ui_state *ui,
@@ -1045,6 +1077,10 @@ static void interpret_command(struct persistent_state *ps,
       schedule_event(RENDER_EVENT);
     }
     break;
+
+    case EDIT_REGISTER:
+      interpret_register(ps, ui, cmd.reg.path);
+      break;
   }
 }
 
