@@ -306,7 +306,7 @@ static void output_json_string(FILE *f, const char *ptr, int len)
     unsigned char c = *ptr;
     if (c < 0x80)
     {
-      if (c < 0x32)
+      if (c < 0x20)
       {
         switch (c)
         {
