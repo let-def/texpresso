@@ -924,8 +924,8 @@ static void interpret_command(struct persistent_state *ps,
     case EDIT_THEME:
     {
       uint8_t *colors = ui->theme.colormap;
-      convert_color(ps->ctx, stack, cmd.theme.bg, colors + 0);
-      convert_color(ps->ctx, stack, cmd.theme.fg, colors + 3);
+      convert_color(ps->ctx, stack, cmd.theme.fg, colors + 0);
+      convert_color(ps->ctx, stack, cmd.theme.bg, colors + 3);
       ui->theme.themed =
           (colors[0] != 0x00 || colors[1] != 0x00 || colors[2] != 0x00 ||
            colors[3] != 0xFF || colors[4] != 0xFF || colors[5] != 0xFF);
@@ -1130,18 +1130,14 @@ static bool prepare_rendering(struct persistent_state *ps,
 
   bool result = false;
 
-  uint8_t *colors;
-  pagebuffer_filter filter = NULL;
+  uint8_t *colors = NULL;
+  pagebuffer_filter filter = remap_colors;
   if (ui->theme.themed)
-  {
     colors = ui->theme.colormap;
-    filter = remap_colors;
-  }
   else if (ui->theme.inverted)
-  {
     colors = reverse_colormap;
-    filter = remap_colors;
-  }
+  else
+    filter = NULL;
 
   for (int i = vr.first_page; i <= vr.last_page; i++)
   {
