@@ -1,5 +1,6 @@
 # NEXT
 
+- add `(lookup-file)` message to notify editor of file lookups
 - fix TeX build date to use SOURCE_DATE_EPOCH if set, otherwise falling back to
   the current date (previously hardcoded to Feb 8, 2025).
 - fix zealous JSON escaping
