@@ -209,3 +209,14 @@ The paths are printed relative to the root file. They might be non-existent on t
 Right now, this is implemented by hooking into SyncTeX:
 - only text files are tracked (not graphics)
 - the indices printed are the SyncTex input indices; they should be attributed no other meaning than being monotonic and useful to detect backtracking occurrences
+
+### File lookups
+
+```
+(lookup-file kind status "path")
+```
+
+Output by TeXpresso when it tries to look up a file.
+- `kind`: either `read` or `write`.
+- `status`: either `successful` or `failed`.
+- `path`: the path to the file.

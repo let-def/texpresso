@@ -1,3 +1,7 @@
+# NEXT
+
+- add `(lookup-file)` message to notify editor of file lookups
+
 # v0.2 Fri  6 Mar 19:09:31 JST 2026
 
 Finally, the engine is independent of tectonic and the build does not need rust anymore:
