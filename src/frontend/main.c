@@ -1215,7 +1215,7 @@ bool texpresso_main(struct persistent_state *ps)
   editor_set_protocol(ps->protocol);
   editor_set_line_output(ps->line_output);
 
-  ui_state raw_ui, *ui = &raw_ui;
+  ui_state raw_ui = {0,}, *ui = &raw_ui;
   ui->window = ps->window;
   viewer_init(&ui->viewer);
 
