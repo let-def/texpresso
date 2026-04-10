@@ -23,6 +23,7 @@
  */
 
 #include <mupdf/fitz/buffer.h>
+#include <mupdf/fitz/image.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <unistd.h>
@@ -462,6 +463,132 @@ static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
   return time > 500 + last_time;
 }
 
+/*
+  Try to generate bounding box data for a .bb file request by extracting
+  dimensions from the corresponding image file using mupdf.
+  Returns a new fz_buffer with bb content on success, or NULL on failure.
+*/
+static fz_buffer *generate_bb_from_image(fz_context *ctx,
+                                         struct tex_engine *self,
+                                         const char *bb_path)
+{
+  size_t len = strlen(bb_path);
+  if (len < 4)
+    return NULL;
+
+  /* Check for .bb or .xbb extension */
+  const char *ext = NULL;
+  if (len >= 3 && strcmp(bb_path + len - 3, ".bb") == 0)
+    ext = bb_path + len - 3;
+  else if (len >= 4 && strcmp(bb_path + len - 4, ".xbb") == 0)
+    ext = bb_path + len - 4;
+  if (!ext)
+    return NULL;
+
+  /* Build base path (without .bb/.xbb extension) */
+  size_t base_len = ext - bb_path;
+  char base[1024];
+  if (base_len >= sizeof(base))
+    return NULL;
+  memcpy(base, bb_path, base_len);
+  base[base_len] = '\0';
+
+  /* Try common image extensions */
+  static const char *img_exts[] = {
+    ".jpg", ".JPG", ".jpeg", ".JPEG",
+    ".png", ".PNG",
+    ".bmp", ".BMP",
+    ".pdf", ".PDF",
+    NULL
+  };
+
+  char img_path[1024];
+  char fs_path_buffer[1024];
+  const char *found_path = NULL;
+
+  for (const char **e = img_exts; *e; e++)
+  {
+    if (base_len + strlen(*e) >= sizeof(img_path))
+      continue;
+    strcpy(img_path, base);
+    strcat(img_path, *e);
+
+    /* Try direct path first */
+    struct stat st;
+    if (stat(img_path, &st) != -1)
+    {
+      found_path = img_path;
+      break;
+    }
+
+    /* Try with inclusion paths */
+    const char *fs = lookup_path(self, img_path, fs_path_buffer, NULL);
+    if (fs)
+    {
+      found_path = fs;
+      break;
+    }
+  }
+
+  /* Also try the base path without adding any extension (it may already have one) */
+  if (!found_path)
+  {
+    struct stat st;
+    if (stat(base, &st) != -1)
+      found_path = base;
+    else
+    {
+      const char *fs = lookup_path(self, base, fs_path_buffer, NULL);
+      if (fs)
+        found_path = fs;
+    }
+  }
+
+  if (!found_path)
+    return NULL;
+
+  fz_buffer *result = NULL;
+  fz_image *img = NULL;
+
+  fz_var(img);
+  fz_var(result);
+
+  fz_try(ctx)
+  {
+    img = fz_new_image_from_file(ctx, found_path);
+    int xres, yres;
+    fz_image_resolution(img, &xres, &yres);
+    if (xres <= 0) xres = 72;
+    if (yres <= 0) yres = 72;
+
+    /* Convert pixel dimensions to PostScript points (72 dpi) */
+    double w_bp = (double)img->w * 72.0 / xres;
+    double h_bp = (double)img->h * 72.0 / yres;
+
+    result = fz_new_buffer(ctx, 256);
+    fz_append_printf(ctx, result, "%%%%BoundingBox: 0 0 %d %d\n",
+                     (int)(w_bp + 0.5), (int)(h_bp + 0.5));
+    fz_append_printf(ctx, result, "%%%%HiResBoundingBox: 0.000000 0.000000 %f %f\n",
+                     w_bp, h_bp);
+
+    fprintf(stderr, "[info] generated .bb data for %s (%dx%d px, %dx%d dpi -> %.1fx%.1f bp)\n",
+            found_path, img->w, img->h, xres, yres, w_bp, h_bp);
+  }
+  fz_always(ctx)
+  {
+    fz_drop_image(ctx, img);
+  }
+  fz_catch(ctx)
+  {
+    fz_drop_buffer(ctx, result);
+    result = NULL;
+    fprintf(stderr, "[warning] failed to extract dimensions from %s for .bb generation\n",
+            found_path);
+  }
+
+  return result;
+}
+
 static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
 {
   process_t *p = get_process(self);
@@ -492,12 +619,25 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
           fs_path = lookup_path(self, q->open.path, fs_path_buffer, NULL);
           if (!fs_path)
           {
-            e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
-            log_fileentry(ctx, self->log, e);
-            record_seen(self, e, INT_MAX, q->time);
-            a.tag = A_PASS;
-            channel_write_answer(self->c, p->fd, &a);
-            break;
+            /* Try to generate .bb data from the corresponding image file */
+            fz_buffer *bb_data = generate_bb_from_image(ctx, self, q->open.path);
+            if (bb_data)
+            {
+              e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
+              e->fs_data = bb_data;
+              e->saved.level = FILE_READ;
+              memset(&e->fs_stat, 0, sizeof(e->fs_stat));
+              /* Fall through to normal open handling */
+            }
+            else
+            {
+              e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
+              log_fileentry(ctx, self->log, e);
+              record_seen(self, e, INT_MAX, q->time);
+              a.tag = A_PASS;
+              channel_write_answer(self->c, p->fd, &a);
+              break;
+            }
           }
         }
       }
