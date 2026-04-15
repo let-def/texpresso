@@ -224,18 +224,20 @@ char *txp_open(txp_client *io,
                enum txp_file_kind kind,
                enum txp_open_mode mode)
 {
-  fprintf(stderr, "txp_open(\"%s\", %s)\n", path, mode == TXP_READ ? "READ" : "WRITE");
   txp_io_send_tag(io, (mode == TXP_READ) ? T_OPRD : T_OPWR);
   txp_io_send_u32(io, file);
   txp_io_send_str(io, path);
   txp_io_send_u32(io, kind);
   enum tag t = txp_io_recv_tag(io);
+  // fprintf(stderr, "txp_open(\"%s\", %s) = ", path, mode == TXP_READ ? "READ" : "WRITE");
   switch (t)
   {
     case T_PASS:
+      // fprintf(stderr, "PASS\n");
       return NULL;
     case T_OPEN:
     {
+      // fprintf(stderr, "OPEN\n");
       uint32_t size = txp_io_recv_u32(io);
       char *buf = calloc(1, size + 1);
       if (buf == NULL)
