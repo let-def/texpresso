@@ -476,7 +476,7 @@ size_t ttstub_input_seek(ttbc_input_handle_t *handle,
       input->buf_pos = input->buf_len = 0;
     }
 
-    return 0;
+    return input->file_pos + input->buf_pos;
   }
   return fseek(input_as_file(handle), offset, whence);
 }
