@@ -16,4 +16,4 @@ CONTENT=$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' "$TEX_FILE" | \
 
 SEXP="(open \"$TEX_FILE\" \"$CONTENT\")"
 
-echo "$SEXP" | SDL_VIDEODRIVER=dummy build/texpresso -stream -test-initialize test/simple.tex
+printf '%s' "$SEXP" | SDL_VIDEODRIVER=dummy build/texpresso -stream -test-initialize test/simple.tex
