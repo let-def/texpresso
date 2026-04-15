@@ -1,3 +1,11 @@
+# NEXT
+
+- add `(lookup-file)` message to notify editor of file lookups
+- fix zealous JSON escaping
+- add `(open-base64)` command for binary data (@merv1n34k)
+- add `-stream` flag for filesystem-independent editing (@merv1n34k)
+- fix provider auto-detection short-circuit logic (@alvv-z)
+
 # v0.2 Fri  6 Mar 19:09:31 JST 2026
 
 Finally, the engine is independent of tectonic and the build does not need rust anymore:

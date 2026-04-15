@@ -129,6 +129,12 @@ Check the filesystem for changes. This will reload and reprocess any changed fil
 Asking the window manager to keep TeXpresso window above the others, or not. This can be convenient to keep a TeXpresso window floating on top of the editor. (`t` and `nil` are the closest approximation of "true" and "false" in emacs-sexp).
 
 ```scheme
+(register "path")
+```
+
+Pre-register a filename that the editor will provide later via `open`. When the engine tries to read this file and it is not yet available, the driver pauses the engine and emits `request-file`. Once the editor sends `open` for the path, the engine resumes without restarting.
+
+```scheme
 (synctex-forward "path" line)
 ```
 
@@ -209,3 +215,17 @@ The paths are printed relative to the root file. They might be non-existent on t
 Right now, this is implemented by hooking into SyncTeX:
 - only text files are tracked (not graphics)
 - the indices printed are the SyncTex input indices; they should be attributed no other meaning than being monotonic and useful to detect backtracking occurrences
+
+### File lookups
+
+```
+(lookup-file kind status "path")
+```
+
+Output by TeXpresso when it tries to look up a file.
+- `kind`: either `read` or `write`.
+- `status`: either `successful`, `failed`, or `promised` if the editor had previously registered the file.
+- `path`: the path to the file.
+
+If `status` is `promised`, document processing will be stuck until the editor fulfills the promise by sending a corresponding `(open "path" ...)` or `(open-base64 "path" ...)` command.
+This can only happen if the editor had registered the path using `(register "path")`.

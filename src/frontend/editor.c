@@ -281,6 +281,18 @@ bool editor_parse(fz_context *ctx,
       goto arity;
     *out = (struct editor_command){.tag = EDIT_INVERT, .invert = {}};
   }
+  else if (strcmp(verb, "register") == 0)
+  {
+    if (len != 2)
+      goto arity;
+    val path = val_array_get(ctx, stack, command, 1);
+    if (!val_is_string(path))
+      goto arguments;
+    *out = (struct editor_command){
+        .tag = EDIT_REGISTER,
+        .reg = { .path = val_string(ctx, stack, path) },
+    };
+  }
   else
   {
     fprintf(stderr, "[command] unknown verb: %s\n", verb);
@@ -306,7 +318,7 @@ static void output_json_string(FILE *f, const char *ptr, int len)
     unsigned char c = *ptr;
     if (c < 0x80)
     {
-      if (c < 0x32)
+      if (c < 0x20)
       {
         switch (c)
         {
@@ -579,6 +591,44 @@ void editor_notify_file_opened(int index, const char *path, int len)
       fprintf(stdout, "[\"input-file\", %d, \"", index);
       break;
   }
+  output_data_string(stdout, path, len);
+  switch (protocol)
+  {
+    case EDITOR_SEXP: fprintf(stdout, "\")\n"); break;
+    case EDITOR_JSON: fprintf(stdout, "\"]\n"); break;
+  }
+}
+
+void editor_notify_lookup(const char *path,
+                          int len,
+                          bool read,
+                          enum EDITOR_LOOKUP_STATUS status)
+{
+  const char *kind = read ? "read" : "write";
+  const char *status_msg;
+
+  switch (status)
+  {
+    case LOOKUP_FAILED:
+      status_msg = "failed";
+    case LOOKUP_PROMISED:
+      status_msg = "promised";
+    case LOOKUP_SUCCESSFUL:
+      status_msg = "successful";
+    default:
+      abort();
+  }
+
+  switch (protocol)
+  {
+    case EDITOR_SEXP:
+      fprintf(stdout, "(lookup-file %s %s \"", kind, status_msg);
+      break;
+    case EDITOR_JSON:
+      fprintf(stdout, "[\"lookup-file\", \"%s\", \"%s\", \"", kind, status_msg);
+      break;
+  }
+
   output_data_string(stdout, path, len);
   switch (protocol)
   {
