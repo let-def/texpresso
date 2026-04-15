@@ -218,5 +218,8 @@ Right now, this is implemented by hooking into SyncTeX:
 
 Output by TeXpresso when it tries to look up a file.
 - `kind`: either `read` or `write`.
-- `status`: either `successful` or `failed`.
+- `status`: either `successful`, `failed`, or `promised` if the editor had previously registered the file.
 - `path`: the path to the file.
+
+If `status` is `promised`, document processing will be stuck until the editor fulfills the promise by sending a corresponding `(open "path" ...)` or `(open-base64 "path" ...)` command.
+This can only happen if the editor had registered the path using `(register "path")`.

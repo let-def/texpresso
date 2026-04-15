@@ -136,6 +136,17 @@ void editor_flush(void);
 void editor_synctex(const char *dirname, const char *basename, int basename_len, int line, int column);
 void editor_reset_sync(void);
 void editor_notify_file_opened(int index, const char *path, int len);
-void editor_notify_lookup(const char *path, int len, bool read, bool success);
+
+enum EDITOR_LOOKUP_STATUS
+{
+  LOOKUP_SUCCESSFUL,
+  LOOKUP_FAILED,
+  LOOKUP_PROMISED,
+};
+
+void editor_notify_lookup(const char *path,
+                          int len,
+                          bool read,
+                          enum EDITOR_LOOKUP_STATUS status);
 
 #endif  // EDITOR_H_
