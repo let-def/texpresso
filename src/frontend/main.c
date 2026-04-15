@@ -1003,7 +1003,7 @@ static void interpret_command(struct persistent_state *ps,
       else
       {
         VisibleRange vr = viewer_get_visible_range(ps->ctx, &ui->viewer, &ps->pcoll);
-        synctex_set_target(stx, (vr.first_page + vr.last_page) / 2, path, cmd.synctex_forward.line);
+        synctex_set_target(stx, vr.last_page, path, cmd.synctex_forward.line);
       }
     }
     break;
@@ -1391,11 +1391,11 @@ bool texpresso_main(struct persistent_state *ps)
       break;
 
     // Update document
-    {
-      pagecollection_invalidate_after(&ps->pcoll, send(page_count, ui->eng));
-      advance = advance_engine(ps, ui);
-      VisibleRange vr = viewer_get_visible_range(ps->ctx, &ui->viewer, &ps->pcoll);
+    pagecollection_invalidate_after(&ps->pcoll, send(page_count, ui->eng));
+    advance = advance_engine(ps, ui);
+    VisibleRange vr = viewer_get_visible_range(ps->ctx, &ui->viewer, &ps->pcoll);
 
+    {
       int before = pagecollection_valid_count(&ps->pcoll);
       int after = send(page_count, ui->eng);
       for (int i = before; i < after; i++)
@@ -1442,7 +1442,8 @@ bool texpresso_main(struct persistent_state *ps)
     fz_buffer *buf;
     TexSynctex *stx = send(synctex, ui->eng, &buf);
     int page = -1, x = -1, y = -1;
-    if (synctex_find_target(ctx, stx, buf, &page, &x, &y))
+    if (synctex_page_count(stx) > vr.last_page &&
+        synctex_find_target(ctx, stx, buf, &page, &x, &y))
     {
       fprintf(stderr,
               "[synctex forward] sync: hit page %d, coordinates (%d, %d)\n",

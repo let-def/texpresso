@@ -603,11 +603,11 @@ DocCoord viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll
           vwr->animating = true;
 
           if (page_top < vwr->offset_y - screenful)
-            vwr->target_offset_y = vwr->offset_y - screenful + vwr->screen_margin * 2;
+            vwr->target_offset_y = vwr->offset_y - screenful + vwr->margin;
           else if (page_top < vwr->offset_y)
-            vwr->target_offset_y = page_top - vwr->screen_margin;
+            vwr->target_offset_y = page_top - vwr->margin;
           else
-            vwr->target_offset_y = page_top - screenful - vwr->screen_margin;
+            vwr->target_offset_y = page_top - screenful;
         }
       }
     }
@@ -630,7 +630,7 @@ DocCoord viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll
             vwr->animating = true;
             vwr->target_offset_y =
                 pagecollection_page_offset(pcoll, hit.page_index + 1, vwr->margin) +
-                (bounds.y1 - bounds.y0 - screenful) / 2;
+                (bounds.y1 - bounds.y0 - screenful) / 2 - vwr->margin;
           }
         }
         else
@@ -642,11 +642,11 @@ DocCoord viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll
           vwr->animating = true;
 
           if (page_bot > vwr->offset_y + screenful * 2)
-            vwr->target_offset_y = vwr->offset_y + screenful - vwr->screen_margin * 2;
+            vwr->target_offset_y = vwr->offset_y + screenful - vwr->margin;
           else if (page_bot > vwr->offset_y + screenful)
-            vwr->target_offset_y = page_bot - screenful + vwr->screen_margin;
+            vwr->target_offset_y = page_bot - screenful + vwr->margin;
           else
-            vwr->target_offset_y = page_bot + vwr->screen_margin;
+            vwr->target_offset_y = page_bot;
         }
       }
     }
