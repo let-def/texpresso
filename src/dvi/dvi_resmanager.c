@@ -827,6 +827,7 @@ fz_image *dvi_resmanager_get_img(fz_context *ctx, dvi_resmanager *rm, const char
   }
   fz_catch(ctx)
   {
+    fprintf(stderr, "[dvi] error while loading: %s\n", fz_caught_message(ctx));
     if (cell)
       fz_free(ctx, cell);
     if (pname)
