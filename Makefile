@@ -18,7 +18,6 @@ all:
 	@echo "# Or:"
 	@echo "#   build/texpresso -texlive test/simple.tex"
 	@echo "#   build/texpresso -tectonic test/simple.tex"
-	@echo "#"
 
 common:
 	$(MAKE) -C src/common
