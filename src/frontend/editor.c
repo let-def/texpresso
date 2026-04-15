@@ -587,19 +587,36 @@ void editor_notify_file_opened(int index, const char *path, int len)
   }
 }
 
-void editor_notify_lookup(const char *path, int len, bool read, bool success)
+void editor_notify_lookup(const char *path,
+                          int len,
+                          bool read,
+                          enum EDITOR_LOOKUP_STATUS status)
 {
   const char *kind = read ? "read" : "write";
-  const char *status = success ? "successful" : "failed";
+  const char *status_msg;
+
+  switch (status)
+  {
+    case LOOKUP_FAILED:
+      status_msg = "failed";
+    case LOOKUP_PROMISED:
+      status_msg = "promised";
+    case LOOKUP_SUCCESSFUL:
+      status_msg = "successful";
+    default:
+      abort();
+  }
+
   switch (protocol)
   {
     case EDITOR_SEXP:
-      fprintf(stdout, "(lookup-file %s %s \"", kind, status);
+      fprintf(stdout, "(lookup-file %s %s \"", kind, status_msg);
       break;
     case EDITOR_JSON:
-      fprintf(stdout, "[\"lookup-file\", \"%s\", \"%s\", \"", kind, status);
+      fprintf(stdout, "[\"lookup-file\", \"%s\", \"%s\", \"", kind, status_msg);
       break;
   }
+
   output_data_string(stdout, path, len);
   switch (protocol)
   {
