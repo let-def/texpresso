@@ -835,7 +835,7 @@ static void usage(char *argv0)
 
 // Generate everything based on 1738978143
 // (February 8, 2025)
-#define EXECUTION_DATE 1738978143
+// #define EXECUTION_DATE 1738978143
 
 static const char *format_path(const char *ext)
 {
@@ -896,7 +896,7 @@ static bool bootstrap_format(void)
   in_initex_mode = true;
   primary_document = format_name;
   tt_history_t result =
-      tt_run_engine("texpresso.fmt", format_name, EXECUTION_DATE);
+      tt_run_engine("texpresso.fmt", format_name, 0);
   in_initex_mode = false;
   primary_document = NULL;
 
@@ -1058,9 +1058,21 @@ int main(int argc, char **argv)
   in_initex_mode = false;
   primary_document = doc_path;
 
+  // Determine build date.
+  // Use SOURCE_DATE_EPOCH if it set.
+  // Default to current timestamp otherwise.
+  time_t build_date;
+
+  char *epoch_env = getenv("SOURCE_DATE_EPOCH");
+
+  if (epoch_env != NULL)
+    build_date = (time_t)strtoll(epoch_env, NULL, 10);
+  else
+    build_date = time(NULL);
+
   // Run engine.
   tt_history_t result =
-      tt_run_engine("texpresso.fmt", primary_document, EXECUTION_DATE);
+      tt_run_engine("texpresso.fmt", primary_document, build_date);
 
   fprintf(stderr, "Document generation: ");
   switch (result)
