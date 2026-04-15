@@ -490,8 +490,15 @@ embed_image(fz_context *ctx, dvi_context *dc, dvi_state *st, struct xform_spec *
     //
     float ar = (float)img->w / (float)img->h;
     float w = xf->width, h = xf->height;
-    if (w != w) w = h * ar;
-    if (h != h) h = w / ar;
+    if (w != w && h != h)
+    {
+      w = img->w;
+      h = img->h;
+    }
+    else if (w != w)
+      w = h * ar;
+    else if (h != h)
+      h = w / ar;
     ctm = fz_pre_scale(fz_pre_translate(ctm, 0, h), w, -h);
     fz_fill_image(ctx, dc->dev, img, ctm, 1.0, color_params);
   }
