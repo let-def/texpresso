@@ -1466,12 +1466,13 @@ bool texpresso_main(struct persistent_state *ps)
         SDL_WaitEventTimeout(NULL, 10);
     }
 
-    if (ps->initialize_only)
+    if (ps->initialize_only &&
+        (send(page_count, ui->eng) > 0 ||
+         (stdin_st.eof && send(get_status, ui->eng) == DOC_TERMINATED)))
     {
       fprintf(stderr, "[info] Initialize mode: terminating engine process\n");
-      running = false;
+      break;
     }
-
   }
 
   // Cleanup
