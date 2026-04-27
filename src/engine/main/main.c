@@ -481,7 +481,7 @@ size_t ttstub_input_seek(ttbc_input_handle_t *handle,
   return fseek(input_as_file(handle), offset, whence);
 }
 
-ssize_t ttstub_input_read(ttbc_input_handle_t *handle, char *data, size_t len)
+static ssize_t internal_input_read(ttbc_input_handle_t *handle, char *data, size_t len)
 {
   if (texpresso)
   {
@@ -529,6 +529,24 @@ ssize_t ttstub_input_read(ttbc_input_handle_t *handle, char *data, size_t len)
   }
 
   return fread(data, 1, len, input_as_file(handle));
+}
+
+ssize_t ttstub_input_read(ttbc_input_handle_t *handle, char *data, size_t len)
+{
+  ssize_t result = internal_input_read(handle, data, len);
+
+  if (result <= 0)
+      return result;
+
+  while (result <= len)
+  {
+    ssize_t delta = internal_input_read(handle, data + result, len - result);
+    if (delta <= 0)
+      return result;
+    result += delta;
+  }
+
+  return result;
 }
 
 int ttstub_input_ungetc(ttbc_input_handle_t *handle, int ch)
