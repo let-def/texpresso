@@ -25,9 +25,11 @@ enum EDITOR_COMMAND
   EDIT_PREVIOUS_PAGE,
   EDIT_NEXT_PAGE,
   EDIT_MOVE_WINDOW,
+  EDIT_RENDER_SIZE,
   EDIT_RESCAN,
   EDIT_STAY_ON_TOP,
   EDIT_SYNCTEX_FORWARD,
+  EDIT_SYNCTEX_BACKWARD,
   EDIT_MAP_WINDOW,
   EDIT_UNMAP_WINDOW,
   EDIT_CROP,
@@ -101,6 +103,15 @@ struct editor_command
       const char *path;
       int line;
     } synctex_forward;
+
+    struct {
+      int page;
+      float x, y;
+    } synctex_backward;
+
+    struct {
+      int width;
+    } render_size;
 
     struct {
       float x, y, w, h;

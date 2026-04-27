@@ -269,6 +269,37 @@ bool editor_parse(fz_context *ctx,
             },
     };
   }
+  else if (strcmp(verb, "synctex-backward") == 0)
+  {
+    if (len != 4)
+      goto arity;
+    val vpage = val_array_get(ctx, stack, command, 1);
+    val vx = val_array_get(ctx, stack, command, 2);
+    val vy = val_array_get(ctx, stack, command, 3);
+    if (!val_is_number(vpage) || !val_is_number(vx) || !val_is_number(vy))
+      goto arguments;
+    *out = (struct editor_command){
+        .tag = EDIT_SYNCTEX_BACKWARD,
+        .synctex_backward =
+            {
+                .page = (int)val_number(ctx, vpage),
+                .x = val_number(ctx, vx),
+                .y = val_number(ctx, vy),
+            },
+    };
+  }
+  else if (strcmp(verb, "render-size") == 0)
+  {
+    if (len != 2)
+      goto arity;
+    val vw = val_array_get(ctx, stack, command, 1);
+    if (!val_is_number(vw))
+      goto arguments;
+    *out = (struct editor_command){
+        .tag = EDIT_RENDER_SIZE,
+        .render_size = {.width = (int)val_number(ctx, vw)},
+    };
+  }
   else if (strcmp(verb, "crop") == 0)
   {
     if (len != 1)

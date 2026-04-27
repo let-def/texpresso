@@ -39,6 +39,7 @@
 #include "prot_parser.h"
 #include "editor.h"
 #include "base64.h"
+#include "qoi.h"
 
 struct persistent_state *pstate;
 
@@ -1048,10 +1049,520 @@ static void interpret_command(struct persistent_state *ps,
   }
 }
 
+/* Base64 encoding for headless PNG output */
+
+static const char b64_table[] =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static char *base64_encode(const unsigned char *data, size_t len, size_t *out_len)
+{
+  size_t olen = 4 * ((len + 2) / 3);
+  char *out = malloc(olen + 1);
+  if (!out) return NULL;
+
+  size_t i = 0, j = 0;
+  for (; i + 2 < len; i += 3)
+  {
+    uint32_t v = ((uint32_t)data[i] << 16) | ((uint32_t)data[i+1] << 8) | data[i+2];
+    out[j++] = b64_table[(v >> 18) & 0x3F];
+    out[j++] = b64_table[(v >> 12) & 0x3F];
+    out[j++] = b64_table[(v >> 6) & 0x3F];
+    out[j++] = b64_table[v & 0x3F];
+  }
+  if (i < len)
+  {
+    uint32_t v = (uint32_t)data[i] << 16;
+    if (i + 1 < len) v |= (uint32_t)data[i+1] << 8;
+    out[j++] = b64_table[(v >> 18) & 0x3F];
+    out[j++] = b64_table[(v >> 12) & 0x3F];
+    out[j++] = (i + 1 < len) ? b64_table[(v >> 6) & 0x3F] : '=';
+    out[j++] = '=';
+  }
+  out[j] = '\0';
+  *out_len = j;
+  return out;
+}
+
+/* Headless rendering: render display_list to QOI and output as JSON */
+
+// Store last render parameters for synctex backward coordinate transform
+static float headless_render_scale = 1.0f;
+static fz_rect headless_render_bounds = {0};
+
+static void headless_render_page(fz_context *ctx, fz_display_list *dl,
+                                  int page, int width, int height)
+{
+  if (!dl) return;
+
+  fprintf(stderr, "[headless] ENTER render page=%d width=%d height=%d\n", page, width, height);
+  fflush(stderr);
+
+  fz_rect bounds = fz_bound_display_list(ctx, dl);
+  float page_w = bounds.x1 - bounds.x0;
+  float page_h = bounds.y1 - bounds.y0;
+
+  if (page_w <= 0 || page_h <= 0) return;
+
+  float scale = (float)width / page_w;
+  int actual_h = (int)(page_h * scale);
+  if (actual_h > height) {
+    scale = (float)height / page_h;
+    actual_h = height;
+  }
+  int actual_w = (int)(page_w * scale);
+
+  headless_render_scale = scale;
+  headless_render_bounds = bounds;
+
+  fz_pixmap *pix = NULL;
+  fz_var(pix);
+
+  fz_try(ctx)
+  {
+    fz_matrix ctm = fz_pre_scale(fz_translate(-bounds.x0, -bounds.y0), scale, scale);
+    fz_colorspace *cs = fz_device_rgb(ctx);
+    fz_irect irect = fz_make_irect(0, 0, actual_w, actual_h);
+    // alpha=0: MuPDF composites directly onto the white background
+    pix = fz_new_pixmap_with_bbox(ctx, cs, irect, NULL, 0);
+    fz_clear_pixmap_with_value(ctx, pix, 0xFF);
+
+    fz_device *dev = fz_new_draw_device(ctx, ctm, pix);
+    fz_run_display_list(ctx, dl, dev, fz_identity, fz_infinite_rect, NULL);
+    fz_close_device(ctx, dev);
+    fz_drop_device(ctx, dev);
+
+    // Use MuPDF API for robust dimension extraction
+    int pw = fz_pixmap_width(ctx, pix);
+    int ph = fz_pixmap_height(ctx, pix);
+    int stride = fz_pixmap_stride(ctx, pix);
+    int n = fz_pixmap_components(ctx, pix);
+    unsigned char *samples = fz_pixmap_samples(ctx, pix);
+
+    // Diagnostic: log pixmap properties and first pixel of each of first rows
+    fflush(stderr); fprintf(stderr, "[headless] pixmap: pw=%d ph=%d stride=%d n=%d packed_row=%d stride_row=%d\n",
+            pw, ph, stride, n, pw * n, stride);
+    if (ph >= 2 && pw >= 1) {
+      unsigned char *row0 = samples;
+      unsigned char *row1 = samples + stride;
+      fflush(stderr); fprintf(stderr, "[headless] row0[0..2]=(%d,%d,%d) row1[0..2]=(%d,%d,%d)\n",
+              row0[0], row0[1], row0[2], row1[0], row1[1], row1[2]);
+    }
+
+    // Allocate packed RGBA buffer (no padding between rows)
+    size_t rgba_len = (size_t)pw * ph * 4;
+    unsigned char *rgba = malloc(rgba_len);
+    if (rgba)
+    {
+      // Row-by-row copy: source uses stride, dest uses packed pw*4
+      for (int y = 0; y < ph; y++)
+      {
+        unsigned char *src_row = samples + (size_t)y * stride;
+        unsigned char *dst_row = rgba + (size_t)y * pw * 4;
+        if (n >= 4)
+        {
+          // Interleaved RGBA
+          for (int x = 0; x < pw; x++)
+          {
+            dst_row[x * 4 + 0] = src_row[x * n + 0];
+            dst_row[x * 4 + 1] = src_row[x * n + 1];
+            dst_row[x * 4 + 2] = src_row[x * n + 2];
+            dst_row[x * 4 + 3] = src_row[x * n + 3];
+          }
+        }
+        else
+        {
+          // RGB only; fill alpha with 255
+          for (int x = 0; x < pw; x++)
+          {
+            dst_row[x * 4 + 0] = src_row[x * n + 0];
+            dst_row[x * 4 + 1] = src_row[x * n + 1];
+            dst_row[x * 4 + 2] = src_row[x * n + 2];
+            dst_row[x * 4 + 3] = 255;
+          }
+        }
+      }
+
+      // Diagnostic: verify packed RGBA - compare row 0 end vs row 1 start
+      if (ph >= 2 && pw >= 2) {
+        unsigned char *r0_last = rgba + (pw - 1) * 4;
+        unsigned char *r1_first = rgba + pw * 4;
+        fflush(stderr); fprintf(stderr, "[headless] rgba: r0[%d]=(%d,%d,%d,%d) r1[0]=(%d,%d,%d,%d)\n",
+                pw-1,
+                r0_last[0], r0_last[1], r0_last[2], r0_last[3],
+                r1_first[0], r1_first[1], r1_first[2], r1_first[3]);
+        // Sample middle pixel too
+        int mid = pw / 2;
+        unsigned char *r0_mid = rgba + mid * 4;
+        unsigned char *r1_mid = rgba + pw * 4 + mid * 4;
+        fflush(stderr); fprintf(stderr, "[headless] rgba: r0[%d]=(%d,%d,%d,%d) r1[%d]=(%d,%d,%d,%d)\n",
+                mid,
+                r0_mid[0], r0_mid[1], r0_mid[2], r0_mid[3],
+                mid,
+                r1_mid[0], r1_mid[1], r1_mid[2], r1_mid[3]);
+      fflush(stderr);
+      }
+
+      qoi_desc desc = {
+        .width = (unsigned int)pw,
+        .height = (unsigned int)ph,
+        .channels = 4,
+        .colorspace = QOI_SRGB
+      };
+      int qoi_len;
+      void *qoi_data = qoi_encode(rgba, &desc, &qoi_len);
+      free(rgba);
+
+      if (qoi_data)
+      {
+        size_t b64_len;
+        char *b64 = base64_encode((unsigned char*)qoi_data, qoi_len, &b64_len);
+        free(qoi_data);
+        if (b64)
+        {
+          fprintf(stdout, "[\"page-rendered\",%d,%d,%d,\"%s\"]\n",
+                  page, pw, ph, b64);
+          fflush(stdout);
+          free(b64);
+        }
+      }
+    }
+  }
+  fz_always(ctx)
+  {
+    fz_drop_pixmap(ctx, pix);
+  }
+  fz_catch(ctx)
+  {
+    fprintf(stderr, "[headless] render error: %s\n", fz_caught_message(ctx));
+  }
+}
+
+/* Headless main loop (no SDL window) */
+
+static bool headless_advance_engine(fz_context *ctx, txp_engine *eng, int page)
+{
+  bool need = (send(page_count, eng) <= page) &&
+              (send(get_status, eng) == DOC_RUNNING);
+  if (!need) return false;
+
+  struct timespec start;
+  clock_gettime(CLOCK_MONOTONIC, &start);
+
+  int steps = 10;
+  while (need)
+  {
+    if (!send(step, eng, ctx, false))
+      break;
+
+    steps -= 1;
+    need = (send(page_count, eng) <= page) &&
+           (send(get_status, eng) == DOC_RUNNING);
+
+    if (steps == 0)
+    {
+      steps = 10;
+      struct timespec curr;
+      clock_gettime(CLOCK_MONOTONIC, &curr);
+      int delta = (curr.tv_sec - start.tv_sec) * 1000000000 +
+                  (curr.tv_nsec - start.tv_nsec);
+      if (delta > 5000000)
+        break;
+    }
+  }
+  return need;
+}
+
+static bool texpresso_main_headless(struct persistent_state *ps)
+{
+  editor_set_protocol(ps->protocol);
+  editor_set_line_output(ps->line_output);
+  pstate = ps;
+
+  bool using_texlive = 0;
+
+  if (ps->use_texlive)
+  {
+    if (!texlive_available())
+    {
+      fprintf(stderr, "[fatal] cannot find kpsewhich command\n");
+      return 0;
+    }
+    using_texlive = 1;
+  }
+  else if (ps->use_tectonic)
+  {
+    if (!tectonic_available())
+    {
+      fprintf(stderr, "[fatal] cannot find tectonic command\n");
+      return 0;
+    }
+  }
+  else if (!(using_texlive = texlive_available()) || !tectonic_available())
+  {
+    fprintf(stderr, "[fatal] cannot find tectonic nor kpsewhich\n");
+    return 0;
+  }
+
+  const char *doc_ext = NULL;
+  for (const char *ptr = ps->doc_name; *ptr; ptr++)
+    if (*ptr == '.') doc_ext = ptr + 1;
+
+  char engine_path[4096];
+  find_engine(engine_path, ps->exe_path);
+  fprintf(stderr, "[info] engine path: %s\n", engine_path);
+
+  txp_engine *eng;
+
+  if (doc_ext && strcmp(doc_ext, "pdf") == 0)
+    eng = txp_create_pdf_engine(ps->ctx, ps->doc_name);
+  else
+  {
+    dvi_reshooks hooks;
+    if (using_texlive)
+      hooks = dvi_texlive_hooks(ps->ctx, ps->doc_path);
+    else
+      hooks = dvi_tectonic_hooks(ps->ctx, ps->doc_path);
+
+    if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
+      eng = txp_create_dvi_engine(ps->ctx, ps->doc_name, hooks);
+    else
+      eng = txp_create_tex_engine(ps->ctx, engine_path, using_texlive,
+                                  ps->stream_mode, ps->inclusion_path,
+                                  ps->doc_name, hooks);
+  }
+
+  int page = 0;
+  int render_width = 2400;  // default for 2x DPI, updated via render-size command
+  int render_height = 3200;
+  bool quit = 0;
+  int last_rendered_page = -1;
+  int last_page_count = 0;
+  int pending_synctex_forward = 0;
+  char *pending_synctex_path = NULL;
+  int pending_synctex_line = 0;
+
+  // Create a minimal ui_state for reusing command handlers
+  ui_state headless_ui;
+  memset(&headless_ui, 0, sizeof(headless_ui));
+  headless_ui.eng = eng;
+  headless_ui.page = 0;
+  ui_state *ui = &headless_ui;
+
+  vstack *cmd_stack = vstack_new(ps->ctx);
+  prot_parser cmd_parser;
+  prot_initialize(&cmd_parser, (ps->protocol == EDITOR_JSON));
+
+  send(step, eng, ps->ctx, true);
+
+  // Output initial page count
+  fprintf(stdout, "[\"page-count\",%d]\n", send(page_count, eng));
+  fflush(stdout);
+
+  while (!quit)
+  {
+    // Poll stdin for commands
+    struct pollfd fds[1];
+    fds[0].fd = STDIN_FILENO;
+    fds[0].events = POLLRDNORM;
+    fds[0].revents = 0;
+
+    int timeout_ms = headless_advance_engine(ps->ctx, eng, page) ? 0 : 50;
+    int poll_result = poll(fds, 1, timeout_ms);
+
+    // Process stdin
+    send(begin_changes, eng, ps->ctx);
+    if (poll_result > 0 && (fds[0].revents & POLLRDNORM))
+    {
+      char buffer[4096];
+      int n = read(STDIN_FILENO, buffer, 4096);
+      if (n == 0)
+      {
+        quit = 1;
+        send(end_changes, eng, ps->ctx);
+        break;
+      }
+      if (n > 0)
+      {
+        const char *ptr = buffer, *lim = buffer + n;
+        fz_try(ps->ctx)
+        {
+          while ((ptr = prot_parse(ps->ctx, &cmd_parser, cmd_stack, ptr, lim)))
+          {
+            val cmds = vstack_get_values(ps->ctx, cmd_stack);
+            int n_cmds = val_array_length(ps->ctx, cmd_stack, cmds);
+            for (int i = 0; i < n_cmds; i++)
+            {
+              val cmd = val_array_get(ps->ctx, cmd_stack, cmds, i);
+              // Parse command manually in headless mode
+              struct editor_command ecmd;
+              if (editor_parse(ps->ctx, cmd_stack, cmd, &ecmd))
+              {
+                switch (ecmd.tag)
+                {
+                  case EDIT_OPEN:
+                    interpret_open(ps, ui, ecmd.open.path, ecmd.open.data, ecmd.open.length);
+                    break;
+                  case EDIT_CLOSE:
+                    interpret_close(ps, ui, ecmd.close.path);
+                    break;
+                  case EDIT_CHANGE:
+                    realize_change(ps, ui, &ecmd.change);
+                    break;
+                  case EDIT_PREVIOUS_PAGE:
+                    if (page > 0) page -= 1;
+                    ui->page = page;
+                    break;
+                  case EDIT_NEXT_PAGE:
+                    page += 1;
+                    ui->page = page;
+                    break;
+                  case EDIT_RESCAN:
+                    send(detect_changes, eng, ps->ctx);
+                    break;
+                  case EDIT_SYNCTEX_FORWARD:
+                  {
+                    // Store target for later processing (after engine steps)
+                    pending_synctex_forward = 1;
+                    free(pending_synctex_path);
+                    pending_synctex_path = strdup(ecmd.synctex_forward.path);
+                    pending_synctex_line = ecmd.synctex_forward.line;
+                    break;
+                  }
+                  case EDIT_SYNCTEX_BACKWARD:
+                  {
+                    fz_buffer *buf;
+                    synctex_t *stx = send(synctex, eng, &buf);
+                    int n_pages = stx ? synctex_page_count(stx) : 0;
+                    fprintf(stderr, "[headless] synctex-backward: page=%d px=%.0f py=%.0f "
+                            "scale=%.3f bounds=(%.1f,%.1f)-(%.1f,%.1f) synctex_pages=%d stx=%p buf=%p\n",
+                            ecmd.synctex_backward.page,
+                            ecmd.synctex_backward.x, ecmd.synctex_backward.y,
+                            headless_render_scale,
+                            headless_render_bounds.x0, headless_render_bounds.y0,
+                            headless_render_bounds.x1, headless_render_bounds.y1,
+                            n_pages, (void*)stx, (void*)buf);
+                    if (stx && buf)
+                    {
+                      // Convert pixel coordinates to document coordinates
+                      float px = ecmd.synctex_backward.x;
+                      float py = ecmd.synctex_backward.y;
+                      float doc_x = px / headless_render_scale + headless_render_bounds.x0;
+                      float doc_y = py / headless_render_scale + headless_render_bounds.y0;
+                      float f = 1.0f / send(scale_factor, eng);
+                      fprintf(stderr, "[headless] synctex-backward: doc_x=%.1f doc_y=%.1f f=%.4f final_x=%d final_y=%d\n",
+                              doc_x, doc_y, f, (int)(f * doc_x), (int)(f * doc_y));
+                      synctex_scan(ps->ctx, stx, buf, ps->doc_path,
+                                   ecmd.synctex_backward.page,
+                                   (int)(f * doc_x), (int)(f * doc_y));
+                    }
+                    break;
+                  }
+                  case EDIT_RENDER_SIZE:
+                  {
+                    int w = ecmd.render_size.width;
+                    if (w > 0 && w <= 7680)
+                    {
+                      render_width = w;
+                      render_height = (int)((float)w * 1.414f); // A4-ish aspect
+                      last_rendered_page = -1; // force re-render at new res
+                    }
+                    break;
+                  }
+                  default:
+                    break;
+                }
+              }
+            }
+          }
+        }
+        fz_catch(ps->ctx)
+        {
+          fprintf(stderr, "[headless] stdin parse error: %s\n",
+                  fz_caught_message(ps->ctx));
+          vstack_reset(ps->ctx, cmd_stack);
+          prot_reinitialize(&cmd_parser);
+        }
+      }
+    }
+
+    if (send(end_changes, eng, ps->ctx))
+    {
+      send(step, eng, ps->ctx, true);
+      last_rendered_page = -1; // Force re-render
+    }
+
+    // Advance engine
+    headless_advance_engine(ps->ctx, eng, page);
+
+    // Check for page count changes
+    int current_page_count = send(page_count, eng);
+    if (current_page_count != last_page_count)
+    {
+      last_page_count = current_page_count;
+      fprintf(stdout, "[\"page-count\",%d]\n", current_page_count);
+      fflush(stdout);
+    }
+
+    // Clamp page to available pages
+    if (page >= current_page_count && current_page_count > 0 &&
+        send(get_status, eng) == DOC_TERMINATED)
+      page = current_page_count - 1;
+
+    // Render current page if changed
+    if (page < current_page_count && page != last_rendered_page)
+    {
+      fz_display_list *dl = send(render_page, eng, ps->ctx, page);
+      if (dl)
+      {
+        headless_render_page(ps->ctx, dl, page, render_width, render_height);
+        fz_drop_display_list(ps->ctx, dl);
+        last_rendered_page = page;
+      }
+    }
+
+    // Handle synctex forward (after engine steps for consistent state)
+    {
+      fz_buffer *buf;
+      synctex_t *stx = send(synctex, eng, &buf);
+
+      if (pending_synctex_forward && pending_synctex_path) {
+        pending_synctex_forward = 0;
+        int go_up2 = 0;
+        const char *spath = relative_path(pending_synctex_path, ps->doc_path, &go_up2);
+        if (go_up2 == 0)
+          synctex_set_target(stx, page, spath, pending_synctex_line);
+        free(pending_synctex_path);
+        pending_synctex_path = NULL;
+      }
+
+      int stx_page = -1, stx_x = -1, stx_y = -1;
+      if (synctex_find_target(ps->ctx, stx, buf, &stx_page, &stx_x, &stx_y))
+      {
+        if (stx_page != page)
+        {
+          page = stx_page;
+          last_rendered_page = -1; // Force re-render
+        }
+      }
+    }
+
+    editor_flush();
+    fflush(stdout);
+  }
+
+  vstack_free(ps->ctx, cmd_stack);
+  send(destroy, eng, ps->ctx);
+
+  return 0;
+}
+
 /* Entry point */
 
 bool texpresso_main(struct persistent_state *ps)
 {
+  if (ps->headless)
+    return texpresso_main_headless(ps);
+
   editor_set_protocol(ps->protocol);
   editor_set_line_output(ps->line_output);
   pstate = ps;
