@@ -1270,15 +1270,13 @@ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileen
 
   if (e->seen < changed && trace_len == get_process(self)->trace_len)
   {
+    // A pending message might update e->seen
     if (process_pending_messages(ctx, self))
       return;
-
     trace_len = self->rollback.trace_len = get_process(self)->trace_len;
-
-    // A pending message might have updated e->seen
-    if (e->seen < changed)
-      return;
   }
+  if (e->seen < changed)
+    return;
 
   while (e->seen >= changed)
   {
