@@ -1188,8 +1188,11 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
       channel_flush(self->c, p->fd);
       return false;
     }
-    trace_len -= 1;
-    revert_trace(&self->trace[trace_len]);
+    if (trace_len > 0)
+    {
+      trace_len -= 1;
+      revert_trace(&self->trace[trace_len]);
+    }
     if (trace_len > 0)
       self->rollback.offset = self->trace[trace_len].seen;
   }
