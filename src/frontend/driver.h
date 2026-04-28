@@ -72,6 +72,7 @@ struct persistent_state {
   bool line_output, use_tectonic, use_texlive, initialize_only, stream_mode;
 
   bool webview_mode;
+  bool dark_mode;
   int render_width;
   int render_height;
   char tmpdir[4096];
