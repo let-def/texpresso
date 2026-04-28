@@ -1300,6 +1300,27 @@ bool texpresso_main(struct persistent_state *ps)
       if (ui->page >= before_page_count && ui->page < after_page_count)
         schedule_event(RELOAD_EVENT);
 
+      if (ps->webview_mode && ui->page < after_page_count)
+      {
+        int w = ps->render_width;
+        int h = ps->render_height;
+        if (w == 0 || h == 0)
+        {
+          fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
+          if (dl)
+          {
+            fz_rect bounds = fz_bound_display_list(ps->ctx, dl);
+            w = (int)(bounds.x1 - bounds.x0);
+            h = (int)(bounds.y1 - bounds.y0);
+            fz_drop_display_list(ps->ctx, dl);
+          }
+          if (w == 0) w = 612;
+          if (h == 0) h = 792;
+        }
+        webview_output_page(ps->ctx, ui->eng, ui->page, after_page_count,
+                            w, h, ps->tmpdir[0] ? ps->tmpdir : NULL);
+      }
+
       if (!has_event)
       {
         if (advance)
@@ -1521,6 +1542,9 @@ bool texpresso_main(struct persistent_state *ps)
 
         case RELOAD_EVENT:
           page_count = send(page_count, ui->eng);
+          if (ps->webview_mode)
+            fprintf(stderr, "[main] RELOAD_EVENT: page_count=%d, ui->page=%d, webview=%d\n",
+                    page_count, ui->page, ps->webview_mode);
           if (ui->page >= page_count &&
               send(get_status, ui->eng) == DOC_TERMINATED)
           {
