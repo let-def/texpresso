@@ -317,7 +317,7 @@ static int fz_irect_area(fz_irect r)
 
 #define remap(v, bp, wp) (bp) + ((v) * (wp - bp)) / 255
 
-static void invert_pixmap(fz_context *ctx, fz_pixmap *pix, uint32_t black, uint32_t white)
+void txp_renderer_invert_pixmap(fz_context *ctx, fz_pixmap *pix, uint32_t black, uint32_t white)
 {
   uint8_t *data0 = fz_pixmap_samples(ctx, pix);
   int stride = fz_pixmap_stride(ctx, pix);
@@ -994,4 +994,23 @@ void txp_renderer_screen_size(fz_context *ctx, txp_renderer *self, int *w, int *
 {
   *w = self->output_w;
   *h = self->output_h;
+}
+
+fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
+                                          int width, int height,
+                                          uint32_t bg_color, uint32_t fg_color)
+{
+  fz_irect bbox = fz_make_irect(0, 0, width, height);
+  fz_pixmap *pix = fz_new_pixmap_with_bbox(ctx, fz_device_rgb(ctx), bbox, NULL, 0);
+  if (!pix) return NULL;
+  fz_clear_pixmap_with_value(ctx, pix, 0xFF);
+
+  fz_device *dev = fz_new_draw_device(ctx, fz_identity, pix);
+  fz_run_display_list(ctx, dl, dev, fz_identity, fz_infinite_rect, NULL);
+  fz_close_device(ctx, dev);
+  fz_drop_device(ctx, dev);
+
+  txp_renderer_invert_pixmap(ctx, pix, bg_color, fg_color);
+
+  return pix;
 }
