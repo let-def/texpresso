@@ -58,6 +58,11 @@ typedef struct
   mark_t snap;
 } process_t;
 
+enum
+{
+  MAX_PROCESS = 32
+};
+
 struct tex_engine
 {
   struct txp_engine_class *_class;
@@ -73,7 +78,7 @@ struct tex_engine
   log_t *log;
 
   channel_t *c;
-  process_t processes[32];
+  process_t processes[MAX_PROCESS];
   int process_count;
 
   trace_entry_t *trace;
@@ -238,6 +243,9 @@ static bool read_query(struct tex_engine *self, channel_t *t, query_t *q)
 
 static void decimate_processes(struct tex_engine *self)
 {
+  bool keep[MAX_PROCESS] = {0,};
+
+  int target = 32;
   fprintf(stderr, "before process decimation:\n");
   for  (int i = 0; i < self->process_count; ++i)
   {
@@ -246,18 +254,41 @@ static void decimate_processes(struct tex_engine *self)
             p->trace_len,
             p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time,
             p->pid);
+    if (p->trace_len >= target)
+    {
+        keep[i] = true;
+        target *= 2;
+    }
   }
 
-  int i = 0, bound = (self->process_count - 8) / 2;
-  while (i < bound)
+  target = self->processes[self->process_count - 1].trace_len;
+  int delta = 32;
+  for (int i = self->process_count - 1; i >= 0; --i)
   {
-    close_process(&self->processes[2*i]);
-    self->processes[i] = self->processes[2*i+1];
-    i++;
+    process_t *p = &self->processes[i];
+    if (p->trace_len <= target)
+    {
+      keep[i] = true;
+      delta *= 2;
+      target -= delta;
+    }
+    else if (keep[i])
+    {
+      delta *= 2;
+      target = p->trace_len - delta;
+    }
   }
-  for (int j = bound * 2; j < self->process_count; ++j)
+
+  int i = 0;
+  for (int j = 0; j < self->process_count; j++)
   {
-    self->processes[i] = self->processes[j];
+    if (!keep[j])
+    {
+      close_process(&self->processes[j]);
+      continue;
+    }
+    if (i != j)
+      self->processes[i] = self->processes[j];
     i++;
   }
   self->process_count = i;
@@ -869,7 +900,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
 
     case Q_CHLD:
     {
-      if (self->process_count == 32)
+      if (self->process_count == MAX_PROCESS)
       {
         decimate_processes(self);
         p = get_process(self);
