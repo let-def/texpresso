@@ -39,6 +39,8 @@
 #include "prot_parser.h"
 #include "editor.h"
 #include "base64.h"
+#include "webview_output.h"
+#include "qoi.h"
 
 struct persistent_state *pstate;
 
@@ -1045,6 +1047,60 @@ static void interpret_command(struct persistent_state *ps,
       schedule_event(RENDER_EVENT);
     }
     break;
+
+    case EDIT_SYNCTEX_BACKWARD:
+    {
+      fz_buffer *buf;
+      synctex_t *stx = send(synctex, ui->eng, &buf);
+      int page = cmd.synctex_backward.page;
+      float x = cmd.synctex_backward.x;
+      float y = cmd.synctex_backward.y;
+      float f = send(scale_factor, ui->eng);
+      synctex_scan(ps->ctx, stx, buf, ps->doc_path, page, x / f, y / f);
+    }
+    break;
+
+    case EDIT_SET_PAGE:
+    {
+      int page = cmd.set_page.page;
+      int count = send(page_count, ui->eng);
+      if (page >= 0 && page < count)
+      {
+        ui->page = page;
+        schedule_event(RELOAD_EVENT);
+      }
+    }
+    break;
+
+    case EDIT_GO_HOME:
+      ui->page = 0;
+      schedule_event(RELOAD_EVENT);
+      break;
+
+    case EDIT_GO_END:
+    {
+      int count = send(page_count, ui->eng);
+      if (count > 0)
+        ui->page = count - 1;
+      schedule_event(RELOAD_EVENT);
+    }
+    break;
+
+    case EDIT_SET_OUTPUT_SIZE:
+      ps->render_width = cmd.set_output_size.width;
+      ps->render_height = cmd.set_output_size.height;
+      schedule_event(RELOAD_EVENT);
+      break;
+
+    case EDIT_RESET_ZOOM:
+      fprintf(stdout, "[\"zoom-reset\"]\n");
+      fflush(stdout);
+      break;
+
+    case EDIT_SET_FIT_MODE:
+      fprintf(stdout, "[\"fit-mode-changed\",\"%s\"]\n", cmd.set_fit_mode.mode);
+      fflush(stdout);
+      break;
   }
 }
 
@@ -1120,16 +1176,26 @@ bool texpresso_main(struct persistent_state *ps)
   }
 
   ui->sdl_renderer = ps->renderer;
-  ui->doc_renderer = txp_renderer_new(ps->ctx, ui->sdl_renderer);
+  if (ps->webview_mode)
+  {
+    ui->doc_renderer = NULL; // No SDL renderer in webview mode
+  }
+  else
+  {
+    ui->doc_renderer = txp_renderer_new(ps->ctx, ui->sdl_renderer);
+  }
 
   if (ps->initial.initialized)
   {
     ui->page = ps->initial.page;
     ui->zoom = ps->initial.zoom;
     ui->need_synctex = ps->initial.need_synctex;
-    *txp_renderer_get_config(ps->ctx, ui->doc_renderer) = ps->initial.config;
-    txp_renderer_set_contents(ps->ctx, ui->doc_renderer,
-                              ps->initial.display_list);
+    if (ui->doc_renderer)
+    {
+      *txp_renderer_get_config(ps->ctx, ui->doc_renderer) = ps->initial.config;
+      txp_renderer_set_contents(ps->ctx, ui->doc_renderer,
+                                ps->initial.display_list);
+    }
     editor_reset_sync();
   }
   else
@@ -1146,11 +1212,16 @@ bool texpresso_main(struct persistent_state *ps)
 
   bool quit = 0, reload = 0;
   send(step, ui->eng, ps->ctx, true);
-  render(ps->ctx, ui);
+  if (!ps->webview_mode)
+    render(ps->ctx, ui);
   schedule_event(RELOAD_EVENT);
 
-  struct repaint_on_resize_env repaint_on_resize_env = {.ctx = ps->ctx, .ui = ui};
-  SDL_AddEventWatch(repaint_on_resize, &repaint_on_resize_env);
+  struct repaint_on_resize_env repaint_on_resize_env;
+  if (!ps->webview_mode)
+  {
+    repaint_on_resize_env = (struct repaint_on_resize_env){.ctx = ps->ctx, .ui = ui};
+    SDL_AddEventWatch(repaint_on_resize, &repaint_on_resize_env);
+  }
 
   vstack *cmd_stack = vstack_new(ps->ctx);
   prot_parser cmd_parser;
@@ -1284,13 +1355,16 @@ bool texpresso_main(struct persistent_state *ps)
       }
     }
 
-    txp_renderer_set_scale_factor(ps->ctx, ui->doc_renderer,
-                                  get_scale_factor(ui->window));
+    if (!ps->webview_mode)
+    {
+      txp_renderer_set_scale_factor(ps->ctx, ui->doc_renderer,
+                                    get_scale_factor(ui->window));
+    }
     txp_renderer_config *config =
         txp_renderer_get_config(ps->ctx, ui->doc_renderer);
 
-    // Process event
-    switch (e.type)
+    // Process event (SDL events only in non-webview mode)
+    if (!ps->webview_mode) switch (e.type)
     {
       case SDL_QUIT:
         quit = 1;
@@ -1410,7 +1484,7 @@ bool texpresso_main(struct persistent_state *ps)
             break;
         }
         break;
-    }
+    }  // end of `if (!ps->webview_mode) switch (e.type)`
 
     if (e.type == ps->custom_event)
     {
@@ -1454,7 +1528,30 @@ bool texpresso_main(struct persistent_state *ps)
               ui->page = page_count - 1;
           }
           if (ui->page < page_count)
+          {
             display_page(ps, ui);
+            if (ps->webview_mode)
+            {
+              int w = ps->render_width;
+              int h = ps->render_height;
+              if (w == 0 || h == 0)
+              {
+                // Use page-point dimensions as default
+                fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
+                if (dl)
+                {
+                  fz_rect bounds = fz_bound_display_list(ps->ctx, dl);
+                  w = (int)(bounds.x1 - bounds.x0);
+                  h = (int)(bounds.y1 - bounds.y0);
+                  fz_drop_display_list(ps->ctx, dl);
+                }
+                if (w == 0) w = 612;
+                if (h == 0) h = 792;
+              }
+              webview_output_page(ps->ctx, ui->eng, ui->page, page_count,
+                                  w, h, ps->tmpdir[0] ? ps->tmpdir : NULL);
+            }
+          }
           break;
 
         case STDIN_EVENT:
@@ -1476,7 +1573,8 @@ bool texpresso_main(struct persistent_state *ps)
     close(poll_stdin_pipe[1]);
   }
 
-  SDL_DelEventWatch(repaint_on_resize, &repaint_on_resize_env);
+  if (!ps->webview_mode)
+    SDL_DelEventWatch(repaint_on_resize, &repaint_on_resize_env);
 
   if (ps->initial.initialized && ps->initial.display_list)
     fz_drop_display_list(ps->ctx, ps->initial.display_list);
@@ -1484,12 +1582,14 @@ bool texpresso_main(struct persistent_state *ps)
   ps->initial.page = ui->page;
   ps->initial.need_synctex = ui->need_synctex;
   ps->initial.zoom = ui->zoom;
-  ps->initial.config = *txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-  ps->initial.display_list = txp_renderer_get_contents(ps->ctx, ui->doc_renderer);
-  if (ps->initial.display_list)
-    fz_keep_display_list(ps->ctx, ps->initial.display_list);
-
-  txp_renderer_free(ps->ctx, ui->doc_renderer);
+  if (ui->doc_renderer)
+  {
+    ps->initial.config = *txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+    ps->initial.display_list = txp_renderer_get_contents(ps->ctx, ui->doc_renderer);
+    if (ps->initial.display_list)
+      fz_keep_display_list(ps->ctx, ps->initial.display_list);
+    txp_renderer_free(ps->ctx, ui->doc_renderer);
+  }
   send(destroy, ui->eng, ps->ctx);
 
   return reload;
