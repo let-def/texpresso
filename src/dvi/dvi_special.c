@@ -54,9 +54,9 @@ static cursor_t yyt6;
 static bool
 unhandled(const char *kind, cursor_t cur, cursor_t lim, int ignored)
 {
-  if (0 && !ignored)
+  if (!ignored)
     fprintf(stderr, "unhandled %s: \"%.*s\"\n", kind, (int)(lim - cur), cur);
-  return 0;
+  return 1;  // Don't abort page rendering for unrecognized specials
 }
 
 static int pnat(cursor_t ptr, cursor_t lim)
@@ -3221,7 +3221,8 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
   }
   fz_catch(ctx)
   {
-    return 0;
+    fprintf(stderr, "unhandled pdf content operator\n");
+    return 1;
   }
   return 1;
 }
