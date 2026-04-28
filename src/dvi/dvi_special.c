@@ -3166,11 +3166,26 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           break;
         }
 
+        case PDF_OP_v:
+        {
+          fz_path *path = get_path(ctx, dc);
+          float c[4];
+          fz_point pt = fz_currentpoint(ctx, path);
+          vstack_get_floats(ctx, stack, c, 4);
+          fz_curveto(ctx, path, pt.x, pt.y, c[0], c[1], c[2], c[3]);
+          break;
+        }
+        case PDF_OP_y:
+        {
+          fz_path *path = get_path(ctx, dc);
+          float c[4];
+          vstack_get_floats(ctx, stack, c, 4);
+          fz_curveto(ctx, path, c[0], c[1], c[2], c[3], c[2], c[3]);
+          break;
+        }
         case PDF_OP_ri:
         case PDF_OP_i:
         case PDF_OP_gs:
-        case PDF_OP_v:
-        case PDF_OP_y:
         case PDF_OP_BT:
         case PDF_OP_ET:
         case PDF_OP_Tc:
