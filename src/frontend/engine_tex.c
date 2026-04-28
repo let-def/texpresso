@@ -1316,6 +1316,10 @@ static void rollback_processes(fz_context *ctx, struct TexEngine *self, int reve
     synctex_rollback(ctx, self->stex, 0);
   editor_truncate(BUF_OUT, output_data(self->st.stdout.entry));
   editor_truncate(BUF_LOG, output_data(self->st.log.entry));
+
+  // Restart if there are no more snapshots
+  if (self->process_count == 0)
+    prepare_process(ctx, self);
 }
 
 static bool possible_fence(TraceEntry *te)
