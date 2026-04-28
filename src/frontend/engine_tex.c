@@ -38,9 +38,9 @@
  * - **Filesystem State**: Tracks all files touched during compilation
  *   through a virtual filesystem with snapshot/rollback support
  *
- * - **Process Management**: Maintains up to 32 forked processes to support
- *   incremental recompilation. Each process represents a checkpoint in the
- *   compilation history.
+ * - **Process Management**: Maintains up to MAX_PROCESS forked processes to
+ *   support incremental recompilation. Each process represents a checkpoint in
+ *   the compilation history.
  *
  * - **Trace Logging**: Records every file access in order, enabling precise
  *   rollback to any previous state by replaying the trace
@@ -64,7 +64,7 @@
  * The engine periodically forks during compilation to create checkpoints.
  * On macOS, forking is delayed until after font loading to avoid system
  * restrictions. Process decimation prevents unbounded growth by merging
- * every other process when reaching the 32-process limit.
+ * every other process when reaching the MAX_PROCESS process limit.
  *
  * @par Protocol
  *
@@ -133,9 +133,8 @@ typedef struct
 /**
  * @brief Represents a running TeX compilation process
  *
- * The engine maintains multiple processes (up to 32) to support forking
- * behavior. Each process maintains its own view of the filesystem and
- * can be rolled back independently.
+ * The engine maintains up to MAX_PROCESS processes. Each process maintains its
+ * own view of the filesystem and can be rolled back to.
  */
 typedef struct
 {
@@ -144,6 +143,11 @@ typedef struct
   int trace_len; /**< Number of trace entries from this process */
   LogMark snap;   /**< Log snapshot position for rollback */
 } TexProcess;
+
+enum
+{
+  MAX_PROCESS = 32
+};
 
 /**
  * @brief TeX engine instance structure
@@ -166,7 +170,7 @@ struct TexEngine
   Log *log;       /**< Rollback log for state changes */
 
   IOChannel *c;             /**< Communication channel with child */
-  TexProcess processes[32]; /**< Active processes (forked branches) */
+  TexProcess processes[MAX_PROCESS]; /**< Active processes (forked branches) */
   int process_count;        /**< Number of active processes */
 
   /**
@@ -456,10 +460,13 @@ static bool read_query(struct TexEngine *self, IOChannel *t, ProtocolQuery *q)
  * but keeps their trace entries for potential future rollback.
  *
  * @note This is called implicitly when adding a new process would exceed
- *       the 32-process limit in answer_query() for Q_CHLD.
+ *       the MAX_PROCESS limit in answer_query() for Q_CHLD.
  */
 static void decimate_processes(struct TexEngine *self)
 {
+  bool keep[MAX_PROCESS] = {0,};
+
+  int target = 32;
   fprintf(stderr, "before process decimation:\n");
   for (int i = 0; i < self->process_count; ++i)
   {
@@ -468,18 +475,41 @@ static void decimate_processes(struct TexEngine *self)
             p->trace_len,
             p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time,
             p->pid);
+    if (p->trace_len >= target)
+    {
+        keep[i] = true;
+        target *= 2;
+    }
   }
 
-  int i = 0, bound = (self->process_count - 8) / 2;
-  while (i < bound)
+  target = self->processes[self->process_count - 1].trace_len;
+  int delta = 32;
+  for (int i = self->process_count - 1; i >= 0; --i)
   {
-    close_process(&self->processes[2 * i]);
-    self->processes[i] = self->processes[2 * i + 1];
-    i++;
+    TexProcess *p = &self->processes[i];
+    if (p->trace_len <= target)
+    {
+      keep[i] = true;
+      delta *= 2;
+      target -= delta;
+    }
+    else if (keep[i])
+    {
+      delta *= 2;
+      target = p->trace_len - delta;
+    }
   }
-  for (int j = bound * 2; j < self->process_count; ++j)
+
+  int i = 0;
+  for (int j = 0; j < self->process_count; j++)
   {
-    self->processes[i] = self->processes[j];
+    if (!keep[j])
+    {
+      close_process(&self->processes[j]);
+      continue;
+    }
+    if (i != j)
+      self->processes[i] = self->processes[j];
     i++;
   }
   self->process_count = i;
@@ -1188,7 +1218,7 @@ static void answer_query(fz_context *ctx, struct TexEngine *self, ProtocolQuery 
 
     case Q_CHLD:
     {
-      if (self->process_count == 32)
+      if (self->process_count == MAX_PROCESS)
       {
         decimate_processes(self);
         p = get_process(self);
