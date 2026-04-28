@@ -340,7 +340,7 @@ int main(int argc, const char **argv)
     window = SDL_CreateWindow(window_title,
       SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
       700, 900,
-      SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
+      SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
     );
 
     if (window == NULL)
@@ -355,6 +355,7 @@ int main(int argc, const char **argv)
     SDL_FreeSurface(logo);
 
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
+    SDL_ShowWindow(window);
   }
 
   struct persistent_state pstate = {
