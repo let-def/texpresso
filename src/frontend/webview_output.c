@@ -4,10 +4,16 @@
 #include <unistd.h>
 #include <mupdf/fitz.h>
 
+#ifdef __APPLE__
+#include <sys/syslimits.h>
+#else
+#include <linux/limits.h>
+#endif
+
 #include "driver.h"
 #include "renderer.h"
+#include "engine.h"
 
-#define QOI_IMPLEMENTATION
 #include "qoi.h"
 
 static char *g_webview_tmpdir = NULL;

@@ -378,7 +378,7 @@ static void render_rect(fz_context *ctx, txp_renderer *self, fz_rect bounds, voi
   uint32_t bg, fg;
   txp_get_colors(&self->config, &bg, &fg);
   //if (bg != 0x00FFFFFF || fg != 0x00000000)
-    invert_pixmap(ctx, pm, fg, bg);
+    txp_renderer_invert_pixmap(ctx, pm, fg, bg);
   fz_drop_pixmap(ctx, pm);
 }
 
