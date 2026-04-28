@@ -1206,6 +1206,9 @@ dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, curs
   "code"
   { return pdf_code(ctx, dc, st, cur, lim); }
 
+  "literal" ws+ ("direct" ws+)?
+  { return pdf_code(ctx, dc, st, cur, lim); }
+
   ''
   { return unhandled("pdf special", cur, lim, 0); }
 
