@@ -6,7 +6,7 @@
 void webview_output_page(fz_context *ctx, txp_engine *eng,
                          int page, int total_pages,
                          int img_width, int img_height,
-                         const char *tmpdir);
+                         const char *tmpdir, bool dark_mode);
 
 void webview_set_tmpdir(const char *dir);
 

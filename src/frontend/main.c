@@ -1041,10 +1041,17 @@ static void interpret_command(struct persistent_state *ps,
     break;
     case EDIT_INVERT:
     {
-      txp_renderer_config *config =
-          txp_renderer_get_config(ps->ctx, ui->doc_renderer);
-      config->invert_color = !config->invert_color;
-      schedule_event(RENDER_EVENT);
+      if (ps->webview_mode) {
+        ps->dark_mode = !ps->dark_mode;
+        fprintf(stdout, "[\"dark-mode\",%s]\n", ps->dark_mode ? "true" : "false");
+        fflush(stdout);
+        schedule_event(RELOAD_EVENT);
+      } else {
+        txp_renderer_config *config =
+            txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+        config->invert_color = !config->invert_color;
+        schedule_event(RENDER_EVENT);
+      }
     }
     break;
 
@@ -1300,7 +1307,7 @@ bool texpresso_main(struct persistent_state *ps)
       if (ui->page >= before_page_count && ui->page < after_page_count)
         schedule_event(RELOAD_EVENT);
 
-      if (ps->webview_mode && ui->page < after_page_count)
+      if (ps->webview_mode && ui->page < after_page_count && advance)
       {
         int w = ps->render_width;
         int h = ps->render_height;
@@ -1318,7 +1325,7 @@ bool texpresso_main(struct persistent_state *ps)
           if (h == 0) h = 792;
         }
         webview_output_page(ps->ctx, ui->eng, ui->page, after_page_count,
-                            w, h, ps->tmpdir[0] ? ps->tmpdir : NULL);
+                            w, h, ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode);
       }
 
       if (!has_event)
@@ -1571,7 +1578,7 @@ bool texpresso_main(struct persistent_state *ps)
                 if (h == 0) h = 792;
               }
               webview_output_page(ps->ctx, ui->eng, ui->page, page_count,
-                                  w, h, ps->tmpdir[0] ? ps->tmpdir : NULL);
+                                  w, h, ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode);
             }
             else
             {

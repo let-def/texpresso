@@ -27,30 +27,31 @@ void webview_set_tmpdir(const char *dir)
 void webview_output_page(fz_context *ctx, txp_engine *eng,
                          int page, int total_pages,
                          int img_width, int img_height,
-                         const char *tmpdir)
+                         const char *tmpdir, bool dark_mode)
 {
-  fprintf(stderr, "[webview] output_page called: page=%d total=%d w=%d h=%d\n",
-          page, total_pages, img_width, img_height);
+  fprintf(stderr, "[webview] output_page called: page=%d total=%d w=%d h=%d dark=%d\n",
+          page, total_pages, img_width, img_height, dark_mode);
 
   if (!tmpdir) tmpdir = g_webview_tmpdir ? g_webview_tmpdir : "/tmp";
-  fprintf(stderr, "[webview] tmpdir=%s\n", tmpdir);
 
   fz_display_list *dl = send(render_page, eng, ctx, page);
   if (!dl) {
     fprintf(stderr, "[webview] ERROR: send(render_page) returned NULL for page %d\n", page);
     return;
   }
-  fprintf(stderr, "[webview] got display_list\n");
 
-  fz_pixmap *pix = txp_renderer_render_to_pixmap(ctx, dl, img_width, img_height,
-                                                   0x00FFFFFF, 0x00000000);
+  uint32_t bg, fg;
+  if (dark_mode) {
+    bg = 0x00FFFFFF; fg = 0x00000000;  // dark bg, light text
+  } else {
+    bg = 0x00000000; fg = 0x00FFFFFF;  // light bg, dark text
+  }
+  fz_pixmap *pix = txp_renderer_render_to_pixmap(ctx, dl, img_width, img_height, bg, fg);
   fz_drop_display_list(ctx, dl);
   if (!pix) {
     fprintf(stderr, "[webview] ERROR: render_to_pixmap returned NULL\n");
     return;
   }
-  fprintf(stderr, "[webview] pixmap created: %dx%d\n",
-          fz_pixmap_width(ctx, pix), fz_pixmap_height(ctx, pix));
 
   unsigned char *samples = fz_pixmap_samples(ctx, pix);
   int w = fz_pixmap_width(ctx, pix);
