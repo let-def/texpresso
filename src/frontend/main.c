@@ -1529,14 +1529,12 @@ bool texpresso_main(struct persistent_state *ps)
           }
           if (ui->page < page_count)
           {
-            display_page(ps, ui);
             if (ps->webview_mode)
             {
               int w = ps->render_width;
               int h = ps->render_height;
               if (w == 0 || h == 0)
               {
-                // Use page-point dimensions as default
                 fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
                 if (dl)
                 {
@@ -1550,6 +1548,10 @@ bool texpresso_main(struct persistent_state *ps)
               }
               webview_output_page(ps->ctx, ui->eng, ui->page, page_count,
                                   w, h, ps->tmpdir[0] ? ps->tmpdir : NULL);
+            }
+            else
+            {
+              display_page(ps, ui);
             }
           }
           break;

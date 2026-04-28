@@ -106,7 +106,7 @@ static void usage(void)
 {
   fprintf(stderr,
           "Usage: texpresso [-I path]* [-json] [-lines] [-texlive] [-tectonic] "
-          "[-test-initialize] [-stream] root_file.tex\n");
+          "[-test-initialize] [-stream] [-webview] [-tmpdir path] root_file.tex\n");
   fprintf(stderr,
           " -I path    Add a path to included directories. \n"
           "    Files are looked up relative to document directory and all "
@@ -125,6 +125,10 @@ static void usage(void)
           " -test-initialize  Run a single cycle for test purposes\n");
   fprintf(stderr,
           " -stream   Skip filesystem lookups; files are pushed via editor commands\n");
+  fprintf(stderr,
+          " -webview  Run in webview mode (output QOI files via stdout, no SDL window)\n");
+  fprintf(stderr,
+          " -tmpdir   Set temporary directory for QOI output files\n");
 }
 
 int main(int argc, const char **argv)
