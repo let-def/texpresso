@@ -3159,7 +3159,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           val v[2];
           vstack_get_arguments(ctx, stack, v, 2);
           st->gs.dash_len = val_array_length(ctx, stack, v[0]);
-          if (st->gs.dash_len > 4) st->gs.dash_len = 4;
+          if (st->gs.dash_len > 32) st->gs.dash_len = 32;
           for (int i = 0; i < st->gs.dash_len; ++i)
             st->gs.dash[i] = val_number(ctx, val_array_get(ctx, stack, v[0], i));
           st->gs.dash_phase = val_number(ctx, v[1]);
