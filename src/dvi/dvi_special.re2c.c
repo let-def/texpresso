@@ -1315,19 +1315,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           break;
         }
 
-        case PDF_OP_ri:
-        case PDF_OP_i:
-        case PDF_OP_gs:
-        case PDF_OP_d0:
-        case PDF_OP_d1:
-        case PDF_OP_CS:
-        case PDF_OP_cs:
-        case PDF_OP_SC:
-        case PDF_OP_sc:
-        case PDF_OP_SCN:
-        case PDF_OP_scn:
-        case PDF_OP_sh:
-        case PDF_OP_Do:
+        // No-ops: operators without visual effect
         case PDF_OP_MP:
         case PDF_OP_DP:
         case PDF_OP_BMC:
@@ -1335,6 +1323,34 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
         case PDF_OP_EMC:
         case PDF_OP_BX:
         case PDF_OP_EX:
+          // Marked content / compatibility sections: ignore entirely
+          break;
+
+        case PDF_OP_ri:
+        case PDF_OP_i:
+          // Rendering intent / flatness: use defaults, ignore
+          break;
+
+        case PDF_OP_d0:
+        case PDF_OP_d1:
+          // Type 3 font glyph metrics: not used in TikZ, ignore
+          break;
+
+        // Color space operators: TikZ primarily uses direct color operators
+        // (rg/RG/g/G/k/K) which are already supported.
+        case PDF_OP_CS:
+        case PDF_OP_cs:
+        case PDF_OP_SC:
+        case PDF_OP_sc:
+        case PDF_OP_SCN:
+        case PDF_OP_scn:
+          // Color already set by direct operators; ignore space changes
+          break;
+
+        // Still pending implementation (Phase 2-4)
+        case PDF_OP_sh:
+        case PDF_OP_Do:
+        case PDF_OP_gs:
         default:
           fprintf(stderr, "pdf unhandled op %s in:\n%.*s\n", pdf_op_name(op),
                   (int)(cur - cur0), cur0);
