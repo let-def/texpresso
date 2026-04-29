@@ -196,13 +196,17 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
   fz_drop_pixmap(ctx, pix);
 
   // Check if we can do incremental update
-  bool do_incremental = false;
+  bool send_update = true; // false = no changes, skip sending
+  bool is_diff = false;
   if (prev_rgb && prev_w == w && prev_h == h && prev_page == page) {
     dirty_rect_t rects[MAX_DIRTY_RECTS];
     float dirty_ratio = 0;
     int n_rects = compute_dirty_rects(prev_rgb, rgb, w, h, rects, MAX_DIRTY_RECTS, &dirty_ratio);
-    if (n_rects > 0 && dirty_ratio < DIRTY_RATIO_THRESHOLD) {
-      do_incremental = true;
+    if (n_rects == 0) {
+      // No changes — skip sending entirely
+      send_update = false;
+    } else if (n_rects > 0 && dirty_ratio < DIRTY_RATIO_THRESHOLD) {
+      is_diff = true;
 
       // Send page-diff message
       fprintf(stdout, "[\"page-diff\",%d,%d,%d,%d,%d,%d,%d,[",
@@ -210,7 +214,6 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
 
       for (int i = 0; i < n_rects; i++) {
         dirty_rect_t *r = &rects[i];
-        // Extract rect sub-image and encode as QOI
         int rw = r->w, rh = r->h;
         unsigned char *rect_rgb = malloc(rw * rh * 3);
         if (!rect_rgb) continue;
@@ -225,9 +228,6 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
         free(rect_rgb);
         if (!rqoi_data) continue;
 
-        // Base64 encode the QOI data inline
-        // Use simple base64 (already in the codebase)
-        // For now, write to temp file and send path
         char rpath[PATH_MAX];
         snprintf(rpath, sizeof(rpath), "%s/texpresso-XXXXXX", tmpdir);
         int rfd = mkstemp(rpath);
@@ -241,12 +241,11 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
       }
       fprintf(stdout, "]]\n");
       fflush(stdout);
-    } else if (n_rects < 0) {
-      // Too many rects, fall through to full page
     }
+    // else: dirty_ratio >= threshold or n_rects < 0 — fall through to full page
   }
 
-  if (!do_incremental) {
+  if (send_update && !is_diff) {
     // Full page output
     char tmppath[PATH_MAX];
     write_qoi_file(tmpdir, rgb, w, h, tmppath, sizeof(tmppath));
