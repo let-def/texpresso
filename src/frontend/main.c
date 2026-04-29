@@ -1315,9 +1315,11 @@ bool texpresso_main(struct persistent_state *ps)
         float f = send(scale_factor, ui->eng);
         fz_buffer *buf;
         TexSynctex *stx = send(synctex, ui->eng, &buf);
-        if (f > 0 && stx && buf)
-          synctex_scan(ps->ctx, stx, buf, ps->doc_path, dc.page_index, dc.x / f,
-                       dc.y / f);
+        TexSynctexHit hit;
+        if (f > 0 && stx && buf &&
+            synctex_scan(ps->ctx, stx, buf, dc.page_index,
+                         dc.x / f, dc.y / f, &hit))
+          editor_synctex(ps->doc_path, hit.fname, hit.len, hit.line, hit.column);
       }
 
       if (e.type == ps->custom_events + CUSTOM_EVENT_UI)
