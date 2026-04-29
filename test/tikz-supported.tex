@@ -1,0 +1,240 @@
+\documentclass[12pt]{article}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, shapes, calc, backgrounds, positioning, patterns, decorations.markings, decorations.pathmorphing, fit}
+\usepackage{xcolor}
+
+\begin{document}
+
+\section*{TeXpresso TikZ 支持功能测试}
+
+\subsection*{Phase 0: Dash 模式 (长 dash pattern > 4 元素)}
+
+\begin{tikzpicture}
+  % 5 元素 dash pattern
+  \draw[dash pattern=on 4pt off 2pt on 8pt off 3pt on 12pt off 4pt] (0,0) -- (8,0);
+  \draw[dash pattern=on 5pt off 3pt on 7pt off 4pt on 9pt off 2pt on 3pt off 1pt] (0,-0.5) -- (8,-0.5);
+\end{tikzpicture}
+
+\subsection*{Phase 1: 文本节点}
+
+\begin{tikzpicture}
+  % 基本 node 标签
+  \node[draw, fill=yellow!30] at (0,0) {Hello TikZ};
+  \node[draw, fill=blue!20, rounded corners] at (4,0) {Node B};
+  \node[draw, circle, fill=red!20] at (8,0) {X};
+
+  % 不同字体大小的 node
+  \node[draw] at (0,2) {\tiny tiny};
+  \node[draw] at (2,2) {\small small};
+  \node[draw] at (4,2) {\large large};
+  \node[draw] at (6,2) {\huge huge};
+
+  % 多行 node (align)
+  \node[draw, align=center] at (4,-2) {Multi-line\\node text};
+\end{tikzpicture}
+
+\subsection*{Phase 1: 基本路径 (已支持)}
+
+\begin{tikzpicture}
+  % 直线
+  \draw[blue, thick] (0,0) -- (3,0);
+  % 曲线 (c, v, y)
+  \draw[red, thick] (0,-0.5) .. controls (1,-1.5) and (2,-1.5) .. (3,-0.5);
+  \draw[green!60!black, thick] (0,-1) .. controls (2,-2) .. (3,-1);
+  \draw[orange, thick] (0,-1.5) .. controls (2,-2) and (2,-2) .. (3,-1.5);
+  % 矩形
+  \draw[purple, thick] (0,-2) rectangle (3,-3);
+  % 圆和椭圆
+  \draw[teal, thick] (5,0) circle (1);
+  \draw[brown, thick] (5,-1.5) ellipse (1.5 and 0.8);
+\end{tikzpicture}
+
+\subsection*{Phase 1: 填充和描边}
+
+\begin{tikzpicture}
+  % fill only
+  \fill[red!50] (0,0) circle (0.8);
+  % draw only
+  \draw[blue, line width=2pt] (2,0) circle (0.8);
+  % fill + draw
+  \filldraw[fill=green!40, draw=green!80!black, line width=1.5pt] (4,0) circle (0.8);
+
+  % 矩形
+  \fill[cyan!40] (6,-0.5) rectangle (7.5,0.5);
+  \draw[cyan!80!black, line width=2pt] (8,-0.5) rectangle (9.5,0.5);
+\end{tikzpicture}
+
+\subsection*{Phase 1: 线型 (line width, join, cap, dash)}
+
+\begin{tikzpicture}
+  % line width
+  \draw[line width=0.5pt] (0,0) -- (2,0) node[right] {0.5pt};
+  \draw[line width=2pt] (0,-0.5) -- (2,-0.5) node[right] {2pt};
+  \draw[line width=5pt] (0,-1) -- (2,-1) node[right] {5pt};
+
+  % line join (在拐角处)
+  \draw[line width=3pt, line join=miter] (4,0) -- (5,0.5) -- (6,0);
+  \draw[line width=3pt, line join=round] (4,-0.5) -- (5,0) -- (6,-0.5);
+  \draw[line width=3pt, line join=bevel] (4,-1) -- (5,-0.5) -- (6,-1);
+
+  % line cap
+  \draw[line width=4pt, line cap=butt, red] (8,0) -- (10,0);
+  \draw[line width=4pt, line cap=round, green!60!black] (8,-0.5) -- (10,-0.5);
+  \draw[line width=4pt, line cap=rect, blue] (8,-1) -- (10,-1);
+
+  % dash 模式
+  \draw[line width=1pt, dash pattern=on 3pt off 2pt] (0,-2) -- (3,-2);
+  \draw[line width=1pt, dash pattern=on 2pt off 1pt on 4pt off 2pt] (4,-2) -- (7,-2);
+  \draw[line width=1pt, dash pattern=on 4pt off 2pt on 1pt off 2pt on 8pt off 3pt] (8,-2) -- (10,-2);
+\end{tikzpicture}
+
+\subsection*{Phase 1: 颜色模式}
+
+\begin{tikzpicture}
+  % named colors
+  \fill[red] (0,0) circle (0.5) node[right] {red};
+  \fill[green!60!black] (0,-1) circle (0.5) node[right] {green};
+  \fill[blue] (0,-2) circle (0.5) node[right] {blue};
+
+  % mixed colors
+  \fill[orange] (5,0) circle (0.5) node[right] {orange};
+  \fill[purple] (5,-1) circle (0.5) node[right] {purple};
+  \fill[teal] (5,-2) circle (0.5) node[right] {teal};
+
+  % gray
+  \fill[black!30] (10,0) circle (0.5) node[right] {30\% black};
+  \fill[black!70] (10,-1) circle (0.5) node[right] {70\% black};
+\end{tikzpicture}
+
+\subsection*{Phase 1: 图形状态 (q/Q, cm, W)}
+
+\begin{tikzpicture}
+  % q/Q: 保存/恢复状态
+  \begin{scope}[red, line width=2pt]
+    \draw (0,0) -- (2,0);
+    \begin{scope}[blue, line width=1pt]
+      \draw (0,-0.5) -- (2,-0.5);
+      \fill[green!30] (3,-0.5) circle (0.5);
+    \end{scope}
+    \draw (0,-1) -- (2,-1);
+  \end{scope}
+
+  % cm: 变换
+  \begin{scope}[shift={(6,0)}]
+    \draw[->] (0,0) -- (1,0) node[right] {shifted};
+  \end{scope}
+
+  % 旋转
+  \begin{scope}[shift={(6,-1)}, rotate=30]
+    \draw[->, thick] (0,0) -- (1,0) node[right] {rotated};
+  \end{scope}
+
+  % 缩放
+  \begin{scope}[shift={(6,-2)}, scale=1.5]
+    \draw (0,0) rectangle (0.5,0.5) node[right] {scaled};
+  \end{scope}
+
+  % 裁剪 (W)
+  \begin{scope}
+    \clip (0,-3) rectangle (3,-1.5);
+    \fill[red!30] (1,-3.5) circle (1);
+    \fill[blue!30] (2,-2.5) circle (0.8);
+    \draw[thick] (0,-3) rectangle (3,-1.5);
+  \end{scope}
+\end{tikzpicture}
+
+\subsection*{Phase 1: 路径操作符 (m, l, c, v, y, h, re)}
+
+\begin{tikzpicture}
+  % m (moveto) + l (lineto): \draw
+  \draw (0,0) -- (1,0.5) -- (2,0) -- (3,0.5);
+  % h (closepath): -- cycle
+  \draw[fill=blue!20] (0,-1) -- (2,-1) -- (2,-2) -- (0,-2) -- cycle;
+  % re (rectangle)
+  \draw[fill=red!20] (4,-1) rectangle (6,-2);
+  % 组合: v + y (曲线)
+  \draw[thick] (8,0) to[out=0, in=180] (10,-1);
+\end{tikzpicture}
+
+\subsection*{Phase 4: 透明度 (alpha)}
+
+\begin{tikzpicture}
+  % fill opacity
+  \fill[red, fill opacity=0.5] (0,0) circle (1);
+  \fill[blue, fill opacity=0.5] (1,0) circle (1);
+  \fill[green!60!black, fill opacity=0.5] (0.5,-0.7) circle (1);
+
+  % draw opacity
+  \draw[red, line width=4pt, draw opacity=0.3] (4,0) circle (1);
+  \draw[blue, line width=4pt, draw opacity=0.3] (5,0) circle (1);
+
+  % 不同透明度级别
+  \foreach \i/\op in {0/0.1, 0.7/0.3, 1.4/0.5, 2.1/0.7, 2.8/0.9} {
+    \fill[black, fill opacity=\op] (\i+8,-0.5) rectangle (\i+8.5,0.5);
+  }
+\end{tikzpicture}
+
+\subsection*{Phase 5: 标记内容 (BMC/BDC/EMC — no-op) 和装饰}
+
+\begin{tikzpicture}
+  % BMC/BDC/EMC 测试: 带 layers(tikz 内部使用)
+  % decorations.markings (pathmorphing 也可能使用标记内容)
+  \draw[decorate, decoration={zigzag, amplitude=3pt}] (0,0) -- (5,0);
+  \draw[decorate, decoration={snake, amplitude=2pt}] (0,-0.5) -- (5,-0.5);
+
+  % decorations.markings
+  \draw[postaction={decorate, decoration={markings, mark=at position 0.5 with {\arrow{>}}}},
+        thick] (0,-1.5) -- (5,-1.5);
+  \draw[postaction={decorate, decoration={markings, mark=at position 0.3 with {\arrow{>}},
+                                         mark=at position 0.7 with {\arrow{<}}}},
+        thick] (0,-2) -- (5,-2);
+
+  % shapes
+  \node[draw, diamond, fill=yellow!20] at (8,0) {Diamond};
+  \node[draw, trapezium, fill=green!20] at (8,-1) {Trapezium};
+  \node[draw, cylinder, shape border rotate=90, fill=red!20] at (8,-2) {Cylinder};
+\end{tikzpicture}
+
+\subsection*{综合测试: 带文本的复杂图形}
+
+\begin{tikzpicture}
+  % 流程图像
+  \node[draw, rounded corners, fill=blue!10, line width=1.2pt]
+    (start) at (0,0) {Start};
+  \node[draw, diamond, fill=yellow!10, aspect=2, line width=1.2pt]
+    (check) at (3,-2) {Check?};
+  \node[draw, fill=green!10, line width=1.2pt]
+    (yes) at (6,-3.5) {Yes branch};
+  \node[draw, fill=red!10, line width=1.2pt]
+    (no) at (0,-3.5) {No branch};
+
+  \draw[->, thick, dash pattern=on 3pt off 2pt] (start) -- (check);
+  \draw[->, thick] (check) -- (yes) node[midway, right] {Yes};
+  \draw[->, thick] (check) -- (no) node[midway, left] {No};
+
+  % 带透明度的覆盖
+  \fill[blue!30, fill opacity=0.3] (-1,-5) rectangle (7,1);
+\end{tikzpicture}
+
+\subsection*{综合测试: 坐标系和标注}
+
+\begin{tikzpicture}[scale=1.2]
+  % 坐标轴
+  \draw[->, thick] (-1,0) -- (5,0) node[below] {$x$};
+  \draw[->, thick] (0,-1) -- (0,4) node[left] {$y$};
+
+  % 曲线
+  \draw[blue, thick, fill=blue!10, fill opacity=0.5]
+    (0,0) .. controls (1,2) and (3,3) .. (4,1) -- cycle;
+
+  % 标注点
+  \node[circle, fill=red, inner sep=1.5pt, label=above left:{$P$}] at (1,1.5) {};
+  \node[circle, fill=red, inner sep=1.5pt, label=right:{$Q$}] at (3,2) {};
+
+  % 控制点的虚线
+  \draw[dashed, dash pattern=on 2pt off 2pt, gray] (0,0) -- (1,2);
+  \draw[dashed, dash pattern=on 2pt off 2pt on 6pt off 3pt, gray] (1,2) -- (3,3);
+  \draw[dashed, dash pattern=on 3pt off 1.5pt on 1pt off 1.5pt, gray] (3,3) -- (4,1);
+\end{tikzpicture}
+
+\end{document}
