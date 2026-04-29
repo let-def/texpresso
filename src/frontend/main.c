@@ -1310,7 +1310,7 @@ bool texpresso_main(struct persistent_state *ps)
     {
       // Delegate Input to Engine
       DocCoord dc = viewer_handle_event(ctx, &ui->viewer, &ps->pcoll, &e, ps->window);
-      if (dc.page_index > 0)
+      if (dc.page_index >= 0)
       {
         float f = send(scale_factor, ui->eng);
         fz_buffer *buf;
@@ -1367,7 +1367,7 @@ bool texpresso_main(struct persistent_state *ps)
             break;
 
           case SDLK_i:
-            if ((SDL_GetModState() & KMOD_SHIFT))
+            if (e.key.keysym.mod & KMOD_LSHIFT)
               ui->theme.themed = !ui->theme.themed;
             else
             {

@@ -496,10 +496,8 @@ DocCoord viewer_handle_event(fz_context *ctx, Viewer *vwr, PageCollection *pcoll
     SDL_SetRelativeMouseMode(SDL_FALSE);
 
     // Check if this was a short-click (single click, not drag) to determine DocCoord
-    if (vwr->click_pending && SDL_GetTicks() - vwr->click_timestamp < 100 &&
-        ev->button.button == SDL_BUTTON_LEFT &&
-        ev->button.clicks == 1 &&
-        abs(ev->button.x - vwr->click_x) < 10 &&
+    if (ev->button.button == SDL_BUTTON_LEFT && ev->button.clicks == 1 &&
+        vwr->click_pending && abs(ev->button.x - vwr->click_x) < 10 &&
         abs(ev->button.y - vwr->click_y) < 10)
       dc = viewer_screen_to_doc(ctx, vwr, pcoll, ev->button.x, ev->button.y);
 
