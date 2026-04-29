@@ -1062,9 +1062,11 @@ static void interpret_command(struct persistent_state *ps,
       int page = cmd.synctex_backward.page;
       float x = cmd.synctex_backward.x;
       float y = cmd.synctex_backward.y;
-      // Webview sends coordinates in TeX points (as used by pageWidth/pageHeight).
-      // synctex_scan expects TeX points too, so pass them directly.
-      synctex_scan(ps->ctx, stx, buf, ps->doc_path, page, x, y);
+      // Webview sends coordinates in TeX points.
+      // synctex_scan expects DVI internal units, so divide by scale_factor.
+      float f = send(scale_factor, ui->eng);
+      if (f == 0) f = 1;
+      synctex_scan(ps->ctx, stx, buf, ps->doc_path, page, x / f, y / f);
     }
     break;
 
@@ -1075,10 +1077,20 @@ static void interpret_command(struct persistent_state *ps,
 
     case EDIT_GO_END:
     {
-      // Advance engine to discover all pages (up to 500 steps for long docs with includes)
-      for (int i = 0; i < 500 && send(get_status, ui->eng) == DOC_RUNNING; i++) {
+      // Advance engine with time limit to discover all pages (handles long docs with includes)
+      struct timespec tstart, tcurr;
+      clock_gettime(CLOCK_MONOTONIC, &tstart);
+      int prev_count = send(page_count, ui->eng);
+      for (int i = 0; i < 5000 && send(get_status, ui->eng) == DOC_RUNNING; i++) {
         if (!send(step, ui->eng, ps->ctx, false))
           break;
+        // Check time every 100 steps, limit to 1 second total
+        if (i % 100 == 0) {
+          clock_gettime(CLOCK_MONOTONIC, &tcurr);
+          long elapsed_ms = (tcurr.tv_sec - tstart.tv_sec) * 1000 +
+                            (tcurr.tv_nsec - tstart.tv_nsec) / 1000000;
+          if (elapsed_ms > 1000) break;
+        }
       }
       int count = send(page_count, ui->eng);
       if (count > 0)
@@ -1090,10 +1102,18 @@ static void interpret_command(struct persistent_state *ps,
     case EDIT_SET_PAGE:
     {
       int page = cmd.set_page.page;
-      // Advance engine to discover enough pages (up to 500 steps for long docs)
-      for (int i = 0; i < 500 && send(page_count, ui->eng) <= page && send(get_status, ui->eng) == DOC_RUNNING; i++) {
+      // Advance engine with time limit to discover the requested page
+      struct timespec tstart, tcurr;
+      clock_gettime(CLOCK_MONOTONIC, &tstart);
+      for (int i = 0; i < 5000 && send(page_count, ui->eng) <= page && send(get_status, ui->eng) == DOC_RUNNING; i++) {
         if (!send(step, ui->eng, ps->ctx, false))
           break;
+        if (i % 100 == 0) {
+          clock_gettime(CLOCK_MONOTONIC, &tcurr);
+          long elapsed_ms = (tcurr.tv_sec - tstart.tv_sec) * 1000 +
+                            (tcurr.tv_nsec - tstart.tv_nsec) / 1000000;
+          if (elapsed_ms > 1000) break;
+        }
       }
       int count = send(page_count, ui->eng);
       if (page >= 0 && page < count)
