@@ -2,22 +2,17 @@
 
 #include <float.h>
 #include <math.h>
-#include <mupdf/fitz/geometry.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
-#include "mupdf/fitz/structured-text.h"
 
-/* ────────── */
-/* WordHasher */
-/* ────────── */
+/* ──────────────────────────────────────────────────────────────
+ * 1. Core Hash Utilities
+ * ────────────────────────────────────────────────────────────── */
 
-typedef union
+bool WordHash_valid(const WordHash hash)
 {
-  uint8_t hash[8];
-  uint64_t code;
-} WordHash;
+  return hash.code > 0;
+}
 
 int WordHash_match(const WordHash a, const WordHash b)
 {
@@ -31,144 +26,132 @@ int WordHash_match(const WordHash a, const WordHash b)
   return acc;
 }
 
-bool WordHash_valid(const WordHash a)
+/* ──────────────────────────────────────────────────────────────
+ * 2. WordHasher Implementation
+ * ────────────────────────────────────────────────────────────── */
+
+void WordHasher_init(WordHasher *hasher)
 {
-  return a.code > 0;
+  *hasher = (WordHasher){
+      0,
+  };
 }
 
-/* ────────── */
-/* WordHasher */
-/* ────────── */
-
-typedef struct
+void WordHasher_push(WordHasher *hasher, uint32_t cp)
 {
-  WordHash hash;
-  int prefix;
-} WordHasher;
-
-void WordHasher_init(WordHasher *c)
-{
-  *c = (WordHasher){0,};
-}
-
-void WordHasher_push(WordHasher *c, uint32_t cp)
-{
-  while (c->prefix < 4 && cp)
+  /* Fill first 4 bytes with the initial codepoint (little-endian) */
+  while (hasher->prefix < 4 && cp)
   {
-    c->hash.hash[c->prefix] = cp & 0xFF;
+    hasher->hash.hash[hasher->prefix] = cp & 0xFF;
     cp >>= 8;
-    c->prefix++;
+    hasher->prefix++;
   }
+
+  /* Shift-XOR register for subsequent bytes */
   while (cp)
   {
-    uint8_t h4 = c->hash.hash[4];
-    c->hash.hash[4] = ((h4 << 1) | (h4 >> 7)) ^ c->hash.hash[5];
-    c->hash.hash[5] = c->hash.hash[6];
-    c->hash.hash[6] = c->hash.hash[7];
-    c->hash.hash[7] = cp & 0xFF;
+    uint8_t h4 = hasher->hash.hash[4];
+    hasher->hash.hash[4] = ((h4 << 1) | (h4 >> 7)) ^ hasher->hash.hash[5];
+    hasher->hash.hash[5] = hasher->hash.hash[6];
+    hasher->hash.hash[6] = hasher->hash.hash[7];
+    hasher->hash.hash[7] = cp & 0xFF;
     cp >>= 8;
   }
 }
 
-/* Emit hash and reset state */
-WordHash WordHasher_flush(WordHasher *c)
+WordHash WordHasher_flush(WordHasher *hasher)
 {
-  WordHash result = c->hash;
-  *c = (WordHasher){0,};
+  WordHash result = hasher->hash;
+  *hasher = (WordHasher){
+      0,
+  };
   return result;
 }
 
-/* ─────────── */
-/* Utf8Decoder */
-/* ─────────── */
+/* ──────────────────────────────────────────────────────────────
+ * 3. Utf8Decoder Implementation
+ * ────────────────────────────────────────────────────────────── */
 
-typedef struct
+void Utf8Decoder_init(Utf8Decoder *decoder)
 {
-  uint32_t cp;
-  int state;    // 0 = idle, >0 = bytes remaining to complete sequence
-  int seq_len;  // 2, 3, or 4 (only valid when state > 0)
-} Utf8Decoder;
-
-/* Initialize decoder state */
-void Utf8Decoder_init(Utf8Decoder *d)
-{
-  d->cp = 0;
-  d->state = 0;
-  d->seq_len = 0;
+  decoder->cp = 0;
+  decoder->state = 0;
+  decoder->seq_len = 0;
 }
 
-/*
- * Feed a single UTF-8 byte to the decoder.
- * Returns:
- *   > 0 : Valid codepoint ready
- *   -1  : Incomplete sequence (waiting for more bytes)
- *    0  : Invalid sequence (flushed)
- */
-int Utf8Decoder_next(Utf8Decoder *d, uint8_t b)
+int Utf8Decoder_next(Utf8Decoder *decoder, uint8_t b)
 {
-  if (d->state == 0)
+  if (decoder->state == 0)
   {
     /* Start of a new sequence */
     if (b < 0x80)
       return b; /* 1-byte ASCII */
     else if (b >= 0xC2 && b < 0xE0)
     {
-      d->cp = b & 0x1F;
-      d->state = 1;
-      d->seq_len = 2;
+      decoder->cp = b & 0x1F;
+      decoder->state = 1;
+      decoder->seq_len = 2;
     }
     else if (b >= 0xE0 && b < 0xF0)
     {
-      d->cp = b & 0x0F;
-      d->state = 2;
-      d->seq_len = 3;
+      decoder->cp = b & 0x0F;
+      decoder->state = 2;
+      decoder->seq_len = 3;
     }
     else if (b >= 0xF0 && b <= 0xF4)
     {
-      d->cp = b & 0x07;
-      d->state = 3;
-      d->seq_len = 4;
+      decoder->cp = b & 0x07;
+      decoder->state = 3;
+      decoder->seq_len = 4;
     }
     else
-      return 0; /* Invalid start byte (0x80-0xBF, 0xC0-0xC1, 0xF5-0xFF) */
-    return -1; /* Incomplete */
+      return 0; /* Invalid start byte */
+    return -1;  /* Incomplete */
   }
+
   /* Expecting continuation byte (10xxxxxx) */
-  else if (b < 0x80 || b >= 0xC0)
+  if (b < 0x80 || b >= 0xC0)
   {
-    d->state = 0;
+    decoder->state = 0;
     return 0; /* Invalid continuation → flush */
   }
-  else
-  {
-    d->cp = (d->cp << 6) | (b & 0x3F);
-    d->state--;
 
-    if (d->state == 0)
-    {
-      /* Sequence complete → validate against RFC 3629 */
-      if (d->seq_len == 2 && d->cp < 0x80)
-        return 0; /* Overlong 2-byte */
-      if (d->seq_len == 3 &&
-          (d->cp < 0x800 || (d->cp >= 0xD800 && d->cp <= 0xDFFF)))
-        return 0; /* Overlong 3-byte or surrogate */
-      if (d->seq_len == 4 && (d->cp < 0x10000 || d->cp > 0x10FFFF))
-        return 0; /* Overlong 4-byte or out of range */
-      return d->cp;
-    }
-    return -1; /* Still incomplete */
+  decoder->cp = (decoder->cp << 6) | (b & 0x3F);
+  decoder->state--;
+
+  if (decoder->state == 0)
+  {
+    /* Sequence complete → validate against RFC 3629 */
+    if (decoder->seq_len == 2 && decoder->cp < 0x80)
+      return 0; /* Overlong 2-byte */
+    if (decoder->seq_len == 3 &&
+        (decoder->cp < 0x800 ||
+         (decoder->cp >= 0xD800 && decoder->cp <= 0xDFFF)))
+      return 0; /* Overlong 3-byte or surrogate */
+    if (decoder->seq_len == 4 &&
+        (decoder->cp < 0x10000 || decoder->cp > 0x10FFFF))
+      return 0; /* Overlong 4-byte or out of range */
+    return decoder->cp;
   }
+  return -1; /* Still incomplete */
 }
 
-/* ─────────────── */
-/* Unicode helpers */
-/* ─────────────── */
+/* ──────────────────────────────────────────────────────────────
+ * 4. Unicode Helpers & Internal Iteration Engine
+ * ────────────────────────────────────────────────────────────── */
 
+/**
+ * @brief Determines if a codepoint is a standalone semantic unit (symbol, CJK,
+ * etc.)
+ * @return 1 if non-word char, 0 if alphabetic/numeric
+ */
 static inline int is_non_word_char(uint32_t cp)
 {
   if (cp < 0x80)
     return !((cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') ||
              (cp >= '0' && cp <= '9'));
+  /* Latin Extended, Greek, Cyrillic, Arabic, Devanagari are treated as word
+   * chars */
   if (cp >= 0x00C0 && cp <= 0x024F)
     return 0;
   if (cp >= 0x0370 && cp <= 0x03FF)
@@ -182,57 +165,31 @@ static inline int is_non_word_char(uint32_t cp)
   return 1;
 }
 
-typedef struct {
-  WordHash *words;
-  int length, capacity;
-} WordHashes;
-
-void WordHashes_init(WordHashes *wh)
-{
-  *wh = (WordHashes){0,};
-}
-
-void WordHashes_finalize(WordHashes *wh)
-{
-  free(wh->words);
-  *wh = (WordHashes){0,};
-}
-
-void WordHashes_clear(WordHashes *wh)
-{
-  wh->length = 0;
-}
-
-void WordHashes_append(WordHashes *whs, WordHash wh)
-{
-  if (whs->length == whs->capacity)
-  {
-    int cap = whs->capacity ? whs->capacity * 2 : 32;
-    whs->words = realloc(whs->words, sizeof(WordHash) * cap);
-    if (!whs->words)
-      abort();
-  }
-  whs->words[whs->length++] = wh;
-}
-
+/**
+ * @brief Internal callback wrapper that validates hash before invocation
+ */
 static bool iter_word(
     void *env,
     fz_stext_char *first,
     fz_stext_char *last,
     WordHash wh,
-    bool (*fn)(void *, fz_stext_char *first, fz_stext_char *last, WordHash wh))
+    bool (*fn)(void *, fz_stext_char *, fz_stext_char *, WordHash))
 {
   return WordHash_valid(wh) && fn(env, first, last, wh);
 }
 
+/**
+ * @brief Core page traversal engine. Walks DFS order, respects boundaries,
+ * and invokes a callback for each recognized word/semantic unit.
+ */
 static bool WordHash_iter_page(
     fz_stext_page *page,
-    bool (*fn)(void *, fz_stext_char *first, fz_stext_char *last, WordHash wh),
+    bool (*fn)(void *, fz_stext_char *, fz_stext_char *, WordHash),
     void *env)
 {
   WordHasher hasher;
   WordHasher_init(&hasher);
-  fz_stext_char *first, *last;
+  fz_stext_char *first = NULL, *last = NULL;
 
   for (fz_stext_page_block_iterator it =
            fz_stext_page_block_iterator_begin_dfs(page);
@@ -245,9 +202,11 @@ static bool WordHash_iter_page(
     for (fz_stext_line *line = it.block->u.t.first_line; line;
          line = line->next)
     {
+      bool unterminated = false;
       for (fz_stext_char *ch = line->first_char; ch; ch = ch->next)
       {
         uint32_t cp = ch->c;
+
         if (fz_is_unicode_space_equivalent(cp) || fz_is_unicode_whitespace(cp))
         {
           if (iter_word(env, first, last, WordHasher_flush(&hasher), fn))
@@ -265,8 +224,13 @@ static bool WordHash_iter_page(
         }
         else if (fz_is_unicode_hyphen(cp))
         {
+          /* Hyphens are ignored */
+          /* Hyphens at end of line causes the word to continue on next line */
           if (!ch->next)
-            return false;
+          {
+            unterminated = true;
+            break;
+          }
         }
         else
         {
@@ -276,44 +240,92 @@ static bool WordHash_iter_page(
           WordHasher_push(&hasher, cp);
         }
       }
-      if (iter_word(env, first, last, WordHasher_flush(&hasher), fn))
-        return true;
+      /* Flush line boundary */
+      if (!unterminated)
+        if (iter_word(env, first, last, WordHasher_flush(&hasher), fn))
+          return true;
     }
   }
+  /* Flush final word (if page finished on hyphen) */
   return iter_word(env, first, last, WordHasher_flush(&hasher), fn);
 }
 
-static bool append_word(void *env, fz_stext_char *first, fz_stext_char *last, WordHash wh)
+/* ──────────────────────────────────────────────────────────────
+ * 5. Dynamic Hash Array Implementation
+ * ────────────────────────────────────────────────────────────── */
+
+void WordHashes_init(WordHashes *arr)
+{
+  *arr = (WordHashes){
+      0,
+  };
+}
+
+void WordHashes_finalize(WordHashes *arr)
+{
+  free(arr->words);
+  *arr = (WordHashes){
+      0,
+  };
+}
+
+void WordHashes_clear(WordHashes *arr)
+{
+  arr->length = 0;
+}
+
+void WordHashes_append(WordHashes *arr, WordHash hash)
+{
+  if (arr->length == arr->capacity)
+  {
+    int cap = arr->capacity ? arr->capacity * 2 : 32;
+    arr->words = realloc(arr->words, sizeof(WordHash) * cap);
+    if (!arr->words)
+      abort();
+  }
+  arr->words[arr->length++] = hash;
+}
+
+static bool append_word(void *env,
+                        fz_stext_char *first,
+                        fz_stext_char *last,
+                        WordHash wh)
 {
   (void)first;
   (void)last;
-  WordHashes *whs = env;
-  WordHashes_append(whs, wh);
+  WordHashes *arr = env;
+  WordHashes_append(arr, wh);
   return false;
 }
 
-void WordHashes_append_page(WordHashes *whs, fz_stext_page *page)
+void WordHashes_append_page(WordHashes *arr, fz_stext_page *page)
 {
-  WordHash_iter_page(page, append_word, whs);
+  WordHash_iter_page(page, append_word, arr);
 }
 
-struct counter {
+/* ──────────────────────────────────────────────────────────────
+ * 6. Index ↔ Coordinate Mapping
+ * ────────────────────────────────────────────────────────────── */
+
+struct counter
+{
   int count;
   fz_point *first, *last;
 };
 
-static bool iter_counter(void *env, fz_stext_char *first, fz_stext_char *last, WordHash wh)
+static bool iter_counter(void *env,
+                         fz_stext_char *first,
+                         fz_stext_char *last,
+                         WordHash wh)
 {
-  struct counter *counter = env;
-
-  if (counter->count > 0)
+  struct counter *ctr = env;
+  if (ctr->count > 0)
   {
-    counter->count--;
+    ctr->count--;
     return false;
   }
-
-  *counter->first = first->origin;
-  *counter->last = last->origin;
+  *ctr->first = first->origin;
+  *ctr->last = last->origin;
   return true;
 }
 
@@ -322,15 +334,12 @@ bool WordHash_page_index_to_coord(fz_stext_page *page,
                                   fz_point *first,
                                   fz_point *last)
 {
-  struct counter counter = {
-      .count = index,
-      .first = first,
-      .last = last,
-  };
-  return WordHash_iter_page(page, iter_counter, &counter);
+  struct counter ctr = {.count = index, .first = first, .last = last};
+  return WordHash_iter_page(page, iter_counter, &ctr);
 }
 
-struct finder {
+struct finder
+{
   int index;
   int best;
   fz_point target;
@@ -350,34 +359,30 @@ static bool iter_finder_point(struct finder *finder, fz_point point)
     finder->sqdist = sqdist;
     return true;
   }
-
   return false;
 }
 
-static bool iter_finder(void *env, fz_stext_char *first, fz_stext_char *last, WordHash wh)
+static bool iter_finder(void *env,
+                        fz_stext_char *first,
+                        fz_stext_char *last,
+                        WordHash wh)
 {
   struct finder *finder = env;
-
   bool a = first && iter_finder_point(finder, first->origin);
   bool b = last && iter_finder_point(finder, last->origin);
 
   if (a || b)
     finder->index = finder->best;
-
   finder->best++;
-
   return false;
 }
 
-int WordHash_page_coord_to_index(fz_stext_page *page, fz_point point, fz_point *hit)
+int WordHash_page_coord_to_index(fz_stext_page *page,
+                                 fz_point point,
+                                 fz_point *hit)
 {
   struct finder finder = {
-      .index = 0,
-      .best = -1,
-      .hit = hit,
-      .target = point,
-      .sqdist = INFINITY,
-  };
+      .index = 0, .best = -1, .hit = hit, .target = point, .sqdist = INFINITY};
   WordHash_iter_page(page, iter_finder, &finder);
   return finder.best;
 }
