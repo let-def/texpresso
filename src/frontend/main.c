@@ -1062,20 +1062,9 @@ static void interpret_command(struct persistent_state *ps,
       int page = cmd.synctex_backward.page;
       float x = cmd.synctex_backward.x;
       float y = cmd.synctex_backward.y;
-      float f = send(scale_factor, ui->eng);
-      synctex_scan(ps->ctx, stx, buf, ps->doc_path, page, x / f, y / f);
-    }
-    break;
-
-    case EDIT_SET_PAGE:
-    {
-      int page = cmd.set_page.page;
-      int count = send(page_count, ui->eng);
-      if (page >= 0 && page < count)
-      {
-        ui->page = page;
-        schedule_event(RELOAD_EVENT);
-      }
+      // Webview sends coordinates in TeX points (as used by pageWidth/pageHeight).
+      // synctex_scan expects TeX points too, so pass them directly.
+      synctex_scan(ps->ctx, stx, buf, ps->doc_path, page, x, y);
     }
     break;
 
@@ -1086,10 +1075,32 @@ static void interpret_command(struct persistent_state *ps,
 
     case EDIT_GO_END:
     {
+      // Advance engine to discover all pages (up to 500 steps for long docs with includes)
+      for (int i = 0; i < 500 && send(get_status, ui->eng) == DOC_RUNNING; i++) {
+        if (!send(step, ui->eng, ps->ctx, false))
+          break;
+      }
       int count = send(page_count, ui->eng);
       if (count > 0)
         ui->page = count - 1;
       schedule_event(RELOAD_EVENT);
+    }
+    break;
+
+    case EDIT_SET_PAGE:
+    {
+      int page = cmd.set_page.page;
+      // Advance engine to discover enough pages (up to 500 steps for long docs)
+      for (int i = 0; i < 500 && send(page_count, ui->eng) <= page && send(get_status, ui->eng) == DOC_RUNNING; i++) {
+        if (!send(step, ui->eng, ps->ctx, false))
+          break;
+      }
+      int count = send(page_count, ui->eng);
+      if (page >= 0 && page < count)
+      {
+        ui->page = page;
+        schedule_event(RELOAD_EVENT);
+      }
     }
     break;
 
@@ -1215,7 +1226,7 @@ bool texpresso_main(struct persistent_state *ps)
   ui->mouse_status = UI_MOUSE_NONE;
   ui->last_mouse_x = -1000;
   ui->last_mouse_y = -1000;
-  ui->last_click_ticks = SDL_GetTicks() - 200000000;
+  ui->last_click_ticks = SDL_GetTicks() - 50000000;
 
   bool quit = 0, reload = 0;
   send(step, ui->eng, ps->ctx, true);
@@ -1311,21 +1322,28 @@ bool texpresso_main(struct persistent_state *ps)
       {
         int w = ps->render_width;
         int h = ps->render_height;
-        if (w == 0 || h == 0)
+        int pw = 0, ph = 0;
+        // Always get page dimensions from display list for accurate SyncTeX coords
         {
           fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
           if (dl)
           {
             fz_rect bounds = fz_bound_display_list(ps->ctx, dl);
-            w = (int)(bounds.x1 - bounds.x0);
-            h = (int)(bounds.y1 - bounds.y0);
+            pw = (int)(bounds.x1 - bounds.x0);
+            ph = (int)(bounds.y1 - bounds.y0);
             fz_drop_display_list(ps->ctx, dl);
           }
-          if (w == 0) w = 612;
-          if (h == 0) h = 792;
+        }
+        if (pw == 0) pw = 612;
+        if (ph == 0) ph = 792;
+        if (w == 0 || h == 0)
+        {
+          w = pw * 3;
+          h = ph * 3;
         }
         webview_output_page(ps->ctx, ui->eng, ui->page, after_page_count,
-                            w, h, ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode);
+                            w, h, pw, ph,
+                            ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode);
       }
 
       if (!has_event)
@@ -1353,33 +1371,38 @@ bool texpresso_main(struct persistent_state *ps)
         if (page != ui->page)
         {
           ui->page = page;
-          display_page(ps, ui);
+          if (ps->webview_mode)
+            schedule_event(RELOAD_EVENT);
+          else
+            display_page(ps, ui);
         }
 
-        // FIXME: Scroll to point
-        float f = send(scale_factor, ui->eng);
-        fz_point p = fz_make_point(f * x, f * y);
-        fz_point pt = txp_renderer_document_to_screen(ps->ctx, ui->doc_renderer, p);
-        fprintf(stderr, "[synctex forward] position on screen: (%.02f, %.02f)\n",
-                pt.x, pt.y);
-        int w, h;
-        txp_renderer_screen_size(ps->ctx, ui->doc_renderer, &w, &h);
-        float margin_lo = h / 4.0;
-        float margin_hi = h / 3.0;
+        if (!ps->webview_mode && ui->doc_renderer) {
+          // Scroll to point (SDL mode only)
+          float f = send(scale_factor, ui->eng);
+          fz_point p = fz_make_point(f * x, f * y);
+          fz_point pt = txp_renderer_document_to_screen(ps->ctx, ui->doc_renderer, p);
+          fprintf(stderr, "[synctex forward] position on screen: (%.02f, %.02f)\n",
+                  pt.x, pt.y);
+          int w, h;
+          txp_renderer_screen_size(ps->ctx, ui->doc_renderer, &w, &h);
+          float margin_lo = h / 4.0;
+          float margin_hi = h / 3.0;
 
-        txp_renderer_config *config =
-            txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+          txp_renderer_config *config =
+              txp_renderer_get_config(ps->ctx, ui->doc_renderer);
 
-        float delta = 0.0;
-        if (pt.y < margin_lo)
-          delta = - pt.y + margin_hi;
-        else if (pt.y >= h - margin_lo)
-          delta = h - pt.y - margin_hi;
-        fprintf(stderr, "[synctex forward] pan.y = %.02f + %.02f = %.02f\n",
-                config->pan.y, delta, config->pan.y + delta);
-        config->pan.y += delta;
-        if (delta != 0.0)
-          schedule_event(RENDER_EVENT);
+          float delta = 0.0;
+          if (pt.y < margin_lo)
+            delta = - pt.y + margin_hi;
+          else if (pt.y >= h - margin_lo)
+            delta = h - pt.y - margin_hi;
+          fprintf(stderr, "[synctex forward] pan.y = %.02f + %.02f = %.02f\n",
+                  config->pan.y, delta, config->pan.y + delta);
+          config->pan.y += delta;
+          if (delta != 0.0)
+            schedule_event(RENDER_EVENT);
+        }
       }
     }
 
@@ -1387,12 +1410,11 @@ bool texpresso_main(struct persistent_state *ps)
     {
       txp_renderer_set_scale_factor(ps->ctx, ui->doc_renderer,
                                     get_scale_factor(ui->window));
-    }
-    txp_renderer_config *config =
-        txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+      txp_renderer_config *config =
+          txp_renderer_get_config(ps->ctx, ui->doc_renderer);
 
-    // Process event (SDL events only in non-webview mode)
-    if (!ps->webview_mode) switch (e.type)
+      // Process event (SDL events only in non-webview mode)
+      switch (e.type)
     {
       case SDL_QUIT:
         quit = 1;
@@ -1512,7 +1534,8 @@ bool texpresso_main(struct persistent_state *ps)
             break;
         }
         break;
-    }  // end of `if (!ps->webview_mode) switch (e.type)`
+    }  // end of switch
+      }  // end of if (!ps->webview_mode)
 
     if (e.type == ps->custom_event)
     {
@@ -1564,21 +1587,28 @@ bool texpresso_main(struct persistent_state *ps)
             {
               int w = ps->render_width;
               int h = ps->render_height;
-              if (w == 0 || h == 0)
+              int pw = 0, ph = 0;
+              // Always get page dimensions from display list for accurate SyncTeX coords
               {
                 fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
                 if (dl)
                 {
                   fz_rect bounds = fz_bound_display_list(ps->ctx, dl);
-                  w = (int)(bounds.x1 - bounds.x0);
-                  h = (int)(bounds.y1 - bounds.y0);
+                  pw = (int)(bounds.x1 - bounds.x0);
+                  ph = (int)(bounds.y1 - bounds.y0);
                   fz_drop_display_list(ps->ctx, dl);
                 }
-                if (w == 0) w = 612;
-                if (h == 0) h = 792;
+              }
+              if (pw == 0) pw = 612;
+              if (ph == 0) ph = 792;
+              if (w == 0 || h == 0)
+              {
+                w = pw * 3;
+                h = ph * 3;
               }
               webview_output_page(ps->ctx, ui->eng, ui->page, page_count,
-                                  w, h, ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode);
+                                  w, h, pw, ph,
+                                  ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode);
             }
             else
             {
