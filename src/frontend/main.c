@@ -155,10 +155,6 @@ static int repaint_on_resize(void *data, SDL_Event *event)
 
 static bool need_advance(fz_context *ctx, ui_state *ui)
 {
-  // In webview mode, keep advancing to preload all pages
-  if (pstate && pstate->webview_mode)
-    return (send(get_status, ui->eng) == DOC_RUNNING);
-
   int need = send(page_count, ui->eng) <= ui->page;
 
   if (!need)
@@ -186,13 +182,11 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
   clock_gettime(CLOCK_MONOTONIC, &start);
 
   int steps = 10;
-  int steps_done = 0;
   while (need)
   {
     if (!send(step, ui->eng, ctx, false))
       break;
 
-    steps_done++;
     steps -= 1;
     need = need_advance(ctx, ui);
 
@@ -211,8 +205,7 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
         break;
     }
   }
-  // In webview mode, if engine is blocked (0 steps), stop advancing
-  return need && steps_done > 0;
+  return need;
 }
 
 static fz_point get_scale_factor(SDL_Window *window)
@@ -1250,6 +1243,20 @@ bool texpresso_main(struct persistent_state *ps)
     render(ps->ctx, ui);
   schedule_event(RELOAD_EVENT);
 
+  // Preload all pages in webview mode: advance engine until blocked or terminated
+  if (ps->webview_mode)
+  {
+    int preload_steps = 0;
+    while (send(get_status, ui->eng) == DOC_RUNNING && preload_steps < 100000)
+    {
+      if (!send(step, ui->eng, ps->ctx, false))
+        break;
+      preload_steps++;
+    }
+    fprintf(stderr, "[main] preload complete: %d steps, %d pages\n",
+            preload_steps, send(page_count, ui->eng));
+  }
+
   struct repaint_on_resize_env repaint_on_resize_env;
   if (!ps->webview_mode)
   {
@@ -1366,19 +1373,8 @@ bool texpresso_main(struct persistent_state *ps)
 
       if (!has_event)
       {
-        if (ps->webview_mode)
-        {
-          // Keep advancing to preload pages, but only skip event
-          // handling when new pages were actually discovered.
-          // Otherwise fall through to process RELOAD_EVENT.
-          if (after_page_count > before_page_count && advance)
-            continue;
-        }
-        else if (advance)
-        {
+        if (advance)
           continue;
-        }
-
         if (!stdin_eof)
           wakeup_poll_thread(poll_stdin_pipe, 'c');
         has_event = SDL_WaitEvent(&e);
