@@ -155,6 +155,10 @@ static int repaint_on_resize(void *data, SDL_Event *event)
 
 static bool need_advance(fz_context *ctx, ui_state *ui)
 {
+  // In webview mode, keep advancing to preload all pages
+  if (pstate && pstate->webview_mode)
+    return (send(get_status, ui->eng) == DOC_RUNNING);
+
   int need = send(page_count, ui->eng) <= ui->page;
 
   if (!need)
@@ -182,11 +186,13 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
   clock_gettime(CLOCK_MONOTONIC, &start);
 
   int steps = 10;
+  int steps_done = 0;
   while (need)
   {
     if (!send(step, ui->eng, ctx, false))
       break;
 
+    steps_done++;
     steps -= 1;
     need = need_advance(ctx, ui);
 
@@ -205,7 +211,8 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
         break;
     }
   }
-  return need;
+  // In webview mode, if engine is blocked (0 steps), stop advancing
+  return need && steps_done > 0;
 }
 
 static fz_point get_scale_factor(SDL_Window *window)
@@ -1330,8 +1337,8 @@ bool texpresso_main(struct persistent_state *ps)
       if (ui->page >= before_page_count && ui->page < after_page_count)
         schedule_event(RELOAD_EVENT);
 
-      // Immediate render for real-time editing feedback
-      if (ps->webview_mode && ui->page < after_page_count && (had_changes || advance))
+      // Immediate render for real-time editing feedback (only on content changes, not during preload)
+      if (ps->webview_mode && ui->page < after_page_count && had_changes)
       {
         int w = ps->render_width;
         int h = ps->render_height;
