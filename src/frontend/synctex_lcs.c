@@ -386,3 +386,129 @@ int WordHash_page_coord_to_index(fz_stext_page *page,
   WordHash_iter_page(page, iter_finder, &finder);
   return finder.best;
 }
+
+/* ──────────────────────────────────────────────────────────────
+ * 7. Weighted-LCS for alignement of WordHashes
+ * ────────────────────────────────────────────────────────────── */
+
+/* ──────────────────────────────────────────────────────────────
+ * Forward Weighted-LCS: Aligns a[0..n-1] with b[0..m-1]
+ * Returns: heap-allocated array of size (m+1). Caller must free().
+ *          Returns NULL on allocation failure.
+ * ────────────────────────────────────────────────────────────── */
+static int *wlcs_forward(const WordHash *a, int n, const WordHash *b, int m)
+{
+  if (n < 0 || m < 0)
+    return NULL;
+
+  int *prev = calloc(sizeof(int), m + 1);
+  int *curr = calloc(sizeof(int), m + 1);
+  if (!prev || !curr)
+  {
+    free(prev);
+    free(curr);
+    return NULL;
+  }
+
+  for (int i = 1; i <= n; i++)
+  {
+    curr[0] = 0; /* Boundary: empty b prefix */
+    for (int j = 1; j <= m; j++)
+    {
+      int score = WordHash_match(a[i - 1], b[j - 1]);
+      int diag = prev[j - 1] + score;
+      int up = prev[j];
+      int left = curr[j - 1];
+      curr[j] = (diag >= up) ? ((diag >= left) ? diag : left)
+                             : ((up >= left) ? up : left);
+    }
+    /* Swap buffers: prev becomes the new result row */
+    int *tmp = prev;
+    prev = curr;
+    curr = tmp;
+  }
+
+  free(curr); /* curr holds the discarded previous row */
+  return prev;
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * Backward Weighted-LCS: Aligns a[0..n-1] with b[0..m-1] in reverse
+ * Returns: heap-allocated array of size (m+1). Caller must free().
+ *          Returns NULL on allocation failure.
+ * ────────────────────────────────────────────────────────────── */
+static int *wlcs_backward(const WordHash *a, int n, const WordHash *b, int m)
+{
+  if (n < 0 || m < 0)
+    return NULL;
+
+  int *prev = calloc(sizeof(int), m + 1);
+  int *curr = calloc(sizeof(int), m + 1);
+  if (!prev || !curr)
+  {
+    free(prev);
+    free(curr);
+    return NULL;
+  }
+
+  for (int i = n - 1; i >= 0; i--)
+  {
+    curr[m] = 0; /* Boundary: empty b suffix */
+    for (int j = m - 1; j >= 0; j--)
+    {
+      int score = WordHash_match(a[i], b[j]);
+      int diag = prev[j + 1] + score;
+      int up = prev[j];       /* Skip b[j] */
+      int left = curr[j + 1]; /* Skip a[i] */
+      curr[j] = (diag >= up) ? ((diag >= left) ? diag : left)
+                             : ((up >= left) ? up : left);
+    }
+    int *tmp = prev;
+    prev = curr;
+    curr = tmp;
+  }
+
+  free(curr);
+  return prev;
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * Finds the optimal split point in b that maximizes combined
+ * forward + backward similarity scores relative to a[a_index].
+ * Memory-safe: allocates and frees DP rows internally.
+ * ────────────────────────────────────────────────────────────── */
+int WordHash_align(const WordHash *a,
+                   size_t a_len,
+                   size_t a_index,
+                   const WordHash *b,
+                   size_t b_len)
+{
+  if (a_index < 0 || a_index > a_len || b_len < 0)
+    return -1;
+
+  int *fwd = wlcs_forward(a, a_index, b, b_len);
+  int *bwd = wlcs_backward(a + a_index, a_len - a_index, b, b_len);
+
+  if (!fwd || !bwd)
+  {
+    free(fwd);
+    free(bwd);
+    return -1;
+  }
+
+  size_t best_j = 0;
+  int best_score = -1;
+  for (size_t j = 0; j <= b_len; j++)
+  {
+    int score = fwd[j] + bwd[j];
+    if (score > best_score)
+    {
+      best_score = score;
+      best_j = j;
+    }
+  }
+
+  free(fwd);
+  free(bwd);
+  return best_j;
+}

@@ -16,7 +16,7 @@
  */
 
 /* ──────────────────────────────────────────────────────────────
- * 1. Core Hash Type & Utilities
+ * 1. WordHash matching and alignement
  * ────────────────────────────────────────────────────────────── */
 
 /**
@@ -43,6 +43,29 @@ bool WordHash_valid(const WordHash hash);
  * @return 10 for exact match, 0-8 for partial match (number of equal bytes).
  */
 int WordHash_match(const WordHash a, const WordHash b);
+
+/**
+ * @brief Computes the optimal alignment index in sequence `b` for a given position in `a`.
+ *
+ * Uses a forward-backward weighted LCS to find the position in `b` that best
+ * corresponds to `a[a_index]`. The algorithm maximizes the combined similarity
+ * score of the prefixes (`a[0..a_index]` vs `b[0..j]`) and suffixes
+ * (`a[a_index..end]` vs `b[j..end]`).
+ *
+ * @param a        Array of WordHashes for the first sequence.
+ * @param a_len    Length of sequence `a`.
+ * @param a_index  Pivot index in `a` to align against `b` (must be `< a_len`).
+ * @param b        Array of WordHashes for the second sequence.
+ * @param b_len    Length of sequence `b`.
+ * @return         Optimal 0-based index in `b` (range `0` to `b_len`).
+ *                 Returns `b_len` if inputs are invalid or no meaningful alignment is found.
+ * @note           Thread-safe. Internally allocates and frees DP tables.
+ */
+size_t WordHash_align(const WordHash *a,
+                      size_t a_len,
+                      size_t a_index,
+                      const WordHash *b,
+                      size_t b_len);
 
 /* ──────────────────────────────────────────────────────────────
  * 2. WordHasher: Incremental Hash Accumulator
