@@ -731,6 +731,86 @@ static void get_stroke_state(fz_context *ctx, dvi_state *st, fz_stroke_state *st
   stst->dash_phase = st->gs.dash_phase;
 }
 
+// Resolve a font by name for TikZ text rendering.
+// Uses a simple cache in dvi_context to avoid reloading fonts.
+static fz_font *resolve_special_font(fz_context *ctx, dvi_context *dc, dvi_state *st, const char *name)
+{
+  if (!name || !*name)
+    return NULL;
+
+  // Skip leading '/'
+  const char *fname = (*name == '/') ? name + 1 : name;
+
+  // Check cache
+  for (int i = 0; i < dc->font_cache_count; i++)
+  {
+    if (strcmp(dc->font_cache[i].name, fname) == 0)
+      return dc->font_cache[i].font;
+  }
+
+  // Try MuPDF built-in font
+  fz_font *font = NULL;
+  fz_try(ctx)
+  {
+    font = fz_new_font_from_file(ctx, NULL, fname, 0, 0);
+  }
+  fz_catch(ctx)
+  {
+    font = NULL;
+  }
+
+  // Fallback: try current DVI font
+  if (!font)
+  {
+    dvi_fontdef *def = dvi_fonttable_get(ctx, st->fonts, st->f);
+    if (def && def->kind == TEX_FONT && def->tex_font.font && def->tex_font.font->fz)
+      font = def->tex_font.font->fz;
+  }
+
+  // Cache it
+  if (font && dc->font_cache_count < DVI_FONT_CACHE_SIZE)
+  {
+    size_t len = strlen(fname);
+    if (len > 63) len = 63;
+    memcpy(dc->font_cache[dc->font_cache_count].name, fname, len);
+    dc->font_cache[dc->font_cache_count].name[len] = 0;
+    dc->font_cache[dc->font_cache_count].font = font;
+    dc->font_cache_count++;
+  }
+
+  return font;
+}
+
+// Show a text string for Tj operator, advancing text matrix.
+static void show_special_text(fz_context *ctx, dvi_context *dc, dvi_state *st,
+                               const char *str, size_t len, fz_font *font)
+{
+  if (!font || !str || !len || !dc->dev)
+    return;
+
+  if (!dc->text)
+    dc->text = fz_new_text(ctx);
+  fz_text *text = dc->text;
+  fz_matrix ctm = dvi_get_ctm(dc, st);
+  float fs = st->gs.text.font_size;
+  float hs = st->gs.text.scale;
+
+  for (size_t i = 0; i < len; i++)
+  {
+    int glyph = fz_encode_character(ctx, font, (unsigned char)str[i]);
+    if (glyph == 0)
+      continue;
+    float adv = fz_advance_glyph(ctx, font, glyph, 0);
+    fz_matrix trm = st->gs.text.Tm;
+    trm = fz_pre_scale(trm, fs * hs, fs);
+    trm = fz_concat(trm, ctm);
+    fz_show_glyph(ctx, text, font, trm, glyph, str[i], 0, 0, FZ_BIDI_LTR, FZ_LANG_UNSET);
+    // Advance text matrix horizontally
+    float tx = (adv * fs + st->gs.text.char_space) * hs + st->gs.text.word_space;
+    st->gs.text.Tm = fz_pre_translate(st->gs.text.Tm, tx, 0);
+  }
+}
+
 static bool
 pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t lim)
 {
@@ -1058,26 +1138,186 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           fz_curveto(ctx, path, c[0], c[1], c[2], c[3], c[2], c[3]);
           break;
         }
+        // -- Text operators (Phase 1) --
+        case PDF_OP_BT:
+        {
+          st->gs.text.Tm = fz_identity;
+          st->gs.text.Tlm = fz_identity;
+          st->gs.text.render = 0;
+          st->gs.text.in_text = 1;
+          break;
+        }
+        case PDF_OP_ET:
+        {
+          st->gs.text.in_text = 0;
+          dvi_context_flush_text(ctx, dc, st);
+          break;
+        }
+        case PDF_OP_Tc:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1);
+          st->gs.text.char_space = c[0];
+          break;
+        }
+        case PDF_OP_Tw:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1);
+          st->gs.text.word_space = c[0];
+          break;
+        }
+        case PDF_OP_Tz:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1);
+          st->gs.text.scale = c[0] / 100.0f;
+          break;
+        }
+        case PDF_OP_TL:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1);
+          st->gs.text.leading = c[0];
+          break;
+        }
+        case PDF_OP_Tf:
+        {
+          val v[2];
+          vstack_get_arguments(ctx, stack, v, 2);
+          const char *name = val_as_name(ctx, stack, v[0]);
+          float size = val_number(ctx, v[1]);
+          st->gs.text.font_size = size;
+          if (name)
+          {
+            size_t len = strlen(name);
+            if (len > 63) len = 63;
+            memcpy(st->gs.text.font_name, name, len);
+            st->gs.text.font_name[len] = 0;
+          }
+          break;
+        }
+        case PDF_OP_Tr:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1);
+          st->gs.text.render = (int)c[0];
+          break;
+        }
+        case PDF_OP_Ts:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1);
+          st->gs.text.rise = c[0];
+          break;
+        }
+        case PDF_OP_Td:
+        {
+          float c[2];
+          vstack_get_floats(ctx, stack, c, 2);
+          fz_matrix delta = fz_translate(c[0], c[1]);
+          st->gs.text.Tlm = fz_concat(delta, st->gs.text.Tlm);
+          st->gs.text.Tm = st->gs.text.Tlm;
+          break;
+        }
+        case PDF_OP_TD:
+        {
+          float c[2];
+          vstack_get_floats(ctx, stack, c, 2);
+          st->gs.text.leading = -c[1];
+          fz_matrix delta = fz_translate(c[0], c[1]);
+          st->gs.text.Tlm = fz_concat(delta, st->gs.text.Tlm);
+          st->gs.text.Tm = st->gs.text.Tlm;
+          break;
+        }
+        case PDF_OP_Tm:
+        {
+          float fmat[6];
+          vstack_get_floats(ctx, stack, fmat, 6);
+          st->gs.text.Tlm.a = fmat[0]; st->gs.text.Tlm.b = fmat[1];
+          st->gs.text.Tlm.c = fmat[2]; st->gs.text.Tlm.d = fmat[3];
+          st->gs.text.Tlm.e = fmat[4]; st->gs.text.Tlm.f = fmat[5];
+          st->gs.text.Tm = st->gs.text.Tlm;
+          break;
+        }
+        case PDF_OP_T_star:
+        {
+          fz_matrix delta = fz_translate(0, -st->gs.text.leading);
+          st->gs.text.Tlm = fz_concat(delta, st->gs.text.Tlm);
+          st->gs.text.Tm = st->gs.text.Tlm;
+          break;
+        }
+        case PDF_OP_Tj:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1);
+          const char *str = val_as_string(ctx, stack, v[0]);
+          size_t slen = val_string_length(ctx, stack, v[0]);
+          fz_font *font = resolve_special_font(ctx, dc, st, st->gs.text.font_name);
+          show_special_text(ctx, dc, st, str, slen, font);
+          break;
+        }
+        case PDF_OP_TJ:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1);
+          int alen = val_array_length(ctx, stack, v[0]);
+          fz_font *font = resolve_special_font(ctx, dc, st, st->gs.text.font_name);
+          for (int i = 0; i < alen; i++)
+          {
+            val elem = val_array_get(ctx, stack, v[0], i);
+            if (val_is_string(elem))
+            {
+              const char *str = val_string(ctx, stack, elem);
+              size_t slen = val_string_length(ctx, stack, elem);
+              show_special_text(ctx, dc, st, str, slen, font);
+            }
+            else if (val_is_number(elem))
+            {
+              // Kerning adjustment: move text matrix by -kern/1000 * font_size
+              float kern = val_number(ctx, elem);
+              float tx = -kern / 1000.0f * st->gs.text.font_size * st->gs.text.scale;
+              st->gs.text.Tm = fz_pre_translate(st->gs.text.Tm, tx, 0);
+            }
+          }
+          break;
+        }
+        case PDF_OP_squote:
+        {
+          // ' = T* + Tj
+          fz_matrix delta = fz_translate(0, -st->gs.text.leading);
+          st->gs.text.Tlm = fz_concat(delta, st->gs.text.Tlm);
+          st->gs.text.Tm = st->gs.text.Tlm;
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1);
+          const char *str = val_as_string(ctx, stack, v[0]);
+          size_t slen = val_string_length(ctx, stack, v[0]);
+          fz_font *font = resolve_special_font(ctx, dc, st, st->gs.text.font_name);
+          show_special_text(ctx, dc, st, str, slen, font);
+          break;
+        }
+        case PDF_OP_dquote:
+        {
+          // '' = set Tw/Tc + T* + Tj
+          float c[2];
+          vstack_get_floats(ctx, stack, c, 2);
+          st->gs.text.word_space = c[0];
+          st->gs.text.char_space = c[1];
+          fz_matrix delta = fz_translate(0, -st->gs.text.leading);
+          st->gs.text.Tlm = fz_concat(delta, st->gs.text.Tlm);
+          st->gs.text.Tm = st->gs.text.Tlm;
+          val v[3];
+          vstack_get_arguments(ctx, stack, v, 3);
+          const char *str = val_as_string(ctx, stack, v[2]);
+          size_t slen = val_string_length(ctx, stack, v[2]);
+          fz_font *font = resolve_special_font(ctx, dc, st, st->gs.text.font_name);
+          show_special_text(ctx, dc, st, str, slen, font);
+          break;
+        }
+
         case PDF_OP_ri:
         case PDF_OP_i:
         case PDF_OP_gs:
-        case PDF_OP_BT:
-        case PDF_OP_ET:
-        case PDF_OP_Tc:
-        case PDF_OP_Tw:
-        case PDF_OP_Tz:
-        case PDF_OP_TL:
-        case PDF_OP_Tf:
-        case PDF_OP_Tr:
-        case PDF_OP_Ts:
-        case PDF_OP_Td:
-        case PDF_OP_TD:
-        case PDF_OP_Tm:
-        case PDF_OP_T_star:
-        case PDF_OP_Tj:
-        case PDF_OP_TJ:
-        case PDF_OP_squote:
-        case PDF_OP_dquote:
         case PDF_OP_d0:
         case PDF_OP_d1:
         case PDF_OP_CS:

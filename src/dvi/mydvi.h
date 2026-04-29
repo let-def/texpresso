@@ -273,6 +273,32 @@ typedef enum
   PDF_SQUARE_CAPS = 2,
 } pdf_line_caps;
 
+// Text state for PDF text operators (BT/ET/Tf/Tj/TJ etc.)
+// Used by TikZ specials to render node labels and decorations.
+typedef struct
+{
+  fz_matrix Tm;        // text matrix
+  fz_matrix Tlm;       // text line matrix
+  float char_space;    // Tc
+  float word_space;    // Tw
+  float scale;         // Tz (horizontal scaling, default 100 = 1.0)
+  float leading;       // TL
+  int render;          // Tr (0=fill, 1=stroke, 2=fill+stroke, 3=invisible)
+  float rise;          // Ts
+  char font_name[64];  // font name from Tf
+  float font_size;     // font size from Tf
+  int in_text;         // true between BT and ET
+} dvi_textstate;
+
+// Simple font cache for special (TikZ) text rendering.
+// Standard PDF 14 fonts are resolved lazily and cached here.
+#define DVI_FONT_CACHE_SIZE 8
+typedef struct
+{
+  char name[64];
+  fz_font *font;
+} dvi_font_cache_entry;
+
 typedef struct
 {
   fz_matrix ctm;
@@ -285,6 +311,7 @@ typedef struct
   int dash_len;
   float dash_phase;
   int h, v;
+  dvi_textstate text;
 } dvi_graphicstate;
 
 typedef struct
@@ -336,6 +363,10 @@ typedef struct
   // Pdf color stacks (introduced by pdftex)
   dvi_colorstacks pdfcolorstacks;
   float scale;
+
+  // Font cache for special (TikZ) text operators
+  dvi_font_cache_entry font_cache[DVI_FONT_CACHE_SIZE];
+  int font_cache_count;
 } dvi_context;
 
 #define DC_ALLOC(ctx, dc, type, count) ((type*)dvi_scratch_alloc(ctx, &(dc)->scratch, sizeof(type) * (count)))
