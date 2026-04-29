@@ -1395,6 +1395,15 @@ bool texpresso_main(struct persistent_state *ps)
             display_page(ps, ui);
         }
 
+        // In webview mode, tell the preview to scroll to the synctex position
+        if (ps->webview_mode)
+        {
+          float f = send(scale_factor, ui->eng);
+          if (f == 0) f = 1;
+          fprintf(stdout, "[\"synctex-scroll\",%f,%f]\n", f * x, f * y);
+          fflush(stdout);
+        }
+
         if (!ps->webview_mode && ui->doc_renderer) {
           // Scroll to point (SDL mode only)
           float f = send(scale_factor, ui->eng);
