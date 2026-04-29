@@ -1077,20 +1077,11 @@ static void interpret_command(struct persistent_state *ps,
 
     case EDIT_GO_END:
     {
-      // Advance engine with time limit to discover all pages (handles long docs with includes)
-      struct timespec tstart, tcurr;
-      clock_gettime(CLOCK_MONOTONIC, &tstart);
-      int prev_count = send(page_count, ui->eng);
-      for (int i = 0; i < 5000 && send(get_status, ui->eng) == DOC_RUNNING; i++) {
+      // Advance engine until it blocks or terminates to discover all pages
+      // (handles long docs with includes naturally — each include adds pages as the engine processes them)
+      for (int i = 0; i < 20000 && send(get_status, ui->eng) == DOC_RUNNING; i++) {
         if (!send(step, ui->eng, ps->ctx, false))
-          break;
-        // Check time every 100 steps, limit to 1 second total
-        if (i % 100 == 0) {
-          clock_gettime(CLOCK_MONOTONIC, &tcurr);
-          long elapsed_ms = (tcurr.tv_sec - tstart.tv_sec) * 1000 +
-                            (tcurr.tv_nsec - tstart.tv_nsec) / 1000000;
-          if (elapsed_ms > 1000) break;
-        }
+          break; // engine blocked
       }
       int count = send(page_count, ui->eng);
       if (count > 0)
@@ -1102,24 +1093,22 @@ static void interpret_command(struct persistent_state *ps,
     case EDIT_SET_PAGE:
     {
       int page = cmd.set_page.page;
-      // Advance engine with time limit to discover the requested page
-      struct timespec tstart, tcurr;
-      clock_gettime(CLOCK_MONOTONIC, &tstart);
-      for (int i = 0; i < 5000 && send(page_count, ui->eng) <= page && send(get_status, ui->eng) == DOC_RUNNING; i++) {
+      // Advance engine until the requested page is discovered or engine blocks
+      for (int i = 0; i < 20000 && send(page_count, ui->eng) <= page && send(get_status, ui->eng) == DOC_RUNNING; i++) {
         if (!send(step, ui->eng, ps->ctx, false))
           break;
-        if (i % 100 == 0) {
-          clock_gettime(CLOCK_MONOTONIC, &tcurr);
-          long elapsed_ms = (tcurr.tv_sec - tstart.tv_sec) * 1000 +
-                            (tcurr.tv_nsec - tstart.tv_nsec) / 1000000;
-          if (elapsed_ms > 1000) break;
-        }
       }
       int count = send(page_count, ui->eng);
       if (page >= 0 && page < count)
       {
         ui->page = page;
         schedule_event(RELOAD_EVENT);
+      }
+      else
+      {
+        // Page doesn't exist — notify the webview
+        fprintf(stdout, "[\"page-error\",%d]\n", count);
+        fflush(stdout);
       }
     }
     break;
@@ -1338,7 +1327,9 @@ bool texpresso_main(struct persistent_state *ps)
       if (ui->page >= before_page_count && ui->page < after_page_count)
         schedule_event(RELOAD_EVENT);
 
-      if (ps->webview_mode && ui->page < after_page_count && advance)
+      // Always render in webview mode if page exists, not just when advance flag is set.
+      // This ensures edits trigger immediate re-renders.
+      if (ps->webview_mode && ui->page < after_page_count)
       {
         int w = ps->render_width;
         int h = ps->render_height;
