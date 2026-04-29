@@ -129,6 +129,8 @@ static void usage(void)
           " -webview  Run in webview mode (output QOI files via stdout, no SDL window)\n");
   fprintf(stderr,
           " -tmpdir   Set temporary directory for QOI output files\n");
+  fprintf(stderr,
+          " -resolution N  Default rendering resolution multiplier (default 2.5)\n");
 }
 
 int main(int argc, const char **argv)
@@ -160,6 +162,7 @@ int main(int argc, const char **argv)
   bool initialize_only = 0;
   bool stream_mode = 0;
   bool webview_mode = 0;
+  float default_resolution = 2.5f;
   char tmpdir[4096] = {0};
 
   int inclusion_path_size = 1;
@@ -218,6 +221,18 @@ int main(int argc, const char **argv)
           exit(1);
         }
         snprintf(tmpdir, sizeof(tmpdir), "%s", argv[i]);
+      }
+      else if (strcmp(arg, "-resolution") == 0)
+      {
+        i += 1;
+        if (i == argc)
+        {
+          fprintf(stderr, "[error] Expecting a number after -resolution\n");
+          usage();
+          exit(1);
+        }
+        default_resolution = atof(argv[i]);
+        if (default_resolution <= 0) default_resolution = 2.5f;
       }
       else
       {
@@ -378,6 +393,7 @@ int main(int argc, const char **argv)
       .initialize_only = initialize_only,
       .stream_mode = stream_mode,
       .webview_mode = webview_mode,
+      .default_resolution = default_resolution,
       .render_width = 0,
       .render_height = 0,
   };
