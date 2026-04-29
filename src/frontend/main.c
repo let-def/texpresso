@@ -1311,10 +1311,12 @@ bool texpresso_main(struct persistent_state *ps)
     }
     if (n == 0) stdin_eof = 1;
 
+    bool had_changes = false;
     if (send(end_changes, ui->eng, ps->ctx))
     {
       send(step, ui->eng, ps->ctx, true);
       schedule_event(RELOAD_EVENT);
+      had_changes = true;
     }
 
     // Process document
@@ -1327,14 +1329,14 @@ bool texpresso_main(struct persistent_state *ps)
       if (ui->page >= before_page_count && ui->page < after_page_count)
         schedule_event(RELOAD_EVENT);
 
-      // Always render in webview mode if page exists, not just when advance flag is set.
-      // This ensures edits trigger immediate re-renders.
-      if (ps->webview_mode && ui->page < after_page_count)
+      // Render in webview mode when the page exists AND something changed
+      if (ps->webview_mode && ui->page < after_page_count && (had_changes || advance))
       {
         int w = ps->render_width;
         int h = ps->render_height;
         int pw = 0, ph = 0;
-        // Always get page dimensions from display list for accurate SyncTeX coords
+        // Compute page dimensions (only when auto-detecting or first time)
+        if (w == 0 || h == 0)
         {
           fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
           if (dl)
@@ -1344,14 +1346,13 @@ bool texpresso_main(struct persistent_state *ps)
             ph = (int)(bounds.y1 - bounds.y0);
             fz_drop_display_list(ps->ctx, dl);
           }
-        }
-        if (pw == 0) pw = 612;
-        if (ph == 0) ph = 792;
-        if (w == 0 || h == 0)
-        {
+          if (pw == 0) pw = 612;
+          if (ph == 0) ph = 792;
           w = pw * 3;
           h = ph * 3;
         }
+        fprintf(stderr, "[main] rendering page %d/%d had_changes=%d advance=%d w=%d h=%d\n",
+                ui->page, after_page_count, had_changes, advance, w, h);
         webview_output_page(ps->ctx, ui->eng, ui->page, after_page_count,
                             w, h, pw, ph,
                             ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode);
@@ -1599,7 +1600,7 @@ bool texpresso_main(struct persistent_state *ps)
               int w = ps->render_width;
               int h = ps->render_height;
               int pw = 0, ph = 0;
-              // Always get page dimensions from display list for accurate SyncTeX coords
+              if (w == 0 || h == 0)
               {
                 fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
                 if (dl)
@@ -1609,14 +1610,13 @@ bool texpresso_main(struct persistent_state *ps)
                   ph = (int)(bounds.y1 - bounds.y0);
                   fz_drop_display_list(ps->ctx, dl);
                 }
-              }
-              if (pw == 0) pw = 612;
-              if (ph == 0) ph = 792;
-              if (w == 0 || h == 0)
-              {
+                if (pw == 0) pw = 612;
+                if (ph == 0) ph = 792;
                 w = pw * 3;
                 h = ph * 3;
               }
+              fprintf(stderr, "[main] RELOAD_EVENT render page %d/%d w=%d h=%d\n",
+                      ui->page, page_count, w, h);
               webview_output_page(ps->ctx, ui->eng, ui->page, page_count,
                                   w, h, pw, ph,
                                   ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode);
