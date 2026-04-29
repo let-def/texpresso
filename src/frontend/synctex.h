@@ -27,8 +27,16 @@
 
 #include <mupdf/fitz/context.h>
 #include <mupdf/fitz/buffer.h>
+#include <stdbool.h>
 
 typedef struct synctex_s TexSynctex;
+
+typedef struct {
+  const char *fname;
+  int len;
+  int line;
+  int column;
+} TexSynctexHit;
 
 TexSynctex *synctex_new(fz_context *ctx);
 void synctex_free(fz_context *ctx, TexSynctex *stx);
@@ -38,7 +46,7 @@ int synctex_page_count(TexSynctex *stx);
 int synctex_input_count(TexSynctex *stx);
 void synctex_page_offset(fz_context *ctx, TexSynctex *stx, unsigned index, int *bop, int *eop);
 int synctex_input_offset(fz_context *ctx, TexSynctex *stx, unsigned index);
-void synctex_scan(fz_context *ctx, TexSynctex *stx, fz_buffer *buf, const char *doc_dir, unsigned page, int x, int y);
+bool synctex_scan(fz_context *ctx, TexSynctex *stx, fz_buffer *buf, unsigned page, int x, int y, TexSynctexHit *hit);
 
 int synctex_has_target(TexSynctex *stx);
 void synctex_set_target(TexSynctex *stx, int current_page, const char *path, int line);
