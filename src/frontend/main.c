@@ -1366,8 +1366,19 @@ bool texpresso_main(struct persistent_state *ps)
 
       if (!has_event)
       {
-        if (advance)
+        if (ps->webview_mode)
+        {
+          // Keep advancing to preload pages, but only skip event
+          // handling when new pages were actually discovered.
+          // Otherwise fall through to process RELOAD_EVENT.
+          if (after_page_count > before_page_count && advance)
+            continue;
+        }
+        else if (advance)
+        {
           continue;
+        }
+
         if (!stdin_eof)
           wakeup_poll_thread(poll_stdin_pipe, 'c');
         has_event = SDL_WaitEvent(&e);
