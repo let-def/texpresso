@@ -1270,6 +1270,7 @@ bool texpresso_main(struct persistent_state *ps)
   {
     SDL_Event e;
     bool has_event = SDL_PollEvent(&e);
+    bool webview_rendered_this_iteration = false;
 
     // Process stdin
     send(begin_changes, ui->eng, ps->ctx);
@@ -1329,7 +1330,32 @@ bool texpresso_main(struct persistent_state *ps)
       if (ui->page >= before_page_count && ui->page < after_page_count)
         schedule_event(RELOAD_EVENT);
 
-      // Webview rendering is handled by RELOAD_EVENT (single render point)
+      // Immediate render for real-time editing feedback
+      if (ps->webview_mode && ui->page < after_page_count && (had_changes || advance))
+      {
+        int w = ps->render_width;
+        int h = ps->render_height;
+        int pw = 0, ph = 0;
+        if (w == 0 || h == 0)
+        {
+          fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
+          if (dl)
+          {
+            fz_rect bounds = fz_bound_display_list(ps->ctx, dl);
+            pw = (int)(bounds.x1 - bounds.x0);
+            ph = (int)(bounds.y1 - bounds.y0);
+            fz_drop_display_list(ps->ctx, dl);
+          }
+          if (pw == 0) pw = 612;
+          if (ph == 0) ph = 792;
+          w = pw * 2;
+          h = ph * 2;
+        }
+        webview_output_page(ps->ctx, ui->eng, ui->page, after_page_count,
+                            w, h, pw, ph,
+                            ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode);
+        webview_rendered_this_iteration = true;
+      }
 
       if (!has_event)
       {
@@ -1556,6 +1582,9 @@ bool texpresso_main(struct persistent_state *ps)
           break;
 
         case RELOAD_EVENT:
+          // In webview mode, skip if already rendered inline this iteration
+          if (ps->webview_mode && webview_rendered_this_iteration)
+            break;
           page_count = send(page_count, ui->eng);
           if (ps->webview_mode)
             fprintf(stderr, "[main] RELOAD_EVENT: page_count=%d, ui->page=%d, webview=%d\n",
