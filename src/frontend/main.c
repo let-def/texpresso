@@ -1250,28 +1250,6 @@ bool texpresso_main(struct persistent_state *ps)
     render(ps->ctx, ui);
   schedule_event(RELOAD_EVENT);
 
-  // Preload all pages in webview mode: poll engine until terminated.
-  // step() returns false when the subprocess is still computing, so
-  // we retry continuously instead of breaking on the first false.
-  if (ps->webview_mode)
-  {
-    int preload_steps = 0, stalled = 0;
-    while (send(get_status, ui->eng) == DOC_RUNNING && stalled < 500000)
-    {
-      if (send(step, ui->eng, ps->ctx, false))
-      {
-        preload_steps++;
-        stalled = 0;
-      }
-      else
-      {
-        stalled++;
-      }
-    }
-    fprintf(stderr, "[main] preload: %d steps, %d pages, stalled=%d\n",
-            preload_steps, send(page_count, ui->eng), stalled);
-  }
-
   struct repaint_on_resize_env repaint_on_resize_env;
   if (!ps->webview_mode)
   {
