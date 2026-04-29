@@ -1,6 +1,7 @@
 #ifndef PAGECOLLECTION_H
 #define PAGECOLLECTION_H
 
+#include <mupdf/fitz/structured-text.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <mupdf/fitz.h>
@@ -109,6 +110,8 @@ size_t pagecollection_valid_count(const PageCollection *pcoll);
  */
 fz_display_list *pagecollection_get(const PageCollection *pcoll, size_t index);
 
+fz_stext_page *pagecollection_get_stext(fz_context *ctx, const PageCollection *pcoll, size_t index);
+
 /**
  * @brief Returns the reference width of the collection.
  *
@@ -214,7 +217,7 @@ ssize_t pagecollection_page_above(PageCollection *pcoll, float offset, float sep
 /**
  * @brief Computes the vertical position (Y-coordinate) where `page` starts.
  *
- * Formula:  
+ * Formula:
  * `sum(page_heights[0 .. page-1]) + page * separator`
  *
  * - If `page < 0` → `0.0`
@@ -231,7 +234,7 @@ float pagecollection_page_offset(PageCollection *pcoll, ssize_t page, float sepa
 /**
  * @brief Computes the total height of all pages including separators.
  *
- * Formula:  
+ * Formula:
  * `sum(all_page_heights) + (count - 1) * separator`
  *
  * Returns `0.0` if `count == 0`.
@@ -243,4 +246,3 @@ float pagecollection_page_offset(PageCollection *pcoll, ssize_t page, float sepa
 float pagecollection_total_height(PageCollection *pcoll, float separator);
 
 #endif // PAGECOLLECTION_H
-

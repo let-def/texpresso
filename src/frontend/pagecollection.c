@@ -1,6 +1,9 @@
 #include "pagecollection.h"
 #include "prefixsum.h"
 #include <mupdf/fitz.h>
+#include <mupdf/fitz/pool.h>
+#include <mupdf/fitz/structured-text.h>
+#include <mupdf/fitz/util.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -14,6 +17,7 @@
 struct page_s
 {
   fz_display_list *dl;        ///< Display list for rendering (owned by this page)
+  fz_stext_page *stext;
 };
 
 /**
@@ -97,6 +101,8 @@ void pagecollection_finalize(fz_context *ctx, PageCollection *pcoll)
   for (size_t i = 0; i < pcoll->count; ++i)
   {
     fz_drop_display_list(ctx, pcoll->pages[i].dl);
+    if (pcoll->pages[i].stext)
+      fz_drop_stext_page(ctx, pcoll->pages[i].stext);
   }
 
   // Cleanup prefix sum and free pages array
@@ -134,6 +140,18 @@ fz_display_list *pagecollection_get(const PageCollection *pcoll, size_t index)
   return pcoll->pages[index].dl;
 }
 
+fz_stext_page *pagecollection_get_stext(fz_context *ctx, const PageCollection *pcoll, size_t index)
+{
+  if (!pcoll || index >= pcoll->count)
+    return NULL;
+  if (!pcoll->pages[index].stext && pcoll->pages[index].dl)
+  {
+    pcoll->pages[index].stext =
+        fz_new_stext_page_from_display_list(ctx, pcoll->pages[index].dl, NULL);
+  }
+  return pcoll->pages[index].stext;
+}
+
 /**
  * @brief Low-level page setter that stores a display list without bounds checking.
  *
@@ -150,6 +168,11 @@ static void pagecollection_set_raw(fz_context *ctx, PageCollection *pcoll, size_
   fz_keep_display_list(ctx, dl);
   fz_drop_display_list(ctx, pcoll->pages[index].dl);
   pcoll->pages[index].dl = dl;
+  if (pcoll->pages[index].stext)
+  {
+    fz_drop_stext_page(ctx, pcoll->pages[index].stext);
+    pcoll->pages[index].stext = NULL;
+  }
   psum_set(&pcoll->psum, index, height);
 }
 
