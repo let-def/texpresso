@@ -1355,8 +1355,8 @@ bool texpresso_main(struct persistent_state *ps)
           }
           if (pw == 0) pw = 612;
           if (ph == 0) ph = 792;
-          w = pw * 2;
-          h = ph * 2;
+          w = (int)(pw * 2.5f);
+          h = (int)(ph * 2.5f);
         }
         webview_output_page(ps->ctx, ui->eng, ui->page, after_page_count,
                             w, h, pw, ph,
@@ -1630,8 +1630,8 @@ bool texpresso_main(struct persistent_state *ps)
                 }
                 if (pw == 0) pw = 612;
                 if (ph == 0) ph = 792;
-                w = pw * 2;
-                h = ph * 2;
+                w = (int)(pw * 2.5f);
+                h = (int)(ph * 2.5f);
               }
               fprintf(stderr, "[main] RELOAD_EVENT render page %d/%d w=%d h=%d\n",
                       ui->page, page_count, w, h);
