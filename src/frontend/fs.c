@@ -43,7 +43,7 @@ sdbm_hash(const unsigned char *str)
 typedef struct
 {
   unsigned long hash;
-  fileentry_t *entry;
+  FileEntry *entry;
 } tablecell;
 
 struct filesystem_s
@@ -63,14 +63,14 @@ static const char *normalize_path(const char *path)
   return path;
 }
 
-filesystem_t *filesystem_new(fz_context *ctx)
+FileSystem *filesystem_new(fz_context *ctx)
 {
-  fz_ptr(filesystem_t, fs);
+  fz_ptr(FileSystem, fs);
   fz_ptr(tablecell, table);
 
   fz_try(ctx)
   {
-    fs = fz_malloc_struct(ctx, filesystem_t);
+    fs = fz_malloc_struct(ctx, FileSystem);
     fs->cap = 64;
     table = fz_malloc_struct_array(ctx, 64, tablecell);
     fs->table = table;
@@ -86,12 +86,12 @@ filesystem_t *filesystem_new(fz_context *ctx)
   return fs;
 }
 
-void filesystem_free(fz_context *ctx, filesystem_t *fs)
+void filesystem_free(fz_context *ctx, FileSystem *fs)
 {
   int cap = fs->cap;
   for (int i = 0; i < cap; ++i)
   {
-    fileentry_t *e = fs->table[i].entry;
+    FileEntry *e = fs->table[i].entry;
     if (!e)
       continue;
     if (e->fs_data)
@@ -149,20 +149,20 @@ static tablecell *table_resize(fz_context *ctx, int oldcap, tablecell *oldtab, i
   return newtab;
 }
 
-fileentry_t *filesystem_lookup(filesystem_t *fs, const char *path)
+FileEntry *filesystem_lookup(FileSystem *fs, const char *path)
 {
   return table_get(fs->cap, fs->table, normalize_path(path))->entry;
 }
 
-fileentry_t *filesystem_lookup_or_create(fz_context *ctx, filesystem_t *fs, const char *path)
+FileEntry *filesystem_lookup_or_create(fz_context *ctx, FileSystem *fs, const char *path)
 {
   path = normalize_path(path);
   tablecell *cell = table_get(fs->cap, fs->table, path);
-  fileentry_t *entry = cell->entry;
+  FileEntry *entry = cell->entry;
 
   if (entry != NULL) return entry;
 
-  entry = fz_malloc_struct(ctx, fileentry_t);
+  entry = fz_malloc_struct(ctx, FileEntry);
   entry->path = fz_strdup(ctx, path);
   entry->saved.level = FILE_NONE;
   entry->seen = -1;
@@ -183,7 +183,7 @@ fileentry_t *filesystem_lookup_or_create(fz_context *ctx, filesystem_t *fs, cons
   return entry;
 }
 
-fileentry_t *filesystem_scan(filesystem_t *fs, int *index)
+FileEntry *filesystem_scan(FileSystem *fs, int *index)
 {
   while (*index < fs->cap)
   {

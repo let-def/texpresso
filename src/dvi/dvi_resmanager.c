@@ -70,7 +70,7 @@ struct cell_image {
 };
 
 struct dvi_resmanager {
-  dvi_reshooks hooks;
+  dvi_resloader loader;
   cell_dvi_font *first_dvi_font;
   cell_tex_enc  *first_tex_enc;
   cell_pdf_doc  *first_pdf_doc;
@@ -233,10 +233,10 @@ tectonic_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const cha
   return result;
 }
 
-dvi_reshooks dvi_tectonic_hooks(fz_context *ctx, const char *document_dir)
+dvi_resloader dvi_tectonic_loader(fz_context *ctx, const char *document_dir)
 {
   char *path = fz_strdup(ctx, document_dir ? document_dir : "");
-  return (dvi_reshooks){
+  return (dvi_resloader){
     .env = path,
     .free_env = default_hooks_free_env,
     .open_file = tectonic_hooks_open_file,
@@ -282,7 +282,7 @@ texlive_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const char
       break;
 
     case RES_FONT:
-      if (name[0] == '/' || name[0] == '.')
+      if (strchr(name, '/'))
       {
         path = (char *)name;
         break;
@@ -375,29 +375,29 @@ texlive_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const char
   return result;
 }
 
-dvi_reshooks dvi_texlive_hooks(fz_context *ctx, const char *document_dir)
+dvi_resloader dvi_texlive_loader(fz_context *ctx, const char *document_dir)
 {
   char *path = fz_strdup(ctx, document_dir ? document_dir : "");
-  return (dvi_reshooks){
+  return (dvi_resloader){
     .env = path,
     .free_env = default_hooks_free_env,
     .open_file = texlive_hooks_open_file,
   };
 }
 
-void dvi_free_hooks(fz_context *ctx, const dvi_reshooks *hooks)
+void dvi_free_loader(fz_context *ctx, const dvi_resloader *loader)
 {
-  if (hooks->free_env)
-    hooks->free_env(ctx, hooks->env);
+  if (loader->free_env)
+    loader->free_env(ctx, loader->env);
 }
 
 
 static fz_stream *dvi_resmanager_open_file(fz_context *ctx, dvi_resmanager *rm, dvi_reskind kind, const char *path)
 {
-  if (!rm->hooks.open_file)
+  if (!rm->loader.open_file)
     return NULL;
 
-  return rm->hooks.open_file(ctx, rm->hooks.env, kind, path);
+  return rm->loader.open_file(ctx, rm->loader.env, kind, path);
 }
 
 static void load_fontmap(fz_context *ctx, dvi_resmanager *rm)
@@ -428,7 +428,7 @@ static void load_fontmap(fz_context *ctx, dvi_resmanager *rm)
   fz_try_rethrow(ctx);
 }
 
-dvi_resmanager *dvi_resmanager_new(fz_context *ctx, dvi_reshooks hooks)
+dvi_resmanager *dvi_resmanager_new(fz_context *ctx, dvi_resloader loader)
 {
   dvi_resmanager *rm = fz_malloc_struct(ctx, dvi_resmanager);
   rm->first_dvi_font = NULL;
@@ -436,7 +436,7 @@ dvi_resmanager *dvi_resmanager_new(fz_context *ctx, dvi_reshooks hooks)
   rm->first_pdf_doc = NULL;
   rm->first_fz_font = NULL;
   rm->first_image = NULL;
-  rm->hooks = hooks;
+  rm->loader = loader;
 
   load_fontmap(ctx, rm);
 
@@ -445,7 +445,7 @@ dvi_resmanager *dvi_resmanager_new(fz_context *ctx, dvi_reshooks hooks)
 
 void dvi_resmanager_free(fz_context *ctx, dvi_resmanager *rm)
 {
-  dvi_free_hooks(ctx, &rm->hooks);
+  dvi_free_loader(ctx, &rm->loader);
 
   if (rm->map)
   {

@@ -48,7 +48,7 @@ struct channel_s
   int buf_size;
 };
 
-static ssize_t read_(channel_t *t, int fd, void *data, size_t len)
+static ssize_t read_(IOChannel *t, int fd, void *data, size_t len)
 {
   char msg_control[CMSG_SPACE(1 * sizeof(int))] = {0,};
   int32_t pid;
@@ -60,7 +60,7 @@ static ssize_t read_(channel_t *t, int fd, void *data, size_t len)
   msg.msg_control = &msg_control;
 
   ssize_t recvd;
-  do { recvd = recvmsg(fd, &msg, 0); } 
+  do { recvd = recvmsg(fd, &msg, 0); }
   while (recvd == -1 && errno == EINTR);
 
   if (recvd == -1)
@@ -94,7 +94,7 @@ static ssize_t read_(channel_t *t, int fd, void *data, size_t len)
   return recvd;
 }
 
-static int buffered_read_at_least(channel_t *t, int fd, char *buf, int atleast, int size)
+static int buffered_read_at_least(IOChannel *t, int fd, char *buf, int atleast, int size)
 {
   int n;
   char *org = buf, *ok = buf + atleast;
@@ -116,7 +116,7 @@ static int buffered_read_at_least(channel_t *t, int fd, char *buf, int atleast, 
   return (buf - org);
 }
 
-static bool read_all(channel_t *t, int fd, char *buf, int size)
+static bool read_all(IOChannel *t, int fd, char *buf, int size)
 {
   while (size > 0)
   {
@@ -152,7 +152,7 @@ static void write_all(int fd, const char *buf, int size)
   }
 }
 
-static void cflush(channel_t *c, int fd)
+static void cflush(IOChannel *c, int fd)
 {
   int pos = c->output.pos;
   if (pos == 0) return;
@@ -160,7 +160,7 @@ static void cflush(channel_t *c, int fd)
   c->output.pos = 0;
 }
 
-static bool refill_at_least(channel_t *c, int fd, int at_least)
+static bool refill_at_least(IOChannel *c, int fd, int at_least)
 {
   int avail = (c->input.len - c->input.pos);
   if (avail >= at_least)
@@ -189,7 +189,7 @@ static bool refill_at_least(channel_t *c, int fd, int at_least)
 #define HND_SERVER "TEXPRESSOS01"
 #define HND_CLIENT "TEXPRESSOC01"
 
-bool channel_handshake(channel_t *c, int fd)
+bool channel_handshake(IOChannel *c, int fd)
 {
   char answer[LEN(HND_CLIENT)];
   write_all(fd, HND_SERVER, LEN(HND_SERVER));
@@ -204,7 +204,7 @@ bool channel_handshake(channel_t *c, int fd)
 
 #define CASE(K,X) case K##_##X: return STR(X)
 
-const char *query_to_string(enum query q)
+const char *query_to_string(enum ProtocolQuery q)
 {
   switch (q)
   {
@@ -222,7 +222,7 @@ const char *query_to_string(enum query q)
   }
 }
 
-const char *answer_to_string(enum answer q)
+const char *answer_to_string(enum ProtocolAnswer q)
 {
   switch (q)
   {
@@ -237,7 +237,7 @@ const char *answer_to_string(enum answer q)
   }
 }
 
-const char *ask_to_string(enum ask q)
+const char *ask_to_string(enum ProtocolAsk q)
 {
   switch (q)
   {
@@ -245,9 +245,9 @@ const char *ask_to_string(enum ask q)
   }
 }
 
-channel_t *channel_new(void)
+IOChannel *channel_new(void)
 {
-  channel_t *c = calloc(sizeof(channel_t), 1);
+  IOChannel *c = calloc(sizeof(IOChannel), 1);
   if (!c) mabort();
   c->buf = malloc(256);
   if (!c->buf) mabort();
@@ -256,13 +256,13 @@ channel_t *channel_new(void)
   return c;
 }
 
-void channel_free(channel_t *c)
+void channel_free(IOChannel *c)
 {
   free(c->buf);
   free(c);
 }
 
-static void resize_buf(channel_t *t)
+static void resize_buf(IOChannel *t)
 {
   int old_size = t->buf_size;
   int new_size = old_size * 2;
@@ -274,7 +274,7 @@ static void resize_buf(channel_t *t)
   t->buf_size = new_size;
 }
 
-static int cgetc(channel_t *t, int fd)
+static int cgetc(IOChannel *t, int fd)
 {
   if (t->input.pos == t->input.len)
     if (!refill_at_least(t, fd, 1))
@@ -282,7 +282,7 @@ static int cgetc(channel_t *t, int fd)
   return t->input.buffer[t->input.pos++];
 }
 
-static int read_zstr(channel_t *t, int fd, int *pos)
+static int read_zstr(IOChannel *t, int fd, int *pos)
 {
   int c, p0 = *pos;
   do {
@@ -295,7 +295,7 @@ static int read_zstr(channel_t *t, int fd, int *pos)
   return p0;
 }
 
-static bool read_bytes(channel_t *t, int fd, int pos, int size)
+static bool read_bytes(IOChannel *t, int fd, int pos, int size)
 {
   while (t->buf_size < pos + size)
     resize_buf(t);
@@ -316,7 +316,7 @@ static bool read_bytes(channel_t *t, int fd, int pos, int size)
   return read_all(t, fd, &t->buf[pos], size);
 }
 
-static void write_bytes(channel_t *t, int fd, void *buf, int size)
+static void write_bytes(IOChannel *t, int fd, void *buf, int size)
 {
   if (t->output.pos + size <= BUF_SIZE)
   {
@@ -336,7 +336,7 @@ static void write_bytes(channel_t *t, int fd, void *buf, int size)
   }
 }
 
-static bool try_read_u32(channel_t *t, int fd, uint32_t *tag)
+static bool try_read_u32(IOChannel *t, int fd, uint32_t *tag)
 {
   if (!refill_at_least(t, fd, 4))
     return 0;
@@ -345,7 +345,7 @@ static bool try_read_u32(channel_t *t, int fd, uint32_t *tag)
   return 1;
 }
 
-static uint32_t read_u32(channel_t *t, int fd)
+static uint32_t read_u32(IOChannel *t, int fd)
 {
   int avail = t->input.len - t->input.pos;
 
@@ -359,12 +359,12 @@ static uint32_t read_u32(channel_t *t, int fd)
   return tag;
 }
 
-static void write_u32(channel_t *t, int fd, uint32_t u)
+static void write_u32(IOChannel *t, int fd, uint32_t u)
 {
   write_bytes(t, fd, &u, 4);
 }
 
-static float read_f32(channel_t *t, int fd)
+static float read_f32(IOChannel *t, int fd)
 {
   if (!refill_at_least(t, fd, 4))
     return 0;
@@ -376,12 +376,12 @@ static float read_f32(channel_t *t, int fd)
   return f;
 }
 
-static void write_f32(channel_t *t, int fd, float f)
+static void write_f32(IOChannel *t, int fd, float f)
 {
   write_bytes(t, fd, &f, 4);
 }
 
-void log_query(FILE *f, query_t *r)
+void log_query(FILE *f, ProtocolQuery *r)
 {
   fprintf(f, "%04dms: ", r->time);
   switch (r->tag)
@@ -427,7 +427,7 @@ void log_query(FILE *f, query_t *r)
   mabort();
 }
 
-bool channel_has_pending_query(channel_t *t, int fd, int timeout)
+bool channel_has_pending_query(IOChannel *t, int fd, int timeout)
 {
   if (t->input.pos != t->input.len) return 1;
 
@@ -450,7 +450,7 @@ bool channel_has_pending_query(channel_t *t, int fd, int timeout)
   return 1;
 }
 
-enum query channel_peek_query(channel_t *t, int fd)
+enum ProtocolQuery channel_peek_query(IOChannel *t, int fd)
 {
   uint32_t result = read_u32(t, fd);
   if (result == 0)
@@ -459,7 +459,7 @@ enum query channel_peek_query(channel_t *t, int fd)
   return result;
 }
 
-bool channel_read_query(channel_t *t, int fd, query_t *r)
+bool channel_read_query(IOChannel *t, int fd, ProtocolQuery *r)
 {
   uint32_t tag;
 
@@ -560,7 +560,7 @@ bool channel_read_query(channel_t *t, int fd, query_t *r)
   return 1;
 }
 
-void channel_write_ask(channel_t *t, int fd, ask_t *a)
+void channel_write_ask(IOChannel *t, int fd, ProtocolAsk *a)
 {
   write_u32(t, fd, a->tag);
   switch (a->tag)
@@ -570,7 +570,7 @@ void channel_write_ask(channel_t *t, int fd, ask_t *a)
   }
 }
 
-void channel_write_answer(channel_t *t, int fd, answer_t *a)
+void channel_write_answer(IOChannel *t, int fd, ProtocolAnswer *a)
 {
   if (LOG)
   {
@@ -613,18 +613,18 @@ void channel_write_answer(channel_t *t, int fd, answer_t *a)
   }
 }
 
-void channel_flush(channel_t *t, int fd)
+void channel_flush(IOChannel *t, int fd)
 {
   cflush(t, fd);
 }
 
-void channel_reset(channel_t *t)
+void channel_reset(IOChannel *t)
 {
   t->input.pos = t->input.len = 0;
   t->output.pos = 0;
 }
 
-void *channel_get_buffer(channel_t *t, size_t n)
+void *channel_get_buffer(IOChannel *t, size_t n)
 {
   while (n > t->buf_size)
     resize_buf(t);

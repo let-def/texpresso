@@ -37,7 +37,7 @@ enum accesslevel {
   FILE_WRITE
 };
 
-typedef int mark_t;
+typedef int LogMark;
 
 typedef struct fileentry_s {
   const char *path;
@@ -48,7 +48,7 @@ typedef struct fileentry_s {
 
   // Cached picture information
   struct pic_cache pic_cache;
-  
+
   // State of the file in the text editor (or NULL if unedited)
   fz_buffer *edit_data;
 
@@ -56,41 +56,41 @@ typedef struct fileentry_s {
   struct {
     fz_buffer *data;
     enum accesslevel level;
-    mark_t snap;
+    LogMark snap;
   } saved;
 
   int seen;
   int debug_rollback_invalidation;
-} fileentry_t;
+} FileEntry;
 
 typedef struct filecell_s {
-  mark_t snap;
-  fileentry_t *entry;
-} filecell_t;
+  LogMark snap;
+  FileEntry *entry;
+} FileCell;
 
 typedef struct {
-  filecell_t table[MAX_FILES];
-  filecell_t stdout, document, synctex, log;
-} state_t;
+  FileCell table[MAX_FILES];
+  FileCell stdout, document, synctex, log;
+} TexState;
 
-void state_init(state_t *st);
+void state_init(TexState *st);
 
-typedef struct filesystem_s filesystem_t;
-typedef struct log_s log_t;
+typedef struct filesystem_s FileSystem;
+typedef struct log_s Log;
 
-filesystem_t *filesystem_new(fz_context *ctx);
-void filesystem_free(fz_context *ctx, filesystem_t *fs);
-fileentry_t *filesystem_lookup_or_create(fz_context *ctx, filesystem_t *fs, const char *path);
-fileentry_t *filesystem_lookup(filesystem_t *fs, const char *path);
-fileentry_t *filesystem_scan(filesystem_t *fs, int *index);
+FileSystem *filesystem_new(fz_context *ctx);
+void filesystem_free(fz_context *ctx, FileSystem *fs);
+FileEntry *filesystem_lookup_or_create(fz_context *ctx, FileSystem *fs, const char *path);
+FileEntry *filesystem_lookup(FileSystem *fs, const char *path);
+FileEntry *filesystem_scan(FileSystem *fs, int *index);
 
-log_t *log_new(fz_context *ctx);
-void log_free(fz_context *ctx, log_t *log);
-mark_t log_snapshot(fz_context *ctx, log_t *log);
-void log_rollback(fz_context *ctx, log_t *log, mark_t snapshot);
-void log_fileentry(fz_context *ctx, log_t *log, fileentry_t *entry);
-void log_filecell(fz_context *ctx, log_t *log, filecell_t *cell);
-void log_overwrite(fz_context *ctx, log_t *log, fz_buffer *buf, int start, int len);
+Log *log_new(fz_context *ctx);
+void log_free(fz_context *ctx, Log *log);
+LogMark log_snapshot(fz_context *ctx, Log *log);
+void log_rollback(fz_context *ctx, Log *log, LogMark snapshot);
+void log_fileentry(fz_context *ctx, Log *log, FileEntry *entry);
+void log_filecell(fz_context *ctx, Log *log, FileCell *cell);
+void log_overwrite(fz_context *ctx, Log *log, fz_buffer *buf, int start, int len);
 
 bool stat_same(struct stat *st1, struct stat *st2);
 
