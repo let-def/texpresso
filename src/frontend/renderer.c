@@ -1003,9 +1003,30 @@ fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
   fz_irect bbox = fz_make_irect(0, 0, width, height);
   fz_pixmap *pix = fz_new_pixmap_with_bbox(ctx, fz_device_rgb(ctx), bbox, NULL, 0);
   if (!pix) return NULL;
+
+  // Fill with background color (white by default)
   fz_clear_pixmap_with_value(ctx, pix, 0xFF);
 
-  fz_device *dev = fz_new_draw_device(ctx, fz_identity, pix);
+  // Compute scale to fit the content into the pixmap
+  fz_rect bounds = fz_bound_display_list(ctx, dl);
+  float doc_w = bounds.x1 - bounds.x0;
+  float doc_h = bounds.y1 - bounds.y0;
+  if (doc_w <= 0) doc_w = width;
+  if (doc_h <= 0) doc_h = height;
+
+  float scale_x = (float)width / doc_w;
+  float scale_y = (float)height / doc_h;
+  float scale = fz_min(scale_x, scale_y);
+
+  // Center the content
+  float tx = (width - doc_w * scale) / 2.0f;
+  float ty = (height - doc_h * scale) / 2.0f;
+
+  fz_matrix ctm = fz_translate(tx, ty);
+  ctm = fz_concat(ctm, fz_scale(scale, scale));
+  ctm = fz_concat(ctm, fz_translate(-bounds.x0, -bounds.y0));
+
+  fz_device *dev = fz_new_draw_device(ctx, ctm, pix);
   fz_run_display_list(ctx, dl, dev, fz_identity, fz_infinite_rect, NULL);
   fz_close_device(ctx, dev);
   fz_drop_device(ctx, dev);

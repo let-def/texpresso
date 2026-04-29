@@ -27,6 +27,7 @@ void webview_set_tmpdir(const char *dir)
 void webview_output_page(fz_context *ctx, txp_engine *eng,
                          int page, int total_pages,
                          int img_width, int img_height,
+                         int page_width, int page_height,
                          const char *tmpdir, bool dark_mode)
 {
   fprintf(stderr, "[webview] output_page called: page=%d total=%d w=%d h=%d dark=%d\n",
@@ -66,16 +67,21 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
     return;
   }
 
-  for (int y = 0; y < h; y++) {
-    unsigned char *src = samples + stride * y;
-    unsigned char *dst = rgb + w * 3 * y;
-    for (int x = 0; x < w; x++) {
-      dst[x * 3 + 0] = src[x * n + 2]; // R
-      dst[x * 3 + 1] = src[x * n + 1]; // G
-      dst[x * 3 + 2] = src[x * n + 0]; // B
+  // fz_device_rgb produces RGB samples; copy directly
+  if (stride == w * n && n == 3) {
+    memcpy(rgb, samples, (size_t)w * h * 3);
+  } else {
+    for (int y = 0; y < h; y++) {
+      unsigned char *src = samples + stride * y;
+      unsigned char *dst = rgb + w * 3 * y;
+      for (int x = 0; x < w; x++) {
+        dst[x * 3 + 0] = src[x * n + 0]; // R
+        dst[x * 3 + 1] = src[x * n + 1]; // G
+        dst[x * 3 + 2] = src[x * n + 2]; // B
+      }
     }
   }
-  fprintf(stderr, "[webview] BGR->RGB conversion done\n");
+  fprintf(stderr, "[webview] RGB copy done\n");
 
   qoi_desc desc = { .width = w, .height = h, .channels = 3, .colorspace = QOI_SRGB };
   int qoi_len = 0;
@@ -109,8 +115,8 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
   }
   fprintf(stderr, "[webview] wrote %zd bytes to %s\n", written, tmppath);
 
-  fprintf(stdout, "[\"page\",%d,%d,\"%s\",%d,%d]\n",
-          page, total_pages, tmppath, w, h);
+  fprintf(stdout, "[\"page\",%d,%d,\"%s\",%d,%d,%d,%d]\n",
+          page, total_pages, tmppath, w, h, page_width, page_height);
   fflush(stdout);
   fprintf(stderr, "[webview] page JSON output flushed to stdout\n");
 }
