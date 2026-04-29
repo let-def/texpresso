@@ -1423,6 +1423,9 @@ dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, curs
   "pagesize" ws+ "default"
   { return 1; }
 
+  "papersize=" @f0 dim "," @f1 dim
+  { return 1; }
+
   @f0 "image" ws+ @pxform ([a-z] | ws | float)* @pstart "("
   {
     struct xform_spec xf = xform_spec();
