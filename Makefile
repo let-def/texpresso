@@ -8,17 +8,14 @@ all:
 	@echo "#"
 	@echo "# When using tectonic, first time launch needs to download many files and can be slow."
 	@echo "# You can speed-up this process using:"
-	@echo "#"
 	@echo "#   make fill-tectonic-cache"
 	@echo "#"
 	@echo "# After, you can try texpresso by running:"
-	@echo "#"
 	@echo "#   build/texpresso test/simple.tex"
 	@echo "#"
 	@echo "# Or:"
 	@echo "#   build/texpresso -texlive test/simple.tex"
 	@echo "#   build/texpresso -tectonic test/simple.tex"
-	@echo "#"
 
 common:
 	$(MAKE) -C src/common
