@@ -1077,9 +1077,9 @@ static void interpret_command(struct persistent_state *ps,
 
     case EDIT_GO_END:
     {
-      // Poll engine until terminated (step() may return false while subprocess computes)
+      // Poll engine until terminated (~500ms timeout to avoid blocking UI)
       int stalled = 0;
-      while (send(get_status, ui->eng) == DOC_RUNNING && stalled < 500000)
+      while (send(get_status, ui->eng) == DOC_RUNNING && stalled < 50000)
       {
         if (send(step, ui->eng, ps->ctx, false))
           stalled = 0;
@@ -1096,9 +1096,9 @@ static void interpret_command(struct persistent_state *ps,
     case EDIT_SET_PAGE:
     {
       int page = cmd.set_page.page;
-      // Poll engine until the requested page is discovered or engine terminates
+      // Poll engine until the requested page is discovered or engine terminates (~500ms timeout)
       int stalled = 0;
-      while (send(page_count, ui->eng) <= page && send(get_status, ui->eng) == DOC_RUNNING && stalled < 500000)
+      while (send(page_count, ui->eng) <= page && send(get_status, ui->eng) == DOC_RUNNING && stalled < 50000)
       {
         if (send(step, ui->eng, ps->ctx, false))
           stalled = 0;
