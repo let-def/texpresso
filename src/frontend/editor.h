@@ -32,6 +32,13 @@ enum EDITOR_COMMAND
   EDIT_UNMAP_WINDOW,
   EDIT_CROP,
   EDIT_INVERT,
+  EDIT_SYNCTEX_BACKWARD,
+  EDIT_SET_PAGE,
+  EDIT_SET_OUTPUT_SIZE,
+  EDIT_GO_HOME,
+  EDIT_GO_END,
+  EDIT_RESET_ZOOM,
+  EDIT_SET_FIT_MODE,
 };
 
 struct editor_change
@@ -114,6 +121,32 @@ struct editor_command
 
     struct {
     } invert;
+
+    struct {
+      int page;
+      float x, y;
+    } synctex_backward;
+
+    struct {
+      int page;
+    } set_page;
+
+    struct {
+      int width, height;
+    } set_output_size;
+
+    struct {
+    } go_home;
+
+    struct {
+    } go_end;
+
+    struct {
+    } reset_zoom;
+
+    struct {
+      char mode[8];
+    } set_fit_mode;
   };
 };
 
