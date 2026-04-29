@@ -61,7 +61,7 @@ void dvi_context_flush_text(fz_context *ctx, dvi_context *dc, dvi_state *st)
     if (!dc->dev)
       abort();
     fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
-        st->gs.colors.fill, 1.0, color_params);
+        st->gs.colors.fill, st->gs.fill_alpha, color_params);
     fz_drop_text(ctx, dc->text);
     dc->text = NULL;
   }

@@ -74,6 +74,8 @@ void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev)
   st->gs.ctm.d = -1;
   st->gs.ctm.e = 72;
   st->gs.ctm.f = 72;
+  st->gs.fill_alpha = 1.0f;
+  st->gs.stroke_alpha = 1.0f;
   st->gs_stack.depth = 0;
 
   dc->colorstack.depth = 0;

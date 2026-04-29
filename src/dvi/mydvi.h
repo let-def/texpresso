@@ -307,6 +307,8 @@ typedef struct
   pdf_line_join line_join;
   pdf_line_caps line_caps;
   int clip_depth;
+  float fill_alpha;
+  float stroke_alpha;
   float dash[32];
   int dash_len;
   float dash_phase;

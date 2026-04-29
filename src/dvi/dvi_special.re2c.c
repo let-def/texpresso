@@ -965,9 +965,9 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_path *path = get_path(ctx, dc);
             fz_closepath(ctx, path);
             fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -981,9 +981,9 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_path *path = get_path(ctx, dc);
             fz_closepath(ctx, path);
             fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -996,9 +996,9 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -1011,9 +1011,9 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.fill, 1.0, color_params);
+                           st->gs.colors.fill, st->gs.fill_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -1025,7 +1025,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_matrix ctm = dvi_get_ctm(dc, st);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -1036,7 +1036,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_matrix ctm = dvi_get_ctm(dc, st);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -1049,7 +1049,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -1063,7 +1063,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_path *path = get_path(ctx, dc);
             fz_closepath(ctx, path);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
