@@ -1077,11 +1077,14 @@ static void interpret_command(struct persistent_state *ps,
 
     case EDIT_GO_END:
     {
-      // Advance engine until it blocks or terminates to discover all pages
-      // (handles long docs with includes naturally — each include adds pages as the engine processes them)
-      for (int i = 0; i < 20000 && send(get_status, ui->eng) == DOC_RUNNING; i++) {
-        if (!send(step, ui->eng, ps->ctx, false))
-          break; // engine blocked
+      // Poll engine until terminated (step() may return false while subprocess computes)
+      int stalled = 0;
+      while (send(get_status, ui->eng) == DOC_RUNNING && stalled < 500000)
+      {
+        if (send(step, ui->eng, ps->ctx, false))
+          stalled = 0;
+        else
+          stalled++;
       }
       int count = send(page_count, ui->eng);
       if (count > 0)
@@ -1093,10 +1096,14 @@ static void interpret_command(struct persistent_state *ps,
     case EDIT_SET_PAGE:
     {
       int page = cmd.set_page.page;
-      // Advance engine until the requested page is discovered or engine blocks
-      for (int i = 0; i < 20000 && send(page_count, ui->eng) <= page && send(get_status, ui->eng) == DOC_RUNNING; i++) {
-        if (!send(step, ui->eng, ps->ctx, false))
-          break;
+      // Poll engine until the requested page is discovered or engine terminates
+      int stalled = 0;
+      while (send(page_count, ui->eng) <= page && send(get_status, ui->eng) == DOC_RUNNING && stalled < 500000)
+      {
+        if (send(step, ui->eng, ps->ctx, false))
+          stalled = 0;
+        else
+          stalled++;
       }
       int count = send(page_count, ui->eng);
       if (page >= 0 && page < count)
@@ -1243,18 +1250,26 @@ bool texpresso_main(struct persistent_state *ps)
     render(ps->ctx, ui);
   schedule_event(RELOAD_EVENT);
 
-  // Preload all pages in webview mode: advance engine until blocked or terminated
+  // Preload all pages in webview mode: poll engine until terminated.
+  // step() returns false when the subprocess is still computing, so
+  // we retry continuously instead of breaking on the first false.
   if (ps->webview_mode)
   {
-    int preload_steps = 0;
-    while (send(get_status, ui->eng) == DOC_RUNNING && preload_steps < 100000)
+    int preload_steps = 0, stalled = 0;
+    while (send(get_status, ui->eng) == DOC_RUNNING && stalled < 500000)
     {
-      if (!send(step, ui->eng, ps->ctx, false))
-        break;
-      preload_steps++;
+      if (send(step, ui->eng, ps->ctx, false))
+      {
+        preload_steps++;
+        stalled = 0;
+      }
+      else
+      {
+        stalled++;
+      }
     }
-    fprintf(stderr, "[main] preload complete: %d steps, %d pages\n",
-            preload_steps, send(page_count, ui->eng));
+    fprintf(stderr, "[main] preload: %d steps, %d pages, stalled=%d\n",
+            preload_steps, send(page_count, ui->eng), stalled);
   }
 
   struct repaint_on_resize_env repaint_on_resize_env;
