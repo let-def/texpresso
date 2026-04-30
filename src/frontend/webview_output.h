@@ -2,6 +2,7 @@
 #define WEBVIEW_OUTPUT_H_
 
 #include "driver.h"
+#include "engine.h"
 
 void webview_output_page(fz_context *ctx, txp_engine *eng,
                          int page, int total_pages,

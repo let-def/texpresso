@@ -1602,9 +1602,6 @@ bool texpresso_main(struct persistent_state *ps)
           if (ps->webview_mode && webview_rendered_this_iteration)
             break;
           page_count = send(page_count, ui->eng);
-          if (ps->webview_mode)
-            fprintf(stderr, "[main] RELOAD_EVENT: page_count=%d, ui->page=%d, webview=%d\n",
-                    page_count, ui->page, ps->webview_mode);
           if (ui->page >= page_count &&
               send(get_status, ui->eng) == DOC_TERMINATED)
           {
@@ -1633,8 +1630,6 @@ bool texpresso_main(struct persistent_state *ps)
                 w = (int)(pw * ps->default_resolution);
                 h = (int)(ph * ps->default_resolution);
               }
-              fprintf(stderr, "[main] RELOAD_EVENT render page %d/%d w=%d h=%d\n",
-                      ui->page, page_count, w, h);
               webview_output_page(ps->ctx, ui->eng, ui->page, page_count,
                                   w, h, pw, ph,
                                   ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode);

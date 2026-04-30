@@ -106,7 +106,7 @@ static void usage(void)
 {
   fprintf(stderr,
           "Usage: texpresso [-I path]* [-json] [-lines] [-texlive] [-tectonic] "
-          "[-test-initialize] [-stream] [-webview] [-tmpdir path] root_file.tex\n");
+          "[-test-initialize] [-stream] [-webview] [-tmpdir path] [-resolution N] root_file.tex\n");
   fprintf(stderr,
           " -I path    Add a path to included directories. \n"
           "    Files are looked up relative to document directory and all "
@@ -345,8 +345,8 @@ int main(int argc, const char **argv)
   if (!webview_mode)
   {
     //Create window
-    char window_title[128] = "TeXpresso ";
-    strcat(window_title, doc_name);
+    char window_title[128];
+    snprintf(window_title, sizeof(window_title), "TeXpresso %s", doc_name);
 
 #if SDL_VERSION_ATLEAST(2, 0, 8)
     SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");

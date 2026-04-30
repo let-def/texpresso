@@ -69,8 +69,7 @@ dim     = float unit;
 static bool
 unhandled(const char *kind, cursor_t cur, cursor_t lim, int ignored)
 {
-  if (!ignored)
-    fprintf(stderr, "unhandled %s: \"%.*s\"\n", kind, (int)(lim - cur), cur);
+  (void)kind; (void)cur; (void)lim; (void)ignored;
   return 1;  // Don't abort page rendering for unrecognized specials
 }
 

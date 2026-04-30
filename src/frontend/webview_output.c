@@ -29,6 +29,22 @@ void webview_set_tmpdir(const char *dir)
   g_webview_tmpdir = strdup(dir);
 }
 
+// Write all bytes to fd, handling partial writes and EINTR
+static bool write_all(int fd, const void *data, size_t len)
+{
+  const unsigned char *p = data;
+  while (len > 0) {
+    ssize_t n = write(fd, p, len);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return false;
+    }
+    p += n;
+    len -= n;
+  }
+  return true;
+}
+
 static void write_qoi_file(const char *tmpdir, unsigned char *rgb,
                            int w, int h, char *path_out, size_t path_sz)
 {
@@ -49,16 +65,16 @@ static void write_qoi_file(const char *tmpdir, unsigned char *rgb,
     return;
   }
 
-  ssize_t written = write(fd, qoi_data, qoi_len);
-  close(fd);
-  free(qoi_data);
-
-  if (written != qoi_len) {
-    fprintf(stderr, "[webview] ERROR: write returned %zd, expected %d\n", written, qoi_len);
+  if (!write_all(fd, qoi_data, qoi_len)) {
+    fprintf(stderr, "[webview] ERROR: write_all failed: %s\n", strerror(errno));
+    close(fd);
     unlink(path_out);
+    free(qoi_data);
     path_out[0] = '\0';
     return;
   }
+  close(fd);
+  free(qoi_data);
 }
 
 #define MAX_DIRTY_RECTS 16
@@ -72,18 +88,20 @@ static int compute_dirty_rects(unsigned char *old_rgb, unsigned char *new_rgb,
                                 int w, int h, dirty_rect_t *rects, int max_rects,
                                 float *dirty_ratio)
 {
-  // Simple scanline-based dirty rect detection
-  // We track changed rows and merge into rects
   int total_pixels = w * h;
   int dirty_pixels = 0;
   int rect_count = 0;
 
-  // For each row, find min/max changed column
-  int row_min_x[4096]; // max page height ~4000
+  // For tall pages (>4096px), fall back to full-page update rather
+  // than missing changes below the fixed array limit.
+  if (h > 4096) {
+    *dirty_ratio = 1.0f;
+    return -1;
+  }
+
+  int row_min_x[4096];
   int row_max_x[4096];
   int dirty_start = -1;
-
-  if (h > 4096) h = 4096; // safety
 
   for (int y = 0; y < h; y++) {
     unsigned char *old_row = old_rgb + y * w * 3;
@@ -108,11 +126,9 @@ static int compute_dirty_rects(unsigned char *old_rgb, unsigned char *new_rgb,
       dirty_start = y;
     }
 
-    // Try to close current rect when row is clean or at end
     if (dirty_start >= 0 && (max_x < 0 || y == h - 1)) {
       int end_y = (max_x >= 0) ? y : y - 1;
 
-      // Find bounding box of dirty region from dirty_start to end_y
       int rx = w, ry = dirty_start, rw = 0, rh = end_y - dirty_start + 1;
       for (int ry2 = dirty_start; ry2 <= end_y; ry2++) {
         if (row_min_x[ry2] < rx) rx = row_min_x[ry2];
@@ -126,7 +142,6 @@ static int compute_dirty_rects(unsigned char *old_rgb, unsigned char *new_rgb,
         rects[rect_count].h = rh;
         rect_count++;
       } else if (rect_count >= max_rects) {
-        // Too many rects, fall back to full page
         *dirty_ratio = 1.0f;
         return -1;
       }
@@ -137,6 +152,22 @@ static int compute_dirty_rects(unsigned char *old_rgb, unsigned char *new_rgb,
 
   *dirty_ratio = (float)dirty_pixels / (float)total_pixels;
   return rect_count;
+}
+
+// Write a JSON string value safely (escapes ", \, and control chars)
+static void write_json_string(FILE *f, const char *s)
+{
+  putc('"', f);
+  for (; *s; s++) {
+    unsigned char c = *s;
+    if (c == '"' || c == '\\') { putc('\\', f); putc(c, f); }
+    else if (c == '\n') { fputs("\\n", f); }
+    else if (c == '\r') { fputs("\\r", f); }
+    else if (c == '\t') { fputs("\\t", f); }
+    else if (c < 0x20) { fprintf(f, "\\u%04X", c); }
+    else { putc(c, f); }
+  }
+  putc('"', f);
 }
 
 void webview_output_page(fz_context *ctx, txp_engine *eng,
@@ -195,23 +226,20 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
 
   fz_drop_pixmap(ctx, pix);
 
-  // Check if we can do incremental update
-  bool send_update = true; // false = no changes, skip sending
+  bool send_update = true;
   bool is_diff = false;
   if (prev_rgb && prev_w == w && prev_h == h && prev_page == page) {
     dirty_rect_t rects[MAX_DIRTY_RECTS];
     float dirty_ratio = 0;
     int n_rects = compute_dirty_rects(prev_rgb, rgb, w, h, rects, MAX_DIRTY_RECTS, &dirty_ratio);
     if (n_rects == 0) {
-      // No changes — skip sending entirely
       send_update = false;
     } else if (n_rects > 0 && dirty_ratio < DIRTY_RATIO_THRESHOLD) {
       is_diff = true;
 
-      // Send page-diff message
-      fprintf(stdout, "[\"page-diff\",%d,%d,%d,%d,%d,%d,%d,[",
-              page, total_pages, w, h, page_width, page_height, n_rects);
-
+      // Build a list of successfully prepared rects before emitting JSON
+      struct { int x, y, w, h; char path[PATH_MAX]; } emitted[MAX_DIRTY_RECTS];
+      int emitted_count = 0;
       for (int i = 0; i < n_rects; i++) {
         dirty_rect_t *r = &rects[i];
         int rw = r->w, rh = r->h;
@@ -231,32 +259,52 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
         char rpath[PATH_MAX];
         snprintf(rpath, sizeof(rpath), "%s/texpresso-XXXXXX", tmpdir);
         int rfd = mkstemp(rpath);
-        if (rfd >= 0) {
-          write(rfd, rqoi_data, rqoi_len);
+        if (rfd < 0) { free(rqoi_data); continue; }
+        if (!write_all(rfd, rqoi_data, rqoi_len)) {
           close(rfd);
-          if (i > 0) fprintf(stdout, ",");
-          fprintf(stdout, "[%d,%d,%d,%d,\"%s\"]", r->x, r->y, rw, rh, rpath);
+          unlink(rpath);
+          free(rqoi_data);
+          continue;
         }
+        close(rfd);
         free(rqoi_data);
+
+        emitted[emitted_count].x = r->x;
+        emitted[emitted_count].y = r->y;
+        emitted[emitted_count].w = rw;
+        emitted[emitted_count].h = rh;
+        memcpy(emitted[emitted_count].path, rpath, sizeof(rpath));
+        emitted_count++;
       }
-      fprintf(stdout, "]]\n");
-      fflush(stdout);
+
+      if (emitted_count > 0) {
+        fprintf(stdout, "[\"page-diff\",%d,%d,%d,%d,%d,%d,%d,[",
+                page, total_pages, w, h, page_width, page_height, emitted_count);
+        for (int i = 0; i < emitted_count; i++) {
+          if (i > 0) fprintf(stdout, ",");
+          fprintf(stdout, "[%d,%d,%d,%d,",
+                  emitted[i].x, emitted[i].y, emitted[i].w, emitted[i].h);
+          write_json_string(stdout, emitted[i].path);
+          fprintf(stdout, "]");
+        }
+        fprintf(stdout, "]]\n");
+        fflush(stdout);
+      }
+      // If all rects failed, fall through to full page below
     }
-    // else: dirty_ratio >= threshold or n_rects < 0 — fall through to full page
   }
 
   if (send_update && !is_diff) {
-    // Full page output
     char tmppath[PATH_MAX];
     write_qoi_file(tmpdir, rgb, w, h, tmppath, sizeof(tmppath));
     if (tmppath[0]) {
-      fprintf(stdout, "[\"page\",%d,%d,\"%s\",%d,%d,%d,%d]\n",
-              page, total_pages, tmppath, w, h, page_width, page_height);
+      fprintf(stdout, "[\"page\",%d,%d,", page, total_pages);
+      write_json_string(stdout, tmppath);
+      fprintf(stdout, ",%d,%d,%d,%d]\n", w, h, page_width, page_height);
       fflush(stdout);
     }
   }
 
-  // Save current RGB for next incremental comparison
   if (prev_rgb) free(prev_rgb);
   prev_rgb = rgb;
   prev_w = w;
