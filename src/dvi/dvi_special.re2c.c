@@ -69,8 +69,9 @@ dim     = float unit;
 static bool
 unhandled(const char *kind, cursor_t cur, cursor_t lim, int ignored)
 {
-  (void)kind; (void)cur; (void)lim; (void)ignored;
-  return 1;  // Don't abort page rendering for unrecognized specials
+  if (0 && !ignored)
+    fprintf(stderr, "unhandled %s: \"%.*s\"\n", kind, (int)(lim - cur), cur);
+  return 0;
 }
 
 static int pnat(cursor_t ptr, cursor_t lim)
@@ -1040,26 +1041,11 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           break;
         }
 
-        case PDF_OP_v:
-        {
-          fz_path *path = get_path(ctx, dc);
-          float c[4];
-          fz_point pt = fz_currentpoint(ctx, path);
-          vstack_get_floats(ctx, stack, c, 4);
-          fz_curveto(ctx, path, pt.x, pt.y, c[0], c[1], c[2], c[3]);
-          break;
-        }
-        case PDF_OP_y:
-        {
-          fz_path *path = get_path(ctx, dc);
-          float c[4];
-          vstack_get_floats(ctx, stack, c, 4);
-          fz_curveto(ctx, path, c[0], c[1], c[2], c[3], c[2], c[3]);
-          break;
-        }
         case PDF_OP_ri:
         case PDF_OP_i:
         case PDF_OP_gs:
+        case PDF_OP_v:
+        case PDF_OP_y:
         case PDF_OP_BT:
         case PDF_OP_ET:
         case PDF_OP_Tc:
@@ -1110,10 +1096,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
   }
   fz_catch(ctx)
   {
-    // Don't abort page rendering on unknown PDF operators
-    fprintf(stderr, "unhandled pdf content operator near: \"%.*s\"\n",
-            (int)(lim - cur), cur);
-    return 1;
+    return 0;
   }
   return 1;
 }
@@ -1218,9 +1201,6 @@ dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, curs
   }
 
   "code"
-  { return pdf_code(ctx, dc, st, cur, lim); }
-
-  "literal" ws+ ("direct" ws+)?
   { return pdf_code(ctx, dc, st, cur, lim); }
 
   ''
