@@ -81,5 +81,10 @@ bool txp_renderer_select_char(fz_context *ctx, txp_renderer *self, fz_point pt);
 void txp_renderer_screen_size(fz_context *ctx, txp_renderer *self, int *w, int *h);
 fz_point txp_renderer_screen_to_document(fz_context *ctx, txp_renderer *self, fz_point pt);
 fz_point txp_renderer_document_to_screen(fz_context *ctx, txp_renderer *self, fz_point pt);
+fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
+                                          int width, int height,
+                                          uint32_t bg_color, uint32_t fg_color);
+void txp_renderer_invert_pixmap(fz_context *ctx, fz_pixmap *pix,
+                                 uint32_t black, uint32_t white);
 
 #endif /*!_RENDERER_H_*/

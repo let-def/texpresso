@@ -106,7 +106,7 @@ static void usage(void)
 {
   fprintf(stderr,
           "Usage: texpresso [-I path]* [-json] [-lines] [-texlive] [-tectonic] "
-          "[-test-initialize] [-stream] root_file.tex\n");
+          "[-test-initialize] [-stream] [-webview] [-tmpdir path] [-resolution N] root_file.tex\n");
   fprintf(stderr,
           " -I path    Add a path to included directories. \n"
           "    Files are looked up relative to document directory and all "
@@ -125,6 +125,12 @@ static void usage(void)
           " -test-initialize  Run a single cycle for test purposes\n");
   fprintf(stderr,
           " -stream   Skip filesystem lookups; files are pushed via editor commands\n");
+  fprintf(stderr,
+          " -webview  Run in webview mode (output QOI files via stdout, no SDL window)\n");
+  fprintf(stderr,
+          " -tmpdir   Set temporary directory for QOI output files\n");
+  fprintf(stderr,
+          " -resolution N  Default rendering resolution multiplier (default 2.5)\n");
 }
 
 int main(int argc, const char **argv)
@@ -155,6 +161,9 @@ int main(int argc, const char **argv)
   bool use_texlive = 0;
   bool initialize_only = 0;
   bool stream_mode = 0;
+  bool webview_mode = 0;
+  float default_resolution = 2.5f;
+  char tmpdir[4096] = {0};
 
   int inclusion_path_size = 1;
   for (int i = 1; i < argc; i++)
@@ -197,6 +206,33 @@ int main(int argc, const char **argv)
       else if (strcmp(arg, "-stream") == 0)
       {
         stream_mode = 1;
+      }
+      else if (strcmp(arg, "-webview") == 0)
+      {
+        webview_mode = 1;
+      }
+      else if (strcmp(arg, "-tmpdir") == 0)
+      {
+        i += 1;
+        if (i == argc)
+        {
+          fprintf(stderr, "[error] Expecting a path after -tmpdir\n");
+          usage();
+          exit(1);
+        }
+        snprintf(tmpdir, sizeof(tmpdir), "%s", argv[i]);
+      }
+      else if (strcmp(arg, "-resolution") == 0)
+      {
+        i += 1;
+        if (i == argc)
+        {
+          fprintf(stderr, "[error] Expecting a number after -resolution\n");
+          usage();
+          exit(1);
+        }
+        default_resolution = atof(argv[i]);
+        if (default_resolution <= 0) default_resolution = 2.5f;
       }
       else
       {
@@ -283,43 +319,59 @@ int main(int argc, const char **argv)
   bool init = 0;
 
   //Initialize SDL
-  if (init == 0 && SDL_Init(SDL_INIT_VIDEO) < 0)
+  if (webview_mode)
   {
-    fprintf(stderr, "SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
-    abort();
+    if (init == 0 && SDL_Init(SDL_INIT_TIMER | SDL_INIT_EVENTS) < 0)
+    {
+      fprintf(stderr, "SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
+      abort();
+    }
+  }
+  else
+  {
+    if (init == 0 && SDL_Init(SDL_INIT_VIDEO) < 0)
+    {
+      fprintf(stderr, "SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
+      abort();
+    }
   }
 
   custom_event = SDL_RegisterEvents(1);
   signal(SIGUSR1, signal_usr1);
 
-  //Create window
-  char window_title[128] = "TeXpresso ";
-  strcat(window_title, doc_name);
+  SDL_Window *window = NULL;
+  SDL_Renderer *renderer = NULL;
+
+  if (!webview_mode)
+  {
+    //Create window
+    char window_title[128];
+    snprintf(window_title, sizeof(window_title), "TeXpresso %s", doc_name);
 
 #if SDL_VERSION_ATLEAST(2, 0, 8)
-  SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
+    SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
 #endif
 
-  SDL_Window *window;
-  window = SDL_CreateWindow(window_title,
-    SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-    700, 900,
-    SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
-  );
+    window = SDL_CreateWindow(window_title,
+      SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+      700, 900,
+      SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
+    );
 
-  if (window == NULL)
-  {
-    fprintf(stderr, "Window could not be created! SDL_Error: %s\n", SDL_GetError() );
-    abort();
+    if (window == NULL)
+    {
+      fprintf(stderr, "Window could not be created! SDL_Error: %s\n", SDL_GetError() );
+      abort();
+    }
+
+    SDL_Surface *logo = texpresso_logo();
+    fprintf(stderr, "texpresso logo: %dx%d\n", logo->w, logo->h);
+    SDL_SetWindowIcon(window, logo);
+    SDL_FreeSurface(logo);
+
+    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
+    SDL_ShowWindow(window);
   }
-
-  SDL_Surface *logo = texpresso_logo();
-  fprintf(stderr, "texpresso logo: %dx%d\n", logo->w, logo->h);
-  SDL_SetWindowIcon(window, logo);
-  SDL_FreeSurface(logo);
-
-  SDL_Renderer *renderer;
-  renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
 
   struct persistent_state pstate = {
       .initial = {0,},
@@ -339,8 +391,13 @@ int main(int argc, const char **argv)
       .use_tectonic = use_tectonic,
       .use_texlive = use_texlive,
       .initialize_only = initialize_only,
-      .stream_mode = stream_mode
+      .stream_mode = stream_mode,
+      .webview_mode = webview_mode,
+      .default_resolution = default_resolution,
+      .render_width = 0,
+      .render_height = 0,
   };
+  memcpy(pstate.tmpdir, tmpdir, sizeof(tmpdir));
 
   int exit_code = 0;
 
@@ -355,8 +412,10 @@ int main(int argc, const char **argv)
       ;
   }
 
-  SDL_DestroyRenderer(renderer);
-  SDL_DestroyWindow(window);
+  if (!webview_mode) {
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+  }
   SDL_Quit();
   fz_drop_context(ctx);
 
