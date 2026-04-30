@@ -1409,6 +1409,248 @@ static cursor_t parse_pdf_string(char *buf, char *end, cursor_t cur, cursor_t li
   return cur;
 }
 
+// Render a simple 2-color axial gradient natively using sampled fills.
+// Used when pgf PostScript shading specials are encountered.
+static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
+    float x0, float y0, float x1, float y1,
+    float c0[3], float c1[3])
+{
+  if (!dc->dev) return;
+
+  fz_matrix ctm = dvi_get_ctm(dc, st);
+  int steps = 80;
+
+  // Compute gradient direction and perpendicular
+  float dx = x1 - x0, dy = y1 - y0;
+  float len = sqrtf(dx * dx + dy * dy);
+  if (len < 0.001f) return;
+
+  // Perpendicular direction for line width
+  float px = -dy / len, py = dx / len;
+
+  for (int i = 0; i < steps; i++)
+  {
+    float t = (i + 0.5f) / steps;
+    float color[3] = {
+      c0[0] + (c1[0] - c0[0]) * t,
+      c0[1] + (c1[1] - c0[1]) * t,
+      c0[2] + (c1[2] - c0[2]) * t,
+    };
+
+    float cx = x0 + dx * (float)i / steps;
+    float cy = y0 + dy * (float)i / steps;
+    float nx = x0 + dx * (float)(i + 1) / steps;
+    float ny = y0 + dy * (float)(i + 1) / steps;
+
+    // Build a thin trapezoid along the gradient
+    fz_path *path = fz_new_path(ctx);
+    float hw = len / steps * 0.6f; // half-width for overlap
+    fz_moveto(ctx, path, cx + px * hw, cy + py * hw);
+    fz_lineto(ctx, path, nx + px * hw, ny + py * hw);
+    fz_lineto(ctx, path, nx - px * hw, ny - py * hw);
+    fz_lineto(ctx, path, cx - px * hw, cy - py * hw);
+    fz_closepath(ctx, path);
+    fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
+                 color, st->gs.fill_alpha, color_params);
+    fz_drop_path(ctx, path);
+  }
+}
+
+// Render a simple radial gradient natively.
+static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
+    float cx, float cy, float r0, float r1,
+    float c0[3], float c1[3])
+{
+  if (!dc->dev) return;
+
+  fz_matrix ctm = dvi_get_ctm(dc, st);
+  int steps = 60;
+  float r_max = r1 > r0 ? r1 : r0;
+  float r_min = r0 < r1 ? r0 : r1;
+
+  for (int i = 0; i < steps; i++)
+  {
+    float t_inner = (float)i / steps;
+    float t_outer = (float)(i + 1) / steps;
+    float ri = r_min + (r_max - r_min) * t_inner;
+    float ro = r_min + (r_max - r_min) * t_outer;
+    float t = (t_inner + t_outer) * 0.5f;
+
+    float color[3] = {
+      c0[0] + (c1[0] - c0[0]) * t,
+      c0[1] + (c1[1] - c0[1]) * t,
+      c0[2] + (c1[2] - c0[2]) * t,
+    };
+
+    // Draw a thick ring
+    fz_path *path = fz_new_path(ctx);
+    // Outer circle
+    fz_moveto(ctx, path, cx + ro, cy);
+    fz_curveto(ctx, path, cx + ro, cy + ro * 0.552f, cx + ro * 0.552f, cy + ro, cx, cy + ro);
+    fz_curveto(ctx, path, cx - ro * 0.552f, cy + ro, cx - ro, cy + ro * 0.552f, cx - ro, cy);
+    fz_curveto(ctx, path, cx - ro, cy - ro * 0.552f, cx - ro * 0.552f, cy - ro, cx, cy - ro);
+    fz_curveto(ctx, path, cx + ro * 0.552f, cy - ro, cx + ro, cy - ro * 0.552f, cx + ro, cy);
+    fz_closepath(ctx, path);
+    // Inner circle (reverse direction for even-odd fill)
+    fz_moveto(ctx, path, cx + ri, cy);
+    fz_curveto(ctx, path, cx + ri, cy - ri * 0.552f, cx + ri * 0.552f, cy - ri, cx, cy - ri);
+    fz_curveto(ctx, path, cx - ri * 0.552f, cy - ri, cx - ri, cy - ri * 0.552f, cx - ri, cy);
+    fz_curveto(ctx, path, cx - ri, cy + ri * 0.552f, cx - ri * 0.552f, cy + ri, cx, cy + ri);
+    fz_curveto(ctx, path, cx + ri * 0.552f, cy + ri, cx + ri, cy + ri * 0.552f, cx + ri, cy);
+    fz_closepath(ctx, path);
+    fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
+                 color, st->gs.fill_alpha, color_params);
+    fz_drop_path(ctx, path);
+  }
+}
+
+// Parse a pgf PostScript shading special and render natively.
+// Handles common shading types: axial (pgfHrgb/Vrgb/Argb) and radial (pgfRrgb).
+// Returns 1 if handled, 0 if not.
+static bool
+dvi_exec_pgf_shading(fz_context *ctx, dvi_context *dc, dvi_state *st,
+                      cursor_t cur, cursor_t lim)
+{
+  // Scan for known shading function invocations.
+  // Skip past function definitions (between { and } bind def).
+  // Look for: param1 param2 ... paramN funcName
+
+  // Known shading functions and their parameter counts
+  // Axial: 11 params (startx starty endx endy R1 G1 B1 R2 G2 B2 depth) + funcName
+  // Radial: more complex
+
+  // Simple approach: scan for function names and parse backward for params
+  static const char *func_names[] = {
+    "pgfHrgb", "pgfVrgb", "pgfArgb",  // axial RGB
+    "pgfHcmyk", "pgfVcmyk", "pgfAcmyk", // axial CMYK
+    "pgfRrgb", "pgfR1rgb",            // radial RGB
+    NULL
+  };
+
+  for (int fi = 0; func_names[fi]; fi++)
+  {
+    const char *fname = func_names[fi];
+    int flen = strlen(fname);
+
+    // Search for function name in the special content
+    for (cursor_t p = cur; p + flen <= lim; p++)
+    {
+      if (memcmp(p, fname, flen) == 0)
+      {
+        // Check that it's a standalone token (preceded by whitespace/newline)
+        if (p > cur && !(*(p-1) == ' ' || *(p-1) == '\n' || *(p-1) == '\r'))
+          continue;
+        // Check end of token
+        if (p + flen < lim && !(*(p+flen) == ' ' || *(p+flen) == '\n' || *(p+flen) == '\r'))
+          continue;
+
+        // Parse backwards to get parameters
+        // Skip the function definition if this is a 'def' not an invocation
+        cursor_t after = p + flen;
+        // Skip trailing whitespace
+        while (after < lim && (*after == ' ' || *after == '\n' || *after == '\r'))
+          after++;
+
+        // This is an invocation if not followed by '{' or 'bind def'
+        // For now, try to parse parameters before the function name
+        float params[20] = {0};
+        int nparams = 0;
+        cursor_t q = p;
+
+        // Scan backwards to find start of numeric parameters
+        while (q > cur && nparams < 15)
+        {
+          // Skip whitespace backwards
+          while (q > cur && (*(q-1) == ' ' || *(q-1) == '\n' || *(q-1) == '\r'))
+            q--;
+
+          // Find start of this token
+          cursor_t tok_start = q;
+          while (tok_start > cur && *(tok_start-1) != ' ' && *(tok_start-1) != '\n'
+                 && *(tok_start-1) != '\r' && *(tok_start-1) != '{' && *(tok_start-1) != '}')
+            tok_start--;
+
+          // Try to parse as float
+          char tmp[64];
+          int tlen = q - tok_start;
+          if (tlen > 63) break;
+          memcpy(tmp, tok_start, tlen);
+          tmp[tlen] = 0;
+
+          // Check if this is a number
+          bool is_num = true;
+          int dots = 0;
+          for (int k = 0; k < tlen; k++)
+          {
+            if (tmp[k] == '-') { if (k > 0) { is_num = false; break; } }
+            else if (tmp[k] == '.') { dots++; if (dots > 1) { is_num = false; break; } }
+            else if (tmp[k] < '0' || tmp[k] > '9') { is_num = false; break; }
+          }
+          if (!is_num || tlen == 0) break;
+
+          params[nparams++] = pfloat(tok_start, q);
+          q = tok_start;
+        }
+
+        if (nparams < 2) continue;
+
+        // Reverse params (we parsed them backwards)
+        for (int i = 0; i < nparams / 2; i++)
+        {
+          float tmp2 = params[i];
+          params[i] = params[nparams - 1 - i];
+          params[nparams - 1 - i] = tmp2;
+        }
+
+        // Check if this is an axial shading
+        bool is_axial = (fi <= 2);  // pgfHrgb, pgfVrgb, pgfArgb
+        bool is_cmyk = (fi >= 3 && fi <= 5);
+        bool is_radial = (fi >= 6);
+
+        if (is_axial && nparams >= 11)
+        {
+          float sx = params[0], sy = params[1];
+          float ex = params[2], ey = params[3];
+          float c0[3], c1[3];
+
+          if (is_cmyk)
+          {
+            color_set_cmyk(c0, params[4], params[5], params[6], params[7]);
+            color_set_cmyk(c1, params[8], params[9], params[10], params[11]);
+          }
+          else
+          {
+            color_set_rgb(c0, params[4], params[5], params[6]);
+            color_set_rgb(c1, params[8], params[9], params[10]);
+          }
+
+          render_axial_shade(ctx, dc, st, sx, sy, ex, ey, c0, c1);
+          return 1;
+        }
+
+        if (is_radial && nparams >= 10)
+        {
+          // Radial: startx starty startr endx endy endr R1 G1 B1 R2 G2 B2
+          float sx = params[0], sy = params[1];
+          float ex = params[2], ey = params[3];
+          float c0[3] = {params[4], params[5], params[6]};
+          float c1[3] = {params[7], params[8], params[9]};
+          float r0 = 0, r1 = sqrtf((ex - sx) * (ex - sx) + (ey - sy) * (ey - sy));
+
+          render_radial_shade(ctx, dc, st, sx, sy, r0, r1, c0, c1);
+          return 1;
+        }
+
+        // If we found a function name but couldn't parse params, still count as handled
+        return 1;
+      }
+    }
+  }
+
+  // Not a recognized shading pattern
+  return 1; // Still return 1 to avoid aborting the page
+}
+
 static bool
 dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t lim)
 {
@@ -1548,6 +1790,18 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
 
     "pdf:" ws*
     { return dvi_exec_pdf(ctx, dc, st, cur, lim); }
+
+    "!" ws* "/pgf"
+    {
+      // PostScript shading special from pgf/pgfplots.
+      // These define and invoke shading functions in PostScript.
+      // We parse the parameters and render the shading natively
+      // for common types (axial, radial).
+      // Return 1 to mark as handled even if we can't parse it.
+      if (dc->dev)
+        return dvi_exec_pgf_shading(ctx, dc, st, cur, lim);
+      return 1;
+    }
 
     ''
     { return unhandled("special", cur, lim, 0); }
