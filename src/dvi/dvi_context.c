@@ -83,6 +83,9 @@ void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev)
   dc->colorstack.depth = 0;
   for (int i = 0; i < dc->pdfcolorstacks.capacity; i++)
     dc->pdfcolorstacks.stacks[i].depth = 0;
+
+  // Reset PS function state to prevent cross-page contamination
+  ps_state_reset();
 }
 
 void dvi_context_end_frame(fz_context *ctx, dvi_context *dc)

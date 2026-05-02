@@ -383,11 +383,22 @@ void dvi_context_end_frame(fz_context *ctx, dvi_context *dc);
 
 #define inlined static inline __attribute__((unused))
 
+// PS state reset (called at begin_frame to prevent cross-page contamination)
+void ps_state_reset(void);
+
+// Debug counter for limiting diagnostic output
+extern int g_debug_ctr;
 inlined fz_matrix dvi_get_ctm(const dvi_context *dc, const dvi_state *st)
 {
   float s = dc->scale;
   int32_t h = st->registers.h - st->gs.h;
   int32_t v = st->registers.v - st->gs.v;
+  if (g_debug_ctr > 0) {
+    fprintf(stderr, "DBG get_ctm: gs.ctm=[%.2f %.2f %.2f %.2f %.2f %.2f] reg.h=%d gs.h=%d reg.v=%d gs.v=%d s=%.4f off=(%.1f,%.1f)\n",
+      st->gs.ctm.a, st->gs.ctm.b, st->gs.ctm.c, st->gs.ctm.d, st->gs.ctm.e, st->gs.ctm.f,
+      st->registers.h, st->gs.h, st->registers.v, st->gs.v, s, h*s, -v*s);
+    g_debug_ctr--;
+  }
   return fz_pre_translate(st->gs.ctm, h * s, - v * s);
 }
 
