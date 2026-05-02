@@ -37,7 +37,7 @@ static void output_fill_rect(fz_context *ctx, dvi_context *dc, dvi_state *st, in
     fz_path *path = fz_new_path(ctx);
     fz_rectto(ctx, path, x0 * s, - y0 * s, x1 * s, - y1 * s);
     fz_fill_path(ctx, dc->dev, path, 0, st->gs.ctm, fz_device_rgb(ctx),
-                 st->gs.colors.fill, 1.0, color_params);
+                 st->gs.colors.fill, st->gs.fill_alpha, color_params);
     fz_drop_path(ctx, path);
   }
 }
@@ -61,7 +61,7 @@ void dvi_context_flush_text(fz_context *ctx, dvi_context *dc, dvi_state *st)
     if (!dc->dev)
       abort();
     fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
-        st->gs.colors.fill, 1.0, color_params);
+        st->gs.colors.fill, st->gs.fill_alpha, color_params);
     fz_drop_text(ctx, dc->text);
     dc->text = NULL;
   }
@@ -326,6 +326,15 @@ void dvi_exec_xdvglyphs(fz_context *ctx, dvi_context *dc, dvi_state *st, fixed_t
                 int num_glyphs, fixed_t *dx, fixed_t dy0, fixed_t *dy, uint16_t *glyphs)
 {
   //fprintf(stderr, "dvi_exec_xdvglyphs: width:%d, chars:%d, glyphs:%d\n", width.value, char_count, num_glyphs);
+  extern int g_debug_ctr;
+  if (g_debug_ctr > 0 && num_glyphs > 0) {
+    fprintf(stderr, "DBG xdvglyphs: reg.h=%d gs.h=%d reg.v=%d gs.v=%d sh=%d sv=%d n=%d ctm=[%.1f %.1f %.1f %.1f %.1f %.1f]\n",
+      st->registers.h, st->gs.h, st->registers.v, st->gs.v,
+      (int32_t)(st->registers.h - st->gs.h), (int32_t)(st->registers.v - st->gs.v),
+      num_glyphs,
+      st->gs.ctm.a, st->gs.ctm.b, st->gs.ctm.c, st->gs.ctm.d, st->gs.ctm.e, st->gs.ctm.f);
+    g_debug_ctr--;
+  }
   dvi_fontdef *def = dvi_current_font(ctx, st);
   if (def->kind != XDV_FONT)
   {

@@ -34,6 +34,9 @@
 #define device_cs fz_device_rgb
 #define color_params fz_default_color_params
 
+// Global debug counter — set >0 to enable diagnostic output
+int g_debug_ctr = 60;
+
 typedef const char *cursor_t;
 
 /*!re2c
@@ -501,7 +504,7 @@ embed_image(fz_context *ctx, dvi_context *dc, dvi_state *st, struct xform_spec *
     else if (h != h)
       h = w / ar;
     ctm = fz_pre_scale(fz_pre_translate(ctm, 0, h), w, -h);
-    fz_fill_image(ctx, dc->dev, img, ctm, 1.0, color_params);
+    fz_fill_image(ctx, dc->dev, img, ctm, st->gs.fill_alpha, color_params);
   }
   fz_always(ctx)
   {
@@ -782,6 +785,40 @@ static fz_font *resolve_special_font(fz_context *ctx, dvi_context *dc, dvi_state
   return font;
 }
 
+// Decode a single UTF-8 code point from str at offset *pi.
+// Returns the Unicode code point and advances *pi past the consumed bytes.
+// Returns 0 and advances by 1 byte on invalid sequence.
+static int decode_utf8(const char *str, size_t len, size_t *pi)
+{
+  size_t i = *pi;
+  unsigned char c = (unsigned char)str[i];
+  int cp;
+  int extra;
+
+  if (c < 0x80) {
+    *pi = i + 1;
+    return c;
+  }
+  if (c < 0xC2) goto invalid;
+  if (c < 0xE0)      { cp = c & 0x1F; extra = 1; }
+  else if (c < 0xF0) { cp = c & 0x0F; extra = 2; }
+  else if (c < 0xF8) { cp = c & 0x07; extra = 3; }
+  else goto invalid;
+
+  *pi = i + 1 + extra;
+  if (i + extra >= len) return 0;
+  for (int j = 0; j < extra; j++) {
+    unsigned char nb = (unsigned char)str[i + 1 + j];
+    if ((nb & 0xC0) != 0x80) return 0;
+    cp = (cp << 6) | (nb & 0x3F);
+  }
+  return cp;
+
+invalid:
+  *pi = i + 1;
+  return 0;
+}
+
 // Show a text string for Tj operator, advancing text matrix.
 static void show_special_text(fz_context *ctx, dvi_context *dc, dvi_state *st,
                                const char *str, size_t len, fz_font *font)
@@ -796,16 +833,25 @@ static void show_special_text(fz_context *ctx, dvi_context *dc, dvi_state *st,
   float fs = st->gs.text.font_size;
   float hs = st->gs.text.scale;
 
-  for (size_t i = 0; i < len; i++)
+  size_t i = 0;
+  while (i < len)
   {
-    int glyph = fz_encode_character(ctx, font, (unsigned char)str[i]);
-    if (glyph == 0)
+    int cp = decode_utf8(str, len, &i);
+    if (cp == 0)
       continue;
+    int glyph = fz_encode_character(ctx, font, cp);
+    if (glyph == 0)
+    {
+      // For missing glyphs, advance Tm by a default space to avoid overlap
+      float tx = fs * 0.25f * hs;
+      st->gs.text.Tm = fz_pre_translate(st->gs.text.Tm, tx, 0);
+      continue;
+    }
     float adv = fz_advance_glyph(ctx, font, glyph, 0);
     fz_matrix trm = st->gs.text.Tm;
     trm = fz_pre_scale(trm, fs * hs, fs);
     trm = fz_concat(trm, ctm);
-    fz_show_glyph(ctx, text, font, trm, glyph, str[i], 0, 0, FZ_BIDI_LTR, FZ_LANG_UNSET);
+    fz_show_glyph(ctx, text, font, trm, glyph, cp, 0, 0, FZ_BIDI_LTR, FZ_LANG_UNSET);
     // Advance text matrix horizontally
     float tx = (adv * fs + st->gs.text.char_space) * hs + st->gs.text.word_space;
     st->gs.text.Tm = fz_pre_translate(st->gs.text.Tm, tx, 0);
@@ -820,6 +866,16 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
   fz_var(stack);
 
   // fprintf(stderr, "pdf code: %.*s\n", (int)(lim - cur), cur);
+  // Diagnostics: log first few PDF code snippets
+  static int code_call_ctr = 30;
+  if (code_call_ctr > 0) {
+    int preview_len = lim - cur;
+    if (preview_len > 50) preview_len = 50;
+    fprintf(stderr, "DBG pdf_code[%d]: '%.*s'%s  dev=%p  gs_depth=%d\n",
+      30-code_call_ctr, preview_len, cur,
+      (lim-cur > 50) ? "..." : "", (void*)dc->dev, st->gs_stack.depth);
+    code_call_ctr--;
+  }
   fz_try(ctx)
   {
     enum PDF_OP op;
@@ -835,8 +891,10 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           fz_matrix mat;
           mat.a = fmat[0]; mat.b = fmat[1]; mat.c = fmat[2];
           mat.d = fmat[3]; mat.e = fmat[4]; mat.f = fmat[5];
+          if (g_debug_ctr > 0) { fprintf(stderr, "DBG cm: mat=[%.2f %.2f %.2f %.2f %.2f %.2f]\n", mat.a, mat.b, mat.c, mat.d, mat.e, mat.f); g_debug_ctr--; }
           fz_matrix ctm = fz_concat(mat, dvi_get_ctm(dc, st));
           dvi_set_ctm(st, ctm);
+          if (g_debug_ctr > 0) { fprintf(stderr, "DBG cm result: gs.ctm=[%.2f %.2f %.2f %.2f %.2f %.2f] gs.h=%d gs.v=%d\n", st->gs.ctm.a, st->gs.ctm.b, st->gs.ctm.c, st->gs.ctm.d, st->gs.ctm.e, st->gs.ctm.f, st->gs.h, st->gs.v); g_debug_ctr--; }
           break;
         }
         case PDF_OP_q:
@@ -958,6 +1016,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
         }
 
         case PDF_OP_b:
+          if (g_debug_ctr > 0) { fprintf(stderr, "DBG b (close+fill+stroke): dev=%p\n", (void*)dc->dev); g_debug_ctr--; }
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
@@ -966,9 +1025,9 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_path *path = get_path(ctx, dc);
             fz_closepath(ctx, path);
             fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -982,14 +1041,15 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_path *path = get_path(ctx, dc);
             fz_closepath(ctx, path);
             fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
 
         case PDF_OP_B:
+          if (g_debug_ctr > 0) { fprintf(stderr, "DBG B (fill+stroke): dev=%p\n", (void*)dc->dev); g_debug_ctr--; }
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
@@ -997,9 +1057,9 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -1012,21 +1072,22 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.fill, 1.0, color_params);
+                           st->gs.colors.fill, st->gs.fill_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
 
         case PDF_OP_f:
         case PDF_OP_F:
+          if (g_debug_ctr > 0) { fprintf(stderr, "DBG FILL: dev=%p line=[%.2f %.2f %.2f]\n", (void*)dc->dev, st->gs.colors.line[0], st->gs.colors.line[1], st->gs.colors.line[2]); g_debug_ctr--; }
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -1037,12 +1098,13 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_matrix ctm = dvi_get_ctm(dc, st);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
 
         case PDF_OP_S:
+          if (g_debug_ctr > 0) { fprintf(stderr, "DBG STROKE: dev=%p fill=[%.2f %.2f %.2f] lw=%.2f\n", (void*)dc->dev, st->gs.colors.fill[0], st->gs.colors.fill[1], st->gs.colors.fill[2], st->gs.line_width); g_debug_ctr--; }
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
@@ -1050,7 +1112,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -1064,7 +1126,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_path *path = get_path(ctx, dc);
             fz_closepath(ctx, path);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -1086,6 +1148,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
 
         case PDF_OP_n:
         {
+          if (g_debug_ctr > 0) { fprintf(stderr, "DBG n (drop path)\n"); g_debug_ctr--; }
           drop_path(ctx, dc);
           break;
         }
@@ -1395,19 +1458,31 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           break;
         }
         case PDF_OP_SC:
+        {
+          float c[3];
+          vstack_get_floats(ctx, stack, c, 3);
+          color_set_rgb(st->gs.colors.line, c[0], c[1], c[2]);
+          break;
+        }
         case PDF_OP_sc:
         {
-          // N color components. Most common is RGB=3. Pop 3 floats.
-          float c[4] = {0};
-          vstack_get_floats(ctx, stack, c, 3); // assume 3 components (RGB)
+          float c[3];
+          vstack_get_floats(ctx, stack, c, 3);
+          color_set_rgb(st->gs.colors.fill, c[0], c[1], c[2]);
           break;
         }
         case PDF_OP_SCN:
+        {
+          float c[3];
+          vstack_get_floats(ctx, stack, c, 3);
+          color_set_rgb(st->gs.colors.line, c[0], c[1], c[2]);
+          break;
+        }
         case PDF_OP_scn:
         {
-          // N color components + optional pattern name. Pop 3 floats.
-          float c[4] = {0};
-          vstack_get_floats(ctx, stack, c, 3); // assume 3 components (RGB)
+          float c[3];
+          vstack_get_floats(ctx, stack, c, 3);
+          color_set_rgb(st->gs.colors.fill, c[0], c[1], c[2]);
           break;
         }
 
@@ -1581,6 +1656,332 @@ static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
                  color, st->gs.fill_alpha, color_params);
     fz_drop_path(ctx, path);
   }
+}
+
+// ---- PS (PostScript) command interpreter for PGF/TikZ ----
+// PGF/TikZ outputs PostScript drawing commands via \special{ps:: ...}
+// We maintain a small value stack and a function dictionary.
+
+#define PS_STACK_MAX 32
+#define PS_FUNC_MAX  16
+
+typedef struct {
+  char name[32];
+  char body[256];
+  int body_len;
+} ps_func_def;
+
+static float ps_stack[PS_STACK_MAX];
+static int   ps_sp = 0;
+static ps_func_def ps_funcs[PS_FUNC_MAX];
+static int   ps_func_count = 0;
+
+static void ps_push(float v)   { if (ps_sp < PS_STACK_MAX) ps_stack[ps_sp++] = v; }
+static float ps_pop()           { return ps_sp > 0 ? ps_stack[--ps_sp] : 0.0f; }
+static int   ps_depth()         { return ps_sp; }
+static void  ps_clear()         { ps_sp = 0; }
+void ps_state_reset()           { ps_sp = 0; ps_func_count = 0; }
+
+static void ps_define_func(const char *name, int nl, const char *body, int bl)
+{
+  // Overwrite existing definition with the same name
+  for (int i = 0; i < ps_func_count; i++) {
+    if ((int)strlen(ps_funcs[i].name) == nl && memcmp(ps_funcs[i].name, name, nl) == 0) {
+      if (bl > 255) bl = 255;
+      memcpy(ps_funcs[i].body, body, bl);
+      ps_funcs[i].body[bl] = 0;
+      ps_funcs[i].body_len = bl;
+      return;
+    }
+  }
+  // New definition
+  if (ps_func_count >= PS_FUNC_MAX) return;
+  ps_func_def *f = &ps_funcs[ps_func_count++];
+  if (nl > 31) nl = 31;  memcpy(f->name, name, nl); f->name[nl] = 0;
+  if (bl > 255) bl = 255; memcpy(f->body, body, bl); f->body[bl] = 0;
+  f->body_len = bl;
+}
+
+static const char *ps_lookup_func(const char *name)
+{
+  for (int i = 0; i < ps_func_count; i++)
+    if (strcmp(ps_funcs[i].name, name) == 0) return ps_funcs[i].body;
+  return NULL;
+}
+
+enum { PS_COLOR_FILL=0, PS_COLOR_STROKE=1, PS_COLOR_BOTH=2 };
+static void ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
+                          const char *body, int body_len, int color_target);
+
+static bool
+ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t lim)
+{
+  static int ps_call_cnt = 0;
+  if (ps_call_cnt < 3) {
+    int pl = lim - cur; if (pl > 60) pl = 60;
+    fprintf(stderr, "PS_CODE_V2 [%d]: %.*s dev=%p\n", ps_call_cnt, pl, cur, (void*)dc->dev);
+    ps_call_cnt++;
+  }
+  const char *p = cur, *end = lim;
+
+  while (p < end)
+  {
+    while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) p++;
+    if (p >= end) break;
+
+    // Handle function definition:  /name{body}def
+    if (*p == '/')
+    {
+      p++;
+      const char *ns = p;
+      while (p < end && *p != '{' && *p != ' ') p++;
+      int nl = p - ns;
+      while (p < end && *p == ' ') p++;
+      if (p < end && *p == '{') {
+        p++;
+        const char *bs = p;
+        int depth = 1;
+        while (p < end && depth > 0) {
+          if (*p == '{') depth++; else if (*p == '}') depth--;
+          p++;
+        }
+        int bl = p - bs - 1; // without closing }
+        while (p < end && *p == ' ') p++;
+        if (p + 3 <= end && memcmp(p, "def", 3) == 0) {
+          p += 3;
+          ps_define_func(ns, nl, bs, bl);
+          fprintf(stderr, "DBG ps_def: /%.*s = %.*s\n", nl, ns, bl, bs);
+          continue;
+        }
+      }
+      continue;
+    }
+
+    // Parse token
+    const char *ts = p;
+    while (p < end && *p != ' ' && *p != '\n' && *p != '\r' && *p != '\t') p++;
+    int tl = p - ts;
+    if (tl == 0) continue;
+
+    char tmp[64];
+    if (tl > 63) tl = 63;
+    memcpy(tmp, ts, tl); tmp[tl] = 0;
+
+    // Try as number
+    char *ep;
+    float fv = strtof(tmp, &ep);
+    if (ep == tmp + tl && tl > 0 && tmp[0] != '/' && tmp[0] != '[' && tmp[0] != ']')
+    {
+      ps_push(fv);
+      continue;
+    }
+
+    // --- Command dispatch ---
+    // Path building
+    if (strcmp(tmp, "moveto") == 0) {
+      if (ps_depth() >= 2) { float y=ps_pop(), x=ps_pop(); fz_moveto(ctx, get_path(ctx,dc), x, y); }
+    }
+    else if (strcmp(tmp, "lineto") == 0) {
+      if (ps_depth() >= 2) { float y=ps_pop(), x=ps_pop(); fz_lineto(ctx, get_path(ctx,dc), x, y); }
+    }
+    else if (strcmp(tmp, "curveto") == 0) {
+      if (ps_depth() >= 6) {
+        float y3=ps_pop(),x3=ps_pop(), y2=ps_pop(),x2=ps_pop(), y1=ps_pop(),x1=ps_pop();
+        fz_curveto(ctx, get_path(ctx,dc), x1,y1, x2,y2, x3,y3);
+      }
+    }
+    else if (strcmp(tmp, "closepath") == 0) {
+      fz_closepath(ctx, get_path(ctx,dc));
+    }
+    else if (strcmp(tmp, "newpath") == 0) {
+      drop_path(ctx, dc);
+    }
+    // PGF fill / stroke
+    else if (strcmp(tmp, "pgffill") == 0) {
+      const char *b = ps_lookup_func("pgffc");
+      if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
+      float *fc = st->gs.colors.fill;
+      fprintf(stderr, "DBG pgffill: pgffc=%s FILL=[%.2f %.2f %.2f] alpha=%.2f\n",
+              b&&*b?b:"(empty)", fc[0], fc[1], fc[2], st->gs.fill_alpha);
+      if (dc->dev) {
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
+                     device_cs(ctx), fc, st->gs.fill_alpha, color_params);
+      }
+      drop_path(ctx, dc);
+    }
+    else if (strcmp(tmp, "pgfstr") == 0) {
+      const char *b = ps_lookup_func("pgfsc");
+      if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_STROKE);
+      float *lc = st->gs.colors.line;
+      fprintf(stderr, "DBG pgfstr: pgfsc=%s LINE=[%.2f %.2f %.2f] lw=%.2f alpha=%.2f\n",
+              b&&*b?b:"(empty)", lc[0], lc[1], lc[2], st->gs.line_width, st->gs.stroke_alpha);
+      if (dc->dev) {
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        fz_stroke_state sst;
+        get_stroke_state(ctx, st, &sst);
+        fz_stroke_path(ctx, dc->dev, get_path(ctx,dc), &sst, ctm,
+                       device_cs(ctx), lc, st->gs.stroke_alpha, color_params);
+      }
+      drop_path(ctx, dc);
+    }
+    // Graphics state
+    else if (strcmp(tmp, "gsave") == 0 || strcmp(tmp, "save") == 0) {
+      if (st->gs_stack.depth < st->gs_stack.limit) {
+        st->gs_stack.base[st->gs_stack.depth] = st->gs;
+        st->gs_stack.depth += 1;
+      }
+    }
+    else if (strcmp(tmp, "grestore") == 0 || strcmp(tmp, "restore") == 0) {
+      if (st->gs_stack.depth > 0) {
+        int cd0 = st->gs.clip_depth;
+        st->gs_stack.depth -= 1;
+        st->gs = st->gs_stack.base[st->gs_stack.depth];
+        if (dc->dev) for (int i = st->gs.clip_depth; i < cd0; ++i) fz_pop_clip(ctx, dc->dev);
+      }
+    }
+    // Line width
+    else if (strcmp(tmp, "pgfw") == 0 || strcmp(tmp, "setlinewidth") == 0) {
+      if (ps_depth() >= 1) st->gs.line_width = ps_pop();
+    }
+    // Line cap / join
+    else if (strcmp(tmp, "setlinecap") == 0) {
+      if (ps_depth() >= 1) st->gs.line_caps = (int)ps_pop();
+    }
+    else if (strcmp(tmp, "setlinejoin") == 0) {
+      if (ps_depth() >= 1) st->gs.line_join = (int)ps_pop();
+    }
+    // Dash pattern
+    else if (strcmp(tmp, "setdash") == 0) {
+      if (ps_depth() >= 1) {
+        // The top of stack should be the dash offset; the array is handled
+        // separately. For simplicity, pop the offset and ignore the array.
+        float ph = ps_pop();
+        st->gs.dash_phase = ph;
+        // dash_len and dash[] would ideally be set from an array.
+        // For now, don't change dash settings (they're set by PGF functions)
+      }
+    }
+    // Inline PS color operators: set the "current color" in PostScript,
+    // which affects both fill and stroke. We apply them to both fill
+    // and line colors so that subsequent pgfstr/pgffill use the right
+    // color even when pgfsc/pgffc are not redefined.
+    else if (strcmp(tmp, "setgray") == 0) {
+      if (ps_depth() >= 1) {
+        float g = ps_pop();
+        color_set_gray(st->gs.colors.fill, g);
+        color_set_gray(st->gs.colors.line, g);
+      }
+    }
+    else if (strcmp(tmp, "setrgbcolor") == 0) {
+      if (ps_depth() >= 3) {
+        float b = ps_pop(), g = ps_pop(), r = ps_pop();
+        color_set_rgb(st->gs.colors.fill, r, g, b);
+        color_set_rgb(st->gs.colors.line, r, g, b);
+      }
+    }
+    else if (strcmp(tmp, "setcmykcolor") == 0) {
+      if (ps_depth() >= 4) {
+        float k = ps_pop(), y = ps_pop(), m = ps_pop(), c = ps_pop();
+        color_set_cmyk(st->gs.colors.fill, c, m, y, k);
+        color_set_cmyk(st->gs.colors.line, c, m, y, k);
+      }
+    }
+    // PGF ellipse (rx ry x y pgfe)
+    else if (strcmp(tmp, "pgfe") == 0) {
+      if (ps_depth() >= 4) {
+        float y=ps_pop(), x=ps_pop(), ry=ps_pop(), rx=ps_pop();
+        fz_path *path = get_path(ctx, dc);
+        float k = 0.5522847498f;
+        fz_moveto(ctx, path, x+rx, y);
+        fz_curveto(ctx, path, x+rx,y+k*ry, x+k*rx,y+ry, x,y+ry);
+        fz_curveto(ctx, path, x-k*rx,y+ry, x-rx,y+k*ry, x-rx,y);
+        fz_curveto(ctx, path, x-rx,y-k*ry, x-k*rx,y-ry, x,y-ry);
+        fz_curveto(ctx, path, x+k*rx,y-ry, x+rx,y-k*ry, x+rx,y);
+        fz_closepath(ctx, path);
+      }
+    }
+    // PGF cleanup / end markers
+    else if (strcmp(tmp, "pgfc") == 0) { /* no-op */ }
+    // Try as a user-defined function call
+    else {
+      const char *b = ps_lookup_func(tmp);
+      if (b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_BOTH);
+    }
+  }
+
+  ps_clear();
+  return 1;
+}
+
+// Execute a stored PS function body (simple token interpreter)
+static void
+ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
+              const char *body, int body_len, int color_target)
+{
+  const char *p = body, *end = body + body_len;
+  while (p < end)
+  {
+    while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) p++;
+    if (p >= end) break;
+
+    const char *ts = p;
+    while (p < end && *p != ' ' && *p != '\n' && *p != '\r' && *p != '\t') p++;
+    int tl = p - ts;
+    if (tl == 0) continue;
+
+    char tmp[64];
+    if (tl > 63) tl = 63;
+    memcpy(tmp, ts, tl); tmp[tl] = 0;
+
+    char *ep;
+    float fv = strtof(tmp, &ep);
+    if (ep == tmp + tl && tl > 0 && tmp[0] != '/') {
+      ps_push(fv);
+      continue;
+    }
+
+    int ct = color_target;
+    // Same commands as ps_code but without function defs
+    if (strcmp(tmp, "setgray") == 0) {
+      if (ps_depth() >= 1) { float g=ps_pop();
+        if (ct != PS_COLOR_STROKE) color_set_gray(st->gs.colors.fill,g);
+        if (ct != PS_COLOR_FILL)   color_set_gray(st->gs.colors.line,g);
+      }
+    }
+    else if (strcmp(tmp, "setrgbcolor") == 0) {
+      if (ps_depth() >= 3) { float b=ps_pop(),g=ps_pop(),r=ps_pop();
+        if (ct != PS_COLOR_STROKE) color_set_rgb(st->gs.colors.fill,r,g,b);
+        if (ct != PS_COLOR_FILL)   color_set_rgb(st->gs.colors.line,r,g,b);
+      }
+    }
+    else if (strcmp(tmp, "setcmykcolor") == 0) {
+      if (ps_depth() >= 4) { float k=ps_pop(),y=ps_pop(),m=ps_pop(),c=ps_pop();
+        if (ct != PS_COLOR_STROKE) color_set_cmyk(st->gs.colors.fill,c,m,y,k);
+        if (ct != PS_COLOR_FILL)   color_set_cmyk(st->gs.colors.line,c,m,y,k);
+      }
+    }
+    else if (strcmp(tmp, "fillopacity") == 0) {
+      if (ps_depth() >= 1) st->gs.fill_alpha = ps_pop();
+    }
+    else if (strcmp(tmp, "strokeopacity") == 0) {
+      if (ps_depth() >= 1) st->gs.stroke_alpha = ps_pop();
+    }
+    else if (strcmp(tmp, "pgfw") == 0 || strcmp(tmp, "setlinewidth") == 0) {
+      if (ps_depth() >= 1) st->gs.line_width = ps_pop();
+    }
+    else if (strcmp(tmp, "setlinecap") == 0) {
+      if (ps_depth() >= 1) st->gs.line_caps = (int)ps_pop();
+    }
+    else if (strcmp(tmp, "setlinejoin") == 0) {
+      if (ps_depth() >= 1) st->gs.line_join = (int)ps_pop();
+    }
+    else if (strcmp(tmp, "setdash") == 0) {
+      if (ps_depth() >= 1) { st->gs.dash_phase = ps_pop(); }
+    }
+    // ignore other commands in body (e.g., moveto, pgfw in function defs)
+  }
+  ps_clear();
 }
 
 // Parse a pgf PostScript shading special and render natively.
@@ -1773,6 +2174,10 @@ dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, curs
 
   @f0 ("bcontent" | "econtent") @f1
   {
+    // bcontent/econtent: these delimit content streams but the tikz
+    // engine also emits explicit q/Q and btrans/etrans for state
+    // management. Treating these as gsave/grestore would double-push
+    // and cause the text to lose the btrans CTM.
     if (f1 != lim)
       fprintf(stderr, "unhandled pdf content: %.*s\n",
               (int)(lim - f0), f0);
@@ -1785,11 +2190,20 @@ dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, curs
     if (!colorstack_push(ctx, dc, st, -1))
       return 0;
     if (f3)
+    {
       color_set_cmyk(st->gs.colors.fill, pfloat(f0, lim), pfloat(f1, lim), pfloat(f2, lim), pfloat(f3, lim));
+      color_set_cmyk(st->gs.colors.line, pfloat(f0, lim), pfloat(f1, lim), pfloat(f2, lim), pfloat(f3, lim));
+    }
     else if (f1)
+    {
       color_set_rgb(st->gs.colors.fill, pfloat(f0, lim), pfloat(f1, lim), pfloat(f2, lim));
+      color_set_rgb(st->gs.colors.line, pfloat(f0, lim), pfloat(f1, lim), pfloat(f2, lim));
+    }
     else
+    {
       color_set_gray(st->gs.colors.fill, pfloat(f4 ? f4 : f0, lim));
+      color_set_gray(st->gs.colors.line, pfloat(f4 ? f4 : f0, lim));
+    }
     return 1;
   }
 
@@ -1814,7 +2228,8 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
 {
   cursor_t mar, i, j;
 
-  // fprintf(stderr, "special: %.*s\n", (int)(lim - cur), cur);
+  { int plen = lim - cur; if (plen > 60) plen = 60;
+    fprintf(stderr, "TRACE sp(%.*s) gs.h=%d gs.v=%d\n", plen, cur, st->gs.h, st->gs.v); }
 
   for (;;)
   {
@@ -1880,6 +2295,18 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
       if (dc->dev)
         return dvi_exec_pgf_shading(ctx, dc, st, cur, lim);
       return 1;
+    }
+
+    "ps:" ws*
+    {
+      // ps: (single colon) — state management: pgfsc/pgffc clear, etc.
+      // Process same as ps:: so that pgfsc{}/pgffc{} clears take effect.
+      return ps_code(ctx, dc, st, cur, lim);
+    }
+
+    "ps::" ws*
+    {
+      return ps_code(ctx, dc, st, cur, lim);
     }
 
     ''
