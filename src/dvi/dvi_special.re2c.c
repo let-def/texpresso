@@ -1907,6 +1907,41 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         fz_closepath(ctx, path);
       }
     }
+    // PS concat: [a b c d e f] concat — concatenate matrix to CTM
+    // This is how PGF/dvips driver applies translations and transformations
+    else if (strcmp(tmp, "concat") == 0) {
+      if (ps_depth() >= 6) {
+        float f=ps_pop(), e=ps_pop(), d=ps_pop(), c=ps_pop(), b=ps_pop(), a=ps_pop();
+        fz_matrix mat;
+        mat.a = a; mat.b = b; mat.c = c;
+        mat.d = d; mat.e = e; mat.f = f;
+        st->gs.ctm = fz_concat(mat, st->gs.ctm);
+        st->gs.h = st->registers.h;
+        st->gs.v = st->registers.v;
+        ps_clear(); // consume any leftover values
+      }
+    }
+    // PGF opacity commands
+    else if (strcmp(tmp, ".pgfsetfillopacityalpha") == 0) {
+      if (ps_depth() >= 1) st->gs.fill_alpha = ps_pop();
+    }
+    else if (strcmp(tmp, ".pgfsetstrokeopacityalpha") == 0) {
+      if (ps_depth() >= 1) st->gs.stroke_alpha = ps_pop();
+    }
+    // PS stack operations
+    else if (strcmp(tmp, "dup") == 0) {
+      if (ps_depth() >= 1) { float v = ps_pop(); ps_push(v); ps_push(v); }
+    }
+    else if (strcmp(tmp, "pop") == 0) {
+      ps_pop(); // discard top of stack
+    }
+    else if (strcmp(tmp, "get") == 0 || strcmp(tmp, "ifelse") == 0) {
+      // PS dict/array get and conditional — not needed, consume 2 values
+      if (ps_depth() >= 2) { ps_pop(); ps_pop(); }
+    }
+    else if (strcmp(tmp, "/pgfsmaskinplace") == 0) {
+      // PGF soft mask placeholder — no-op for now
+    }
     // PGF cleanup / end markers
     else if (strcmp(tmp, "pgfc") == 0) { /* no-op */ }
     // Try as a user-defined function call
@@ -2060,6 +2095,36 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
         fz_curveto(ctx, path, x+k*rx,y-ry, x+rx,y-k*ry, x+rx,y);
         fz_closepath(ctx, path);
       }
+    }
+    // concat for CTM transforms within function bodies
+    else if (strcmp(tmp, "concat") == 0) {
+      if (ps_depth() >= 6) {
+        float f=ps_pop(), e=ps_pop(), d=ps_pop(), c=ps_pop(), b=ps_pop(), a=ps_pop();
+        fz_matrix mat;
+        mat.a = a; mat.b = b; mat.c = c;
+        mat.d = d; mat.e = e; mat.f = f;
+        st->gs.ctm = fz_concat(mat, st->gs.ctm);
+        st->gs.h = st->registers.h;
+        st->gs.v = st->registers.v;
+        ps_clear();
+      }
+    }
+    // PGF opacity within function bodies
+    else if (strcmp(tmp, ".pgfsetfillopacityalpha") == 0) {
+      if (ps_depth() >= 1) st->gs.fill_alpha = ps_pop();
+    }
+    else if (strcmp(tmp, ".pgfsetstrokeopacityalpha") == 0) {
+      if (ps_depth() >= 1) st->gs.stroke_alpha = ps_pop();
+    }
+    // PS stack ops within function bodies
+    else if (strcmp(tmp, "dup") == 0) {
+      if (ps_depth() >= 1) { float v = ps_pop(); ps_push(v); ps_push(v); }
+    }
+    else if (strcmp(tmp, "pop") == 0) {
+      ps_pop();
+    }
+    else if (strcmp(tmp, "get") == 0 || strcmp(tmp, "ifelse") == 0) {
+      if (ps_depth() >= 2) { ps_pop(); ps_pop(); }
     }
     // ignore other commands in body
   }
