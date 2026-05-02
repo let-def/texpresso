@@ -69,9 +69,10 @@ dim     = float unit;
 static bool
 unhandled(const char *kind, cursor_t cur, cursor_t lim, int ignored)
 {
-  if (!ignored)
-    fprintf(stderr, "unhandled %s: \"%.*s\"\n", kind, (int)(lim - cur), cur);
-  return 1;  // Don't abort page rendering for unrecognized specials
+  (void)kind; (void)cur; (void)lim; (void)ignored;
+  // Don't print warnings for unrecognized specials to keep output clean.
+  // Return 1 to prevent aborting page rendering.
+  return 1;
 }
 
 static int pnat(cursor_t ptr, cursor_t lim)
