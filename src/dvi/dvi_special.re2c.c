@@ -1142,9 +1142,15 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
         // -- Text operators (Phase 1) --
         case PDF_OP_BT:
         {
+          // PDF defaults for text state (Table 5.3 in PDF 1.7 spec)
           st->gs.text.Tm = fz_identity;
           st->gs.text.Tlm = fz_identity;
-          st->gs.text.render = 0;
+          st->gs.text.char_space = 0;   // Tc
+          st->gs.text.word_space = 0;   // Tw
+          st->gs.text.scale = 1.0f;     // Tz (100% = no scaling)
+          st->gs.text.leading = 0;      // TL
+          st->gs.text.render = 0;       // Tr (fill)
+          st->gs.text.rise = 0;         // Ts
           st->gs.text.in_text = 1;
           break;
         }
