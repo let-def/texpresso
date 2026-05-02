@@ -1767,16 +1767,26 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     if (tl > 63) tl = 63;
     memcpy(tmp, ts, tl); tmp[tl] = 0;
 
-    // Try as number
+    // Try as number (strip [ and ] from PS array syntax like [1.0 or -4.08])
+    char *num_start = tmp;
+    if (*num_start == '[') num_start++;
+    int num_len = strlen(num_start);
+    if (num_len > 0 && num_start[num_len-1] == ']') {
+      num_start[num_len-1] = 0;
+      num_len--;
+    }
     char *ep;
-    float fv = strtof(tmp, &ep);
-    if (ep == tmp + tl && tl > 0 && tmp[0] != '/' && tmp[0] != '[' && tmp[0] != ']')
+    float fv = strtof(num_start, &ep);
+    if (ep == num_start + num_len && num_len > 0 && *num_start != '/')
     {
       ps_push(fv);
       continue;
     }
 
     // --- Command dispatch ---
+    // PS array markers (standalone [ and ])
+    if (tmp[0] == '[' && tmp[1] == 0) continue;
+    if (tmp[0] == ']' && tmp[1] == 0) continue;
     // Path building
     if (strcmp(tmp, "moveto") == 0) {
       if (ps_depth() >= 2) { float y=ps_pop(), x=ps_pop(); fz_moveto(ctx, get_path(ctx,dc), x, y); }
@@ -1975,14 +1985,25 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
     if (tl > 63) tl = 63;
     memcpy(tmp, ts, tl); tmp[tl] = 0;
 
+    // Strip [ and ] from PS array syntax
+    char *num_start = tmp;
+    if (*num_start == '[') num_start++;
+    int num_len = strlen(num_start);
+    if (num_len > 0 && num_start[num_len-1] == ']') {
+      num_start[num_len-1] = 0;
+      num_len--;
+    }
     char *ep;
-    float fv = strtof(tmp, &ep);
-    if (ep == tmp + tl && tl > 0 && tmp[0] != '/') {
+    float fv = strtof(num_start, &ep);
+    if (ep == num_start + num_len && num_len > 0 && *num_start != '/') {
       ps_push(fv);
       continue;
     }
 
     int ct = color_target;
+    // PS array markers
+    if (tmp[0] == '[' && tmp[1] == 0) continue;
+    if (tmp[0] == ']' && tmp[1] == 0) continue;
     // Same commands as ps_code but without function defs
     if (strcmp(tmp, "setgray") == 0) {
       if (ps_depth() >= 1) { float g=ps_pop();
