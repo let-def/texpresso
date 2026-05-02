@@ -1922,8 +1922,9 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     }
     // PS concat: [a b c d e f] concat — concatenate matrix to CTM
     // This is how PGF/dvips driver applies translations and transformations.
-    // PGF emits absolute page positions, so we concat from the frame base CTM
-    // rather than accumulating from the current CTM.
+    // PS coordinates are relative to the page top-left (Y-down),
+    // device coordinates are relative to page bottom-left (Y-up).
+    // Conversion: device_y = page_height - 72 - ps_y
     else if (strcmp(tmp, "concat") == 0) {
       if (ps_depth() >= 6) {
         float f=ps_pop(), e=ps_pop(), d=ps_pop(), c=ps_pop(), b=ps_pop(), a=ps_pop();
@@ -1931,9 +1932,12 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         mat.a = a; mat.b = b; mat.c = c;
         mat.d = d; mat.e = e; mat.f = f;
         st->gs.ctm = fz_concat(mat, dc->base_ctm);
+        // Fix Y: PS Y-down-from-top → device Y-up-from-bottom
+        if (dc->page_height > 0)
+          st->gs.ctm.f = dc->page_height - 72 - mat.f;
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
-        ps_clear(); // consume any leftover values
+        ps_clear();
       }
     }
     // PGF opacity commands
@@ -2155,6 +2159,8 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
         mat.a = a; mat.b = b; mat.c = c;
         mat.d = d; mat.e = e; mat.f = f;
         st->gs.ctm = fz_concat(mat, dc->base_ctm);
+        if (dc->page_height > 0)
+          st->gs.ctm.f = dc->page_height - 72 - mat.f;
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
         ps_clear();
@@ -2363,7 +2369,11 @@ dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, curs
   { return 1; }
 
   "papersize=" @f0 dim "," @f1 dim
-  { return 1; }
+  {
+    dc->page_width  = pdim(f0, lim);
+    dc->page_height = pdim(f1, lim);
+    return 1;
+  }
 
   @f0 "image" ws+ @pxform ([a-z] | ws | float)* @pstart "("
   {
