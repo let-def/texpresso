@@ -372,6 +372,8 @@ typedef struct
 
   // Saved frame base CTM (for PS concat to build from)
   fz_matrix base_ctm;
+  // Page dimensions in big points (for PS coordinate conversion)
+  float page_width, page_height;
 } dvi_context;
 
 #define DC_ALLOC(ctx, dc, type, count) ((type*)dvi_scratch_alloc(ctx, &(dc)->scratch, sizeof(type) * (count)))
