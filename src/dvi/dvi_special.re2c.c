@@ -1682,6 +1682,55 @@ static int   ps_depth()         { return ps_sp; }
 static void  ps_clear()         { ps_sp = 0; }
 void ps_state_reset()           { ps_sp = 0; ps_func_count = 0; }
 
+// Forward declaration
+static void ps_define_func(const char *name, int nl, const char *body, int bl);
+
+// Parse PS function definitions from a string without executing any commands.
+// Handles both "def" and "bind def". Used to pre-scan "!" /pgf specials.
+static void ps_parse_defs(const char *p, const char *end)
+{
+  while (p < end)
+  {
+    while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) p++;
+    if (p >= end) break;
+
+    if (*p != '/') {
+      // Skip non-definition tokens
+      while (p < end && *p != ' ' && *p != '\n' && *p != '\r' && *p != '\t' && *p != '/') p++;
+      continue;
+    }
+    p++; // skip '/'
+    const char *ns = p;
+    while (p < end && *p != '{' && *p != ' ' && *p != '\n' && *p != '\r' && *p != '\t') p++;
+    int nl = p - ns;
+    while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) p++;
+    if (p >= end || *p != '{') continue;
+    p++; // skip '{'
+    const char *bs = p;
+    int depth = 1;
+    while (p < end && depth > 0) {
+      if (*p == '{') depth++; else if (*p == '}') depth--;
+      p++;
+    }
+    int bl = p - bs - 1;
+    while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) p++;
+    // Handle both "bind def" and "def"
+    bool is_bind = false;
+    if (p + 4 <= end && memcmp(p, "bind", 4) == 0) {
+      is_bind = true;
+      p += 4;
+      while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) p++;
+    }
+    if (p + 3 <= end && memcmp(p, "def", 3) == 0) {
+      p += 3;
+      if (nl > 0 && bl >= 0) {
+        ps_define_func(ns, nl, bs, bl);
+        fprintf(stderr, "DBG ps_def[!]: /%.*s = %.*s%s\n", nl, ns, bl, bs, is_bind ? " [bind]" : "");
+      }
+    }
+  }
+}
+
 static void ps_define_func(const char *name, int nl, const char *body, int bl)
 {
   // Overwrite existing definition with the same name
@@ -1747,10 +1796,17 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         }
         int bl = p - bs - 1; // without closing }
         while (p < end && *p == ' ') p++;
+        // Support both "def" and "bind def"
+        bool is_bind = false;
+        if (p + 4 <= end && memcmp(p, "bind", 4) == 0) {
+          is_bind = true;
+          p += 4;
+          while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) p++;
+        }
         if (p + 3 <= end && memcmp(p, "def", 3) == 0) {
           p += 3;
           ps_define_func(ns, nl, bs, bl);
-          fprintf(stderr, "DBG ps_def: /%.*s = %.*s\n", nl, ns, bl, bs);
+          fprintf(stderr, "DBG ps_def: /%.*s = %.*s%s\n", nl, ns, bl, bs, is_bind ? " [bind]" : "");
           continue;
         }
       }
@@ -2547,13 +2603,17 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
 
     "!" ws* "/pgf"
     {
-      // PostScript shading special from pgf/pgfplots.
-      // These define and invoke shading functions in PostScript.
-      // We parse the parameters and render the shading natively
-      // for common types (axial, radial).
-      // Return 1 to mark as handled even if we can't parse it.
-      if (dc->dev)
+      // PGF "!" specials contain two kinds of content:
+      // 1. Function definitions (pgfsc, pgffc, pgfstr, pgf1-8, shading
+      //    functions) — often using "bind def".
+      // 2. Shading invocations that we can render natively.
+      //
+      // Pre-scan for function definitions so ps_code can use them later,
+      // then try native shading rendering.
+      if (dc->dev) {
+        ps_parse_defs(cur, lim);
         return dvi_exec_pgf_shading(ctx, dc, st, cur, lim);
+      }
       return 1;
     }
 
