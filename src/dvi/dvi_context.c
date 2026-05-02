@@ -74,6 +74,7 @@ void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev)
   st->gs.ctm.d = -1;
   st->gs.ctm.e = 72;
   st->gs.ctm.f = 72;
+  dc->base_ctm = st->gs.ctm;
   st->gs.fill_alpha = 1.0f;
   st->gs.stroke_alpha = 1.0f;
   st->gs.text.scale = 1.0f;   // Tz default: 100% = no horizontal scaling

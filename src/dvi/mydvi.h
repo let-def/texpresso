@@ -369,6 +369,9 @@ typedef struct
   // Font cache for special (TikZ) text operators
   dvi_font_cache_entry font_cache[DVI_FONT_CACHE_SIZE];
   int font_cache_count;
+
+  // Saved frame base CTM (for PS concat to build from)
+  fz_matrix base_ctm;
 } dvi_context;
 
 #define DC_ALLOC(ctx, dc, type, count) ((type*)dvi_scratch_alloc(ctx, &(dc)->scratch, sizeof(type) * (count)))
