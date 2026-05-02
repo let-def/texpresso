@@ -1854,12 +1854,18 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     // Dash pattern
     else if (strcmp(tmp, "setdash") == 0) {
       if (ps_depth() >= 1) {
-        // The top of stack should be the dash offset; the array is handled
-        // separately. For simplicity, pop the offset and ignore the array.
+        // Pop the dash phase (top of stack)
         float ph = ps_pop();
         st->gs.dash_phase = ph;
-        // dash_len and dash[] would ideally be set from an array.
-        // For now, don't change dash settings (they're set by PGF functions)
+        // Remaining values on the stack are the dash array
+        // (pushed in order by PS interpreter from [a b c ...])
+        int n = ps_depth();
+        st->gs.dash_len = n;
+        if (n > 32) n = 32;
+        for (int i = 0; i < n; i++) {
+          st->gs.dash[i] = ps_stack[ps_sp - n + i];
+        }
+        ps_clear(); // consume all array values
       }
     }
     // Inline PS color operators: set the "current color" in PostScript,
@@ -1977,9 +1983,85 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
       if (ps_depth() >= 1) st->gs.line_join = (int)ps_pop();
     }
     else if (strcmp(tmp, "setdash") == 0) {
-      if (ps_depth() >= 1) { st->gs.dash_phase = ps_pop(); }
+      if (ps_depth() >= 1) {
+        float ph = ps_pop();
+        st->gs.dash_phase = ph;
+        int n = ps_depth();
+        st->gs.dash_len = n;
+        if (n > 32) n = 32;
+        for (int i = 0; i < n; i++)
+          st->gs.dash[i] = ps_stack[ps_sp - n + i];
+        ps_clear();
+      }
     }
-    // ignore other commands in body (e.g., moveto, pgfw in function defs)
+    // Path building commands (used in pgf function bodies like pgf1-pgf8)
+    else if (strcmp(tmp, "moveto") == 0) {
+      if (ps_depth() >= 2) { float y=ps_pop(), x=ps_pop(); fz_moveto(ctx, get_path(ctx,dc), x, y); }
+    }
+    else if (strcmp(tmp, "lineto") == 0) {
+      if (ps_depth() >= 2) { float y=ps_pop(), x=ps_pop(); fz_lineto(ctx, get_path(ctx,dc), x, y); }
+    }
+    else if (strcmp(tmp, "curveto") == 0) {
+      if (ps_depth() >= 6) {
+        float y3=ps_pop(),x3=ps_pop(), y2=ps_pop(),x2=ps_pop(), y1=ps_pop(),x1=ps_pop();
+        fz_curveto(ctx, get_path(ctx,dc), x1,y1, x2,y2, x3,y3);
+      }
+    }
+    else if (strcmp(tmp, "closepath") == 0) {
+      fz_closepath(ctx, get_path(ctx,dc));
+    }
+    else if (strcmp(tmp, "newpath") == 0) {
+      drop_path(ctx, dc);
+    }
+    // Graphics state (save/restore within function bodies)
+    else if (strcmp(tmp, "gsave") == 0 || strcmp(tmp, "save") == 0) {
+      if (st->gs_stack.depth < st->gs_stack.limit) {
+        st->gs_stack.base[st->gs_stack.depth] = st->gs;
+        st->gs_stack.depth += 1;
+      }
+    }
+    else if (strcmp(tmp, "grestore") == 0 || strcmp(tmp, "restore") == 0) {
+      if (st->gs_stack.depth > 0) {
+        int cd0 = st->gs.clip_depth;
+        st->gs_stack.depth -= 1;
+        st->gs = st->gs_stack.base[st->gs_stack.depth];
+        if (dc->dev) for (int i = st->gs.clip_depth; i < cd0; ++i) fz_pop_clip(ctx, dc->dev);
+      }
+    }
+    // Stroke/fill within function bodies
+    else if (strcmp(tmp, "pgfstr") == 0) {
+      if (dc->dev) {
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        fz_stroke_state sst;
+        get_stroke_state(ctx, st, &sst);
+        fz_stroke_path(ctx, dc->dev, get_path(ctx,dc), &sst, ctm,
+                       device_cs(ctx), st->gs.colors.line, st->gs.stroke_alpha, color_params);
+      }
+      drop_path(ctx, dc);
+    }
+    else if (strcmp(tmp, "pgffill") == 0) {
+      if (dc->dev) {
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
+                     device_cs(ctx), st->gs.colors.fill, st->gs.fill_alpha, color_params);
+      }
+      drop_path(ctx, dc);
+    }
+    // PGF ellipse within function bodies
+    else if (strcmp(tmp, "pgfe") == 0) {
+      if (ps_depth() >= 4) {
+        float y=ps_pop(), x=ps_pop(), ry=ps_pop(), rx=ps_pop();
+        fz_path *path = get_path(ctx, dc);
+        float k = 0.5522847498f;
+        fz_moveto(ctx, path, x+rx, y);
+        fz_curveto(ctx, path, x+rx,y+k*ry, x+k*rx,y+ry, x,y+ry);
+        fz_curveto(ctx, path, x-k*rx,y+ry, x-rx,y+k*ry, x-rx,y);
+        fz_curveto(ctx, path, x-rx,y-k*ry, x-k*rx,y-ry, x,y-ry);
+        fz_curveto(ctx, path, x+k*rx,y-ry, x+rx,y-k*ry, x+rx,y);
+        fz_closepath(ctx, path);
+      }
+    }
+    // ignore other commands in body
   }
   ps_clear();
 }
@@ -2210,6 +2292,39 @@ dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, curs
   ("endcolor" | "ecolor" | "ec")
   {
     return colorstack_pop(ctx, dc, st, -1);
+  }
+
+  "q"
+  {
+    if (st->gs_stack.depth >= st->gs_stack.limit) return 0;
+    st->gs_stack.base[st->gs_stack.depth] = st->gs;
+    st->gs_stack.depth += 1;
+    return 1;
+  }
+
+  "Q"
+  {
+    if (st->gs_stack.depth == 0) return 0;
+    int clip_depth0 = st->gs.clip_depth;
+    st->gs_stack.depth -= 1;
+    st->gs = st->gs_stack.base[st->gs_stack.depth];
+    if (dc->dev)
+      for (int i = st->gs.clip_depth; i < clip_depth0; ++i)
+        fz_pop_clip(ctx, dc->dev);
+    return 1;
+  }
+
+  "cm" ws+ @f0 float ws+ @f1 float ws+ @f2 float ws+
+              @f3 float ws+ @f4 float ws+ @f5 float
+  {
+    // Standalone cm operator (used by PGF for text positioning in nodes)
+    fz_matrix mat;
+    mat.a = pfloat(f0, lim); mat.b = pfloat(f1, lim);
+    mat.c = pfloat(f2, lim); mat.d = pfloat(f3, lim);
+    mat.e = pfloat(f4, lim); mat.f = pfloat(f5, lim);
+    fz_matrix ctm = fz_concat(mat, dvi_get_ctm(dc, st));
+    dvi_set_ctm(st, ctm);
+    return 1;
   }
 
   "code"
