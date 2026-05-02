@@ -1316,42 +1316,114 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           break;
         }
 
-        // No-ops: operators without visual effect
+        // No-ops: operators without visual effect.
+        // IMPORTANT: must consume operands from the stack to prevent corruption.
         case PDF_OP_MP:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // tag name
+          break;
+        }
         case PDF_OP_DP:
+        {
+          val v[2];
+          vstack_get_arguments(ctx, stack, v, 2); // tag name + properties
+          break;
+        }
         case PDF_OP_BMC:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // tag name
+          break;
+        }
         case PDF_OP_BDC:
+        {
+          // BDC has 1 or 2 operands (tag + optional property dict)
+          // Try popping 2; if the second isn't a dict, it's fine
+          val v[2];
+          vstack_get_arguments(ctx, stack, v, 2); // tag name + properties
+          break;
+        }
         case PDF_OP_EMC:
+          // EMC: 0 operands
+          break;
+
         case PDF_OP_BX:
         case PDF_OP_EX:
-          // Marked content / compatibility sections: ignore entirely
+          // Compatibility operators: 0 operands
           break;
 
         case PDF_OP_ri:
-        case PDF_OP_i:
-          // Rendering intent / flatness: use defaults, ignore
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // rendering intent name
           break;
+        }
+        case PDF_OP_i:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1); // flatness value
+          break;
+        }
 
         case PDF_OP_d0:
-        case PDF_OP_d1:
-          // Type 3 font glyph metrics: not used in TikZ, ignore
+        {
+          float c[2];
+          vstack_get_floats(ctx, stack, c, 2); // wx wy
           break;
+        }
+        case PDF_OP_d1:
+        {
+          float c[6];
+          vstack_get_floats(ctx, stack, c, 6); // wx wy llx lly urx ury
+          break;
+        }
 
         // Color space operators: TikZ primarily uses direct color operators
         // (rg/RG/g/G/k/K) which are already supported.
         case PDF_OP_CS:
         case PDF_OP_cs:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // color space name
+          break;
+        }
         case PDF_OP_SC:
         case PDF_OP_sc:
+        {
+          // N color components. Most common is RGB=3. Pop 3 floats.
+          float c[4] = {0};
+          vstack_get_floats(ctx, stack, c, 3); // assume 3 components (RGB)
+          break;
+        }
         case PDF_OP_SCN:
         case PDF_OP_scn:
-          // Color already set by direct operators; ignore space changes
+        {
+          // N color components + optional pattern name. Pop 3 floats.
+          float c[4] = {0};
+          vstack_get_floats(ctx, stack, c, 3); // assume 3 components (RGB)
           break;
+        }
 
-        // Still pending implementation (Phase 2-4)
-        case PDF_OP_sh:
-        case PDF_OP_Do:
+        // Still pending implementation: consume operands to prevent stack leak
         case PDF_OP_gs:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // ExtGState name
+          break;
+        }
+        case PDF_OP_sh:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // shading name
+          break;
+        }
+        case PDF_OP_Do:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // XObject name
+          break;
+        }
         default:
           fprintf(stderr, "pdf unhandled op %s in:\n%.*s\n", pdf_op_name(op),
                   (int)(cur - cur0), cur0);
