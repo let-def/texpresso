@@ -1918,14 +1918,16 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
       }
     }
     // PS concat: [a b c d e f] concat — concatenate matrix to CTM
-    // This is how PGF/dvips driver applies translations and transformations
+    // This is how PGF/dvips driver applies translations and transformations.
+    // PGF emits absolute page positions, so we concat from the frame base CTM
+    // rather than accumulating from the current CTM.
     else if (strcmp(tmp, "concat") == 0) {
       if (ps_depth() >= 6) {
         float f=ps_pop(), e=ps_pop(), d=ps_pop(), c=ps_pop(), b=ps_pop(), a=ps_pop();
         fz_matrix mat;
         mat.a = a; mat.b = b; mat.c = c;
         mat.d = d; mat.e = e; mat.f = f;
-        st->gs.ctm = fz_concat(mat, st->gs.ctm);
+        st->gs.ctm = fz_concat(mat, dc->base_ctm);
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
         ps_clear(); // consume any leftover values
@@ -2124,7 +2126,7 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
         fz_matrix mat;
         mat.a = a; mat.b = b; mat.c = c;
         mat.d = d; mat.e = e; mat.f = f;
-        st->gs.ctm = fz_concat(mat, st->gs.ctm);
+        st->gs.ctm = fz_concat(mat, dc->base_ctm);
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
         ps_clear();
