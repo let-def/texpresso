@@ -1807,6 +1807,9 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
       drop_path(ctx, dc);
     }
     // PGF fill / stroke
+    // IMPORTANT: fill does NOT drop the path — the same path is
+    // often stroked by a subsequent pgfstr. Path is dropped at
+    // pgfstr, newpath, or pgfc.
     else if (strcmp(tmp, "pgffill") == 0) {
       const char *b = ps_lookup_func("pgffc");
       if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
@@ -1818,7 +1821,7 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
                      device_cs(ctx), fc, st->gs.fill_alpha, color_params);
       }
-      drop_path(ctx, dc);
+      // Do NOT drop path — pgfstr may follow
     }
     else if (strcmp(tmp, "pgfstr") == 0) {
       const char *b = ps_lookup_func("pgfsc");
@@ -1833,7 +1836,7 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         fz_stroke_path(ctx, dc->dev, get_path(ctx,dc), &sst, ctm,
                        device_cs(ctx), lc, st->gs.stroke_alpha, color_params);
       }
-      drop_path(ctx, dc);
+      drop_path(ctx, dc); // stroke is final, drop path
     }
     // Graphics state
     else if (strcmp(tmp, "gsave") == 0 || strcmp(tmp, "save") == 0) {
@@ -1954,8 +1957,33 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     else if (strcmp(tmp, "/pgfsmaskinplace") == 0) {
       // PGF soft mask placeholder — no-op for now
     }
+    // PGF dvips stroke/fill aliases
+    else if (strcmp(tmp, "pgfs") == 0 || strcmp(tmp, "pgfS") == 0) {
+      // pgfs = PGF stroke (dvips alias for pgfstr)
+      const char *b = ps_lookup_func("pgfsc");
+      if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_STROKE);
+      if (dc->dev) {
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        fz_stroke_state sst;
+        get_stroke_state(ctx, st, &sst);
+        fz_stroke_path(ctx, dc->dev, get_path(ctx,dc), &sst, ctm,
+                       device_cs(ctx), st->gs.colors.line, st->gs.stroke_alpha, color_params);
+      }
+      drop_path(ctx, dc);
+    }
+    else if (strcmp(tmp, "pgfr") == 0 || strcmp(tmp, "pgfR") == 0) {
+      // pgfr = PGF fill (dvips alias for pgffill)
+      const char *b = ps_lookup_func("pgffc");
+      if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
+      if (dc->dev) {
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
+                     device_cs(ctx), st->gs.colors.fill, st->gs.fill_alpha, color_params);
+      }
+      // Do NOT drop path
+    }
     // PGF cleanup / end markers
-    else if (strcmp(tmp, "pgfc") == 0) { /* no-op */ }
+    else if (strcmp(tmp, "pgfc") == 0 || strcmp(tmp, "pgfo") == 0) { /* no-op */ }
     // Try as a user-defined function call
     else {
       const char *b = ps_lookup_func(tmp);
@@ -2095,7 +2123,7 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
         fz_stroke_path(ctx, dc->dev, get_path(ctx,dc), &sst, ctm,
                        device_cs(ctx), st->gs.colors.line, st->gs.stroke_alpha, color_params);
       }
-      drop_path(ctx, dc);
+      drop_path(ctx, dc); // stroke is final
     }
     else if (strcmp(tmp, "pgffill") == 0) {
       if (dc->dev) {
@@ -2103,7 +2131,7 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
         fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
                      device_cs(ctx), st->gs.colors.fill, st->gs.fill_alpha, color_params);
       }
-      drop_path(ctx, dc);
+      // Do NOT drop path — pgfstr may follow
     }
     // PGF ellipse within function bodies
     else if (strcmp(tmp, "pgfe") == 0) {
@@ -2148,6 +2176,25 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
     }
     else if (strcmp(tmp, "get") == 0 || strcmp(tmp, "ifelse") == 0) {
       if (ps_depth() >= 2) { ps_pop(); ps_pop(); }
+    }
+    // PGF dvips stroke/fill aliases in function bodies
+    else if (strcmp(tmp, "pgfs") == 0 || strcmp(tmp, "pgfS") == 0) {
+      if (dc->dev) {
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        fz_stroke_state sst;
+        get_stroke_state(ctx, st, &sst);
+        fz_stroke_path(ctx, dc->dev, get_path(ctx,dc), &sst, ctm,
+                       device_cs(ctx), st->gs.colors.line, st->gs.stroke_alpha, color_params);
+      }
+      drop_path(ctx, dc);
+    }
+    else if (strcmp(tmp, "pgfr") == 0 || strcmp(tmp, "pgfR") == 0) {
+      if (dc->dev) {
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
+                     device_cs(ctx), st->gs.colors.fill, st->gs.fill_alpha, color_params);
+      }
+      // Do NOT drop path
     }
     // ignore other commands in body
   }
