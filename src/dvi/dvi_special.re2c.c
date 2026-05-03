@@ -2533,14 +2533,6 @@ dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, curs
   "pagesize" ws+ "default"
   { return 1; }
 
-  "papersize=" @f0 dim "," @f1 dim
-  {
-    dc->page_width  = pdim(f0, lim);
-    dc->page_height = pdim(f1, lim);
-    fprintf(stderr, "DBG papersize: w=%.2f h=%.2f\n", dc->page_width, dc->page_height);
-    return 1;
-  }
-
   @f0 "image" ws+ @pxform ([a-z] | ws | float)* @pstart "("
   {
     struct xform_spec xf = xform_spec();
@@ -2710,6 +2702,14 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
 
     "pdf:" ws*
     { return dvi_exec_pdf(ctx, dc, st, cur, lim); }
+
+    "papersize=" @i dim "," @j dim
+    {
+      dc->page_width  = pdim(i, lim);
+      dc->page_height = pdim(j, lim);
+      fprintf(stderr, "DBG papersize: w=%.2f h=%.2f\n", dc->page_width, dc->page_height);
+      return 1;
+    }
 
     "!" ws* "/pgf"
     {
