@@ -1725,17 +1725,11 @@ static void ps_parse_defs(const char *p, const char *end)
     if (p + 3 <= end && memcmp(p, "def", 3) == 0) {
       p += 3;
       if (nl > 0 && bl >= 0) {
-        // Only register if not already defined — ps:: specials that
-        // set colour values run before us via ps_code, and we must
-        // not overwrite them with stale empty bodies from repeated
-        // "!" /pgf clearing blocks.
-        char tmpname[64];
-        int tnl = nl > 63 ? 63 : nl;
-        memcpy(tmpname, ns, tnl); tmpname[tnl] = 0;
-        if (!ps_lookup_func(tmpname)) {
-          ps_define_func(ns, nl, bs, bl);
-          fprintf(stderr, "DBG ps_def[!]: /%.*s = %.*s%s\n", nl, ns, bl, bs, is_bind ? " [bind]" : "");
-        }
+        // Always overwrite: with function preservation across pages,
+        // we MUST allow ! specials to clear stale per-element colors
+        // (pgffc/pgfsc) and redefine library functions after reset.
+        ps_define_func(ns, nl, bs, bl);
+        fprintf(stderr, "DBG ps_def[!]: /%.*s = %.*s%s\n", nl, ns, bl, bs, is_bind ? " [bind]" : "");
       }
     }
   }
@@ -2052,9 +2046,11 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     // PS clip operators: W (nonzero winding), W* (even-odd)
     else if (strcmp(tmp, "W") == 0 || strcmp(tmp, "W*") == 0) {
       int eofill = (tmp[0] == 'W' && tmp[1] == '*') ? 1 : 0;
-      if (dc->dev) {
+      fprintf(stderr, "DBG %s: dev=%p path=%p clip_depth=%d\n",
+              tmp, (void*)dc->dev, (void*)dc->path, st->gs.clip_depth);
+      if (dc->dev && dc->path) {
         fz_matrix ctm = dvi_get_ctm(dc, st);
-        fz_clip_path(ctx, dc->dev, get_path(ctx, dc), eofill, ctm,
+        fz_clip_path(ctx, dc->dev, dc->path, eofill, ctm,
                      fz_infinite_rect);
         st->gs.clip_depth += 1;
       }
@@ -2102,6 +2098,7 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
       const char *b = ps_lookup_func(tmp);
       if (b) {
         ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_BOTH);
+        ps_clear(); // user functions must not leak stack values
         rendered = true; // user-defined functions typically render
       }
     }
