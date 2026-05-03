@@ -2011,13 +2011,16 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         mat.a = a; mat.b = b; mat.c = c;
         mat.d = d; mat.e = e; mat.f = f;
         fz_matrix ctm_before = st->gs.ctm;
-        st->gs.ctm = fz_concat(mat, dc->base_ctm);
-        fprintf(stderr, "DBG concat: mat=[%.2f %.2f %.2f %.2f %.2f %.2f] base=[%.2f %.2f %.2f %.2f %.2f %.2f] ctm_before=[%.2f %.2f %.2f %.2f %.2f %.2f] ",
-                a,b,c,d,e,f, dc->base_ctm.a,dc->base_ctm.b,dc->base_ctm.c,dc->base_ctm.d,dc->base_ctm.e,dc->base_ctm.f,
-                ctm_before.a,ctm_before.b,ctm_before.c,ctm_before.d,ctm_before.e,ctm_before.f);
-        // EXPERIMENTAL: remove Y fix to test double-flip hypothesis
-        fprintf(stderr, "YFIX_DISABLED: page_h=%.2f mat.f=%.2f ctm.f=%.2f\n",
-                dc->page_height, mat.f, st->gs.ctm.f);
+        // Use a base CTM without the Y flip (d=1 instead of d=-1).
+        // PS concat's mat.f is a Y-down coordinate from the top-left
+        // margin, and the draw device handles the final Y flip,
+        // so we must not double-flip here.
+        fz_matrix base_no_flip = dc->base_ctm;
+        base_no_flip.d = 1;
+        st->gs.ctm = fz_concat(mat, base_no_flip);
+        fprintf(stderr, "DBG concat: mat=[%.2f %.2f %.2f %.2f %.2f %.2f] base_no_flip=[%.2f %.2f %.2f %.2f %.2f %.2f] ctm=[%.2f %.2f %.2f %.2f %.2f %.2f]\n",
+                a,b,c,d,e,f, base_no_flip.a,base_no_flip.b,base_no_flip.c,base_no_flip.d,base_no_flip.e,base_no_flip.f,
+                st->gs.ctm.a,st->gs.ctm.b,st->gs.ctm.c,st->gs.ctm.d,st->gs.ctm.e,st->gs.ctm.f);
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
         ps_clear();
@@ -2297,8 +2300,9 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
         fz_matrix mat;
         mat.a = a; mat.b = b; mat.c = c;
         mat.d = d; mat.e = e; mat.f = f;
-        st->gs.ctm = fz_concat(mat, dc->base_ctm);
-        // EXPERIMENTAL: Y fix removed for testing
+        fz_matrix base_no_flip = dc->base_ctm;
+        base_no_flip.d = 1;
+        st->gs.ctm = fz_concat(mat, base_no_flip);
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
         // 6 values already popped, stack is correct
