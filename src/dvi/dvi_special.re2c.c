@@ -1684,6 +1684,7 @@ void ps_state_reset()           { ps_sp = 0; ps_func_count = 0; }
 
 // Forward declaration
 static void ps_define_func(const char *name, int nl, const char *body, int bl);
+static const char *ps_lookup_func(const char *name);
 
 // Parse PS function definitions from a string without executing any commands.
 // Handles both "def" and "bind def". Used to pre-scan "!" /pgf specials.
@@ -1724,8 +1725,17 @@ static void ps_parse_defs(const char *p, const char *end)
     if (p + 3 <= end && memcmp(p, "def", 3) == 0) {
       p += 3;
       if (nl > 0 && bl >= 0) {
-        ps_define_func(ns, nl, bs, bl);
-        fprintf(stderr, "DBG ps_def[!]: /%.*s = %.*s%s\n", nl, ns, bl, bs, is_bind ? " [bind]" : "");
+        // Only register if not already defined — ps:: specials that
+        // set colour values run before us via ps_code, and we must
+        // not overwrite them with stale empty bodies from repeated
+        // "!" /pgf clearing blocks.
+        char tmpname[64];
+        int tnl = nl > 63 ? 63 : nl;
+        memcpy(tmpname, ns, tnl); tmpname[tnl] = 0;
+        if (!ps_lookup_func(tmpname)) {
+          ps_define_func(ns, nl, bs, bl);
+          fprintf(stderr, "DBG ps_def[!]: /%.*s = %.*s%s\n", nl, ns, bl, bs, is_bind ? " [bind]" : "");
+        }
       }
     }
   }
