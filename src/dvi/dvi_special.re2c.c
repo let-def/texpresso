@@ -849,7 +849,7 @@ static void show_special_text(fz_context *ctx, dvi_context *dc, dvi_state *st,
     }
     float adv = fz_advance_glyph(ctx, font, glyph, 0);
     fz_matrix trm = st->gs.text.Tm;
-    trm = fz_pre_scale(trm, fs * hs, fs);
+    trm = fz_concat(trm, fz_pre_scale(fz_identity, fs * hs, fs));
     trm = fz_concat(trm, ctm);
     fz_show_glyph(ctx, text, font, trm, glyph, cp, 0, 0, FZ_BIDI_LTR, FZ_LANG_UNSET);
     // Advance text matrix horizontally
@@ -1819,9 +1819,11 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
           fprintf(stderr, "DBG ps_def: /%.*s = %.*s%s\n", nl, ns, bl, bs, is_bind ? " [bind]" : "");
           // Immediately execute color function bodies so that colors are
           // set even if later ps_lookup_func fails (e.g. due to corruption).
-          if ((nl == 5 && memcmp(ns, "pgffc", 5) == 0) ||
-              (nl == 5 && memcmp(ns, "pgfsc", 5) == 0)) {
-            ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_BOTH);
+          if (nl == 5 && memcmp(ns, "pgffc", 5) == 0) {
+            ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_FILL);
+            ps_clear();
+          } else if (nl == 5 && memcmp(ns, "pgfsc", 5) == 0) {
+            ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_STROKE);
             ps_clear();
             fprintf(stderr, "DBG color_exec: /%.*s fill=[%.2f %.2f %.2f] line=[%.2f %.2f %.2f]\n",
                     nl, ns, st->gs.colors.fill[0], st->gs.colors.fill[1], st->gs.colors.fill[2],
@@ -1903,11 +1905,8 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     else if (strcmp(tmp, "pgfstr") == 0) {
       const char *b = ps_lookup_func("pgfsc");
       if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_STROKE);
-      else {
-        // Fallback: when pgfsc is not defined, use fill color for stroke
-        // (PS setrgbcolor sets a "current color" for both fill and stroke)
-        memcpy(st->gs.colors.line, st->gs.colors.fill, sizeof(st->gs.colors.fill));
-      }
+      // When pgfsc is empty, keep current line color (set by inline
+      // setgray/setrgbcolor/setcmykcolor commands)
       float *lc = st->gs.colors.line;
       fprintf(stderr, "DBG pgfstr: pgfsc=%s LINE=[%.2f %.2f %.2f] lw=%.2f alpha=%.2f\n",
               b&&*b?b:"(empty)", lc[0], lc[1], lc[2], st->gs.line_width, st->gs.stroke_alpha);
@@ -2089,7 +2088,7 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
       // pgfs = PGF stroke (dvips alias for pgfstr)
       const char *b = ps_lookup_func("pgfsc");
       if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_STROKE);
-      else memcpy(st->gs.colors.line, st->gs.colors.fill, sizeof(st->gs.colors.fill));
+      // When pgfsc is empty, keep current line color
       if (dc->dev) {
         fz_matrix ctm = dvi_get_ctm(dc, st);
         fz_stroke_state sst;
@@ -2181,20 +2180,20 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
     // Same commands as ps_code but without function defs
     if (strcmp(tmp, "setgray") == 0) {
       if (ps_depth() >= 1) { float g=ps_pop();
-        color_set_gray(st->gs.colors.fill,g);
-        color_set_gray(st->gs.colors.line,g);
+        if (ct != PS_COLOR_STROKE) color_set_gray(st->gs.colors.fill,g);
+        if (ct != PS_COLOR_FILL)   color_set_gray(st->gs.colors.line,g);
       }
     }
     else if (strcmp(tmp, "setrgbcolor") == 0) {
       if (ps_depth() >= 3) { float b=ps_pop(),g=ps_pop(),r=ps_pop();
-        color_set_rgb(st->gs.colors.fill,r,g,b);
-        color_set_rgb(st->gs.colors.line,r,g,b);
+        if (ct != PS_COLOR_STROKE) color_set_rgb(st->gs.colors.fill,r,g,b);
+        if (ct != PS_COLOR_FILL)   color_set_rgb(st->gs.colors.line,r,g,b);
       }
     }
     else if (strcmp(tmp, "setcmykcolor") == 0) {
       if (ps_depth() >= 4) { float k=ps_pop(),y=ps_pop(),m=ps_pop(),c=ps_pop();
-        color_set_cmyk(st->gs.colors.fill,c,m,y,k);
-        color_set_cmyk(st->gs.colors.line,c,m,y,k);
+        if (ct != PS_COLOR_STROKE) color_set_cmyk(st->gs.colors.fill,c,m,y,k);
+        if (ct != PS_COLOR_FILL)   color_set_cmyk(st->gs.colors.line,c,m,y,k);
       }
     }
     else if (strcmp(tmp, "fillopacity") == 0) {
