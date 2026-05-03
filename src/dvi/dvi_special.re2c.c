@@ -1773,6 +1773,12 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
   }
   const char *p = cur, *end = lim;
 
+  // Track whether a fill/stroke operation was performed that didn't
+  // drop the path.  pgffill leaves the path so that pgfstr can stroke
+  // it in a \filldraw.  But when the special ends and no pgfstr
+  // followed, we must drop the path ourselves.
+  bool rendered = false;
+
   while (p < end)
   {
     while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) p++;
@@ -1877,7 +1883,8 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
                      device_cs(ctx), fc, st->gs.fill_alpha, color_params);
       }
-      // Do NOT drop path — pgfstr may follow
+      rendered = true;
+      // Do NOT drop path — pgfstr may follow within the same special
     }
     else if (strcmp(tmp, "pgfstr") == 0) {
       const char *b = ps_lookup_func("pgfsc");
@@ -1893,6 +1900,7 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
                        device_cs(ctx), lc, st->gs.stroke_alpha, color_params);
       }
       drop_path(ctx, dc); // stroke is final, drop path
+      rendered = true;
     }
     // Graphics state
     else if (strcmp(tmp, "gsave") == 0 || strcmp(tmp, "save") == 0) {
@@ -2030,6 +2038,7 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
                        device_cs(ctx), st->gs.colors.line, st->gs.stroke_alpha, color_params);
       }
       drop_path(ctx, dc);
+      rendered = true;
     }
     else if (strcmp(tmp, "pgfr") == 0 || strcmp(tmp, "pgfR") == 0) {
       // pgfr = PGF fill (dvips alias for pgffill)
@@ -2040,16 +2049,27 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
                      device_cs(ctx), st->gs.colors.fill, st->gs.fill_alpha, color_params);
       }
-      // Do NOT drop path
+      rendered = true;
+      // Do NOT drop path — pgfstr may follow within the same special
     }
     // PGF cleanup / end markers
     else if (strcmp(tmp, "pgfc") == 0 || strcmp(tmp, "pgfo") == 0) { /* no-op */ }
     // Try as a user-defined function call
     else {
       const char *b = ps_lookup_func(tmp);
-      if (b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_BOTH);
+      if (b) {
+        ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_BOTH);
+        rendered = true; // user-defined functions typically render
+      }
     }
   }
+
+  // Drop path if a fill/stroke operation left it behind
+  // (pgffill keeps the path for a possible pgfstr within the same
+  // special; pgfstr already drops it).  Without this, the next
+  // drawing operation inherits stale path segments.
+  if (rendered && dc->path)
+    drop_path(ctx, dc);
 
   ps_clear();
   return 1;
@@ -2061,6 +2081,7 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
               const char *body, int body_len, int color_target)
 {
   const char *p = body, *end = body + body_len;
+  bool rendered = false;
   while (p < end)
   {
     while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) p++;
@@ -2184,6 +2205,7 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
                        device_cs(ctx), st->gs.colors.line, st->gs.stroke_alpha, color_params);
       }
       drop_path(ctx, dc); // stroke is final
+      rendered = true;
     }
     else if (strcmp(tmp, "pgffill") == 0) {
       if (dc->dev) {
@@ -2191,6 +2213,7 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
         fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
                      device_cs(ctx), st->gs.colors.fill, st->gs.fill_alpha, color_params);
       }
+      rendered = true;
       // Do NOT drop path — pgfstr may follow
     }
     // PGF ellipse within function bodies
@@ -2249,6 +2272,7 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
                        device_cs(ctx), st->gs.colors.line, st->gs.stroke_alpha, color_params);
       }
       drop_path(ctx, dc);
+      rendered = true;
     }
     else if (strcmp(tmp, "pgfr") == 0 || strcmp(tmp, "pgfR") == 0) {
       if (dc->dev) {
@@ -2256,10 +2280,16 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
         fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
                      device_cs(ctx), st->gs.colors.fill, st->gs.fill_alpha, color_params);
       }
-      // Do NOT drop path
+      rendered = true;
+      // Do NOT drop path — pgfstr may follow within the same body
     }
     // ignore other commands in body
   }
+
+  // Drop path if a fill left it behind (same rationale as ps_code)
+  if (rendered && dc->path)
+    drop_path(ctx, dc);
+
   ps_clear();
 }
 
