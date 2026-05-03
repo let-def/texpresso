@@ -53,7 +53,7 @@
 
 \begin{tikzpicture}
   % fill only
-  \fill[red!50] (0,0) circle (0.8);
+  \fill[red!50] (0,0) circle (0.9);
   % draw only
   \draw[blue, line width=2pt] (2,0) circle (0.8);
   % fill + draw
@@ -170,8 +170,8 @@
 
   % different opacity levels
   \foreach \i/\op in {0/0.1, 0.7/0.3, 1.4/0.5, 2.1/0.7, 2.8/0.9} {
-    \fill[black, fill opacity=\op] (\i+8,-0.5) rectangle (\i+8.5,0.5);
-  }
+      \fill[black, fill opacity=\op] (\i+8,-0.5) rectangle (\i+8.5,0.5);
+    }
 \end{tikzpicture}
 
 \subsection*{Phase 5: Marked Content (BMC/BDC/EMC - no-op) and Decorations}
@@ -184,10 +184,10 @@
 
   % decorations.markings
   \draw[postaction={decorate, decoration={markings, mark=at position 0.5 with {\arrow{>}}}},
-        thick] (0,-1.5) -- (5,-1.5);
+    thick] (0,-1.5) -- (5,-1.5);
   \draw[postaction={decorate, decoration={markings, mark=at position 0.3 with {\arrow{>}},
-                                         mark=at position 0.7 with {\arrow{<}}}},
-        thick] (0,-2) -- (5,-2);
+            mark=at position 0.7 with {\arrow{<}}}},
+    thick] (0,-2) -- (5,-2);
 
   % shapes
   \node[draw, diamond, fill=yellow!20] at (8,0) {Diamond};
@@ -200,13 +200,13 @@
 \begin{tikzpicture}
   % flow chart
   \node[draw, rounded corners, fill=blue!10, line width=1.2pt]
-    (start) at (0,0) {Start};
+  (start) at (0,0) {Start};
   \node[draw, diamond, fill=yellow!10, aspect=2, line width=1.2pt]
-    (check) at (3,-2) {Check?};
+  (check) at (3,-2) {Check?};
   \node[draw, fill=green!10, line width=1.2pt]
-    (yes) at (6,-3.5) {Yes branch};
+  (yes) at (6,-3.5) {Yes branch};
   \node[draw, fill=red!10, line width=1.2pt]
-    (no) at (0,-3.5) {No branch};
+  (no) at (0,-3.5) {No branch};
 
   \draw[->, thick, dash pattern=on 3pt off 2pt] (start) -- (check);
   \draw[->, thick] (check) -- (yes) node[midway, right] {Yes};
@@ -225,7 +225,7 @@
 
   % curve
   \draw[blue, thick, fill=blue!10, fill opacity=0.5]
-    (0,0) .. controls (1,2) and (3,3) .. (4,1) -- cycle;
+  (0,0) .. controls (1,2) and (3,3) .. (4,1) -- cycle;
 
   % label points
   \node[circle, fill=red, inner sep=1.5pt, label=above left:{$P$}] at (1,1.5) {};

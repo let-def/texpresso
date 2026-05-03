@@ -2010,11 +2010,11 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         fz_matrix mat;
         mat.a = a; mat.b = b; mat.c = c;
         mat.d = d; mat.e = e; mat.f = f;
-        fz_matrix ctm_before = st->gs.ctm;
-        // Chain mat to the current CTM (standard PS concat semantics).
-        // The current CTM was set up by pgfs with TeX positioning,
-        // Y flip, and margins. We must chain to it, not replace with
-        // base_ctm, otherwise the pgfs positioning is lost.
+        // Chain mat to dvi_get_ctm(dc, st) which includes the TeX
+        // page position (reg.h/reg.v relative to gs.h/gs.v) applied
+        // to the current CTM.  This preserves the TeX positioning
+        // that would otherwise be lost when gs.h/gs.v are zeroed.
+        fz_matrix ctm_before = dvi_get_ctm(dc, st);
         st->gs.ctm = fz_concat(mat, ctm_before);
         fprintf(stderr, "DBG concat: mat=[%.2f %.2f %.2f %.2f %.2f %.2f] before=[%.2f %.2f %.2f %.2f %.2f %.2f] after=[%.2f %.2f %.2f %.2f %.2f %.2f]\n",
                 a,b,c,d,e,f,
@@ -2292,14 +2292,16 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
       rendered = true;
       // Do NOT drop path — pgfstr may follow
     }
-    // concat for CTM transforms within function bodies
+    // concat for CTM transforms within function bodies.
+    // Chain to dvi_get_ctm so the TeX page position is included,
+    // same rationale as the top-level concat handler in ps_code.
     else if (strcmp(tmp, "concat") == 0) {
       if (ps_depth() >= 6) {
         float f=ps_pop(), e=ps_pop(), d=ps_pop(), c=ps_pop(), b=ps_pop(), a=ps_pop();
         fz_matrix mat;
         mat.a = a; mat.b = b; mat.c = c;
         mat.d = d; mat.e = e; mat.f = f;
-        st->gs.ctm = fz_concat(mat, st->gs.ctm);
+        st->gs.ctm = fz_concat(mat, dvi_get_ctm(dc, st));
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
         // 6 values already popped, stack is correct
