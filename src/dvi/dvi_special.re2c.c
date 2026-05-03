@@ -848,9 +848,11 @@ static void show_special_text(fz_context *ctx, dvi_context *dc, dvi_state *st,
       continue;
     }
     float adv = fz_advance_glyph(ctx, font, glyph, 0);
-    fz_matrix trm = st->gs.text.Tm;
-    trm = fz_concat(trm, fz_pre_scale(fz_identity, fs * hs, fs));
-    trm = fz_concat(trm, ctm);
+    // TRM = CTM × Tm × Tfs: CTM is applied LAST so font_size
+    // does not multiply the page-level translation.
+    fz_matrix trm = fz_pre_scale(fz_identity, fs * hs, fs);  // Tfs
+    trm = fz_concat(st->gs.text.Tm, trm);                     // Tm × Tfs
+    trm = fz_concat(ctm, trm);                                // CTM × Tm × Tfs
     fz_show_glyph(ctx, text, font, trm, glyph, cp, 0, 0, FZ_BIDI_LTR, FZ_LANG_UNSET);
     // Advance text matrix horizontally
     float tx = (adv * fs + st->gs.text.char_space) * hs + st->gs.text.word_space;
@@ -2063,9 +2065,13 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         fz_lineto(ctx, p, cp.x + x, cp.y + y);
       }
     }
-    // PS clip operators: W (nonzero winding), W* (even-odd)
-    else if (strcmp(tmp, "W") == 0 || strcmp(tmp, "W*") == 0) {
-      int eofill = (tmp[0] == 'W' && tmp[1] == '*') ? 1 : 0;
+    // PS clip operators: W/W* (PDF names), clip/eoclip (PS names)
+    // Also handle {clip} {eoclip} — PS code blocks in PGF mask expression
+    else if (strcmp(tmp, "W") == 0 || strcmp(tmp, "W*") == 0 ||
+             strcmp(tmp, "clip") == 0 || strcmp(tmp, "eoclip") == 0 ||
+             strcmp(tmp, "{clip}") == 0 || strcmp(tmp, "{eoclip}") == 0) {
+      int eofill = (strcmp(tmp, "W*") == 0 || strcmp(tmp, "eoclip") == 0 ||
+                    strcmp(tmp, "{eoclip}") == 0) ? 1 : 0;
       fprintf(stderr, "DBG %s: dev=%p path=%p clip_depth=%d\n",
               tmp, (void*)dc->dev, (void*)dc->path, st->gs.clip_depth);
       if (dc->dev && dc->path) {
@@ -2256,6 +2262,19 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
         st->gs = st->gs_stack.base[st->gs_stack.depth];
         if (dc->dev) for (int i = st->gs.clip_depth; i < cd0; ++i) fz_pop_clip(ctx, dc->dev);
       }
+    }
+    // PS clip within function bodies
+    else if (strcmp(tmp, "clip") == 0 || strcmp(tmp, "eoclip") == 0 ||
+             strcmp(tmp, "W") == 0 || strcmp(tmp, "W*") == 0 ||
+             strcmp(tmp, "{clip}") == 0 || strcmp(tmp, "{eoclip}") == 0) {
+      int eofill = (strcmp(tmp, "W*") == 0 || strcmp(tmp, "eoclip") == 0 ||
+                    strcmp(tmp, "{eoclip}") == 0) ? 1 : 0;
+      if (dc->dev && dc->path) {
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        fz_clip_path(ctx, dc->dev, dc->path, eofill, ctm, fz_infinite_rect);
+        st->gs.clip_depth += 1;
+      }
+      drop_path(ctx, dc);
     }
     // Stroke/fill within function bodies
     else if (strcmp(tmp, "pgfstr") == 0) {
