@@ -2015,16 +2015,9 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         fprintf(stderr, "DBG concat: mat=[%.2f %.2f %.2f %.2f %.2f %.2f] base=[%.2f %.2f %.2f %.2f %.2f %.2f] ctm_before=[%.2f %.2f %.2f %.2f %.2f %.2f] ",
                 a,b,c,d,e,f, dc->base_ctm.a,dc->base_ctm.b,dc->base_ctm.c,dc->base_ctm.d,dc->base_ctm.e,dc->base_ctm.f,
                 ctm_before.a,ctm_before.b,ctm_before.c,ctm_before.d,ctm_before.e,ctm_before.f);
-        // Fix Y: PS Y-down-from-top → device Y-up-from-bottom
-        if (dc->page_height > 0) {
-          float old_f = st->gs.ctm.f;
-          st->gs.ctm.f = dc->page_height - 72 - mat.f;
-          fprintf(stderr, "Yfix: old_f=%.2f page_h=%.2f mat.f=%.2f new_f=%.2f\n",
-                  old_f, dc->page_height, mat.f, st->gs.ctm.f);
-        } else {
-          fprintf(stderr, "NO Yfix: page_h=%.2f ctm.f=%.2f\n",
-                  dc->page_height, st->gs.ctm.f);
-        }
+        // EXPERIMENTAL: remove Y fix to test double-flip hypothesis
+        fprintf(stderr, "YFIX_DISABLED: page_h=%.2f mat.f=%.2f ctm.f=%.2f\n",
+                dc->page_height, mat.f, st->gs.ctm.f);
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
         ps_clear();
@@ -2305,8 +2298,7 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
         mat.a = a; mat.b = b; mat.c = c;
         mat.d = d; mat.e = e; mat.f = f;
         st->gs.ctm = fz_concat(mat, dc->base_ctm);
-        if (dc->page_height > 0)
-          st->gs.ctm.f = dc->page_height - 72 - mat.f;
+        // EXPERIMENTAL: Y fix removed for testing
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
         // 6 values already popped, stack is correct
