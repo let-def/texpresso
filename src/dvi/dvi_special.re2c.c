@@ -848,11 +848,11 @@ static void show_special_text(fz_context *ctx, dvi_context *dc, dvi_state *st,
       continue;
     }
     float adv = fz_advance_glyph(ctx, font, glyph, 0);
-    // TRM = CTM × Tm × Tfs: CTM is applied LAST so font_size
-    // does not multiply the page-level translation.
+    // TRM = CTM × Tm × Tfs: font_size scales the glyph only,
+    // not the page-level translation.
     fz_matrix trm = fz_pre_scale(fz_identity, fs * hs, fs);  // Tfs
-    trm = fz_concat(st->gs.text.Tm, trm);                     // Tm × Tfs
-    trm = fz_concat(ctm, trm);                                // CTM × Tm × Tfs
+    trm = fz_concat(trm, st->gs.text.Tm);                     // Tfs × Tm
+    trm = fz_concat(trm, ctm);                                // (Tfs × Tm) × CTM
     fz_show_glyph(ctx, text, font, trm, glyph, cp, 0, 0, FZ_BIDI_LTR, FZ_LANG_UNSET);
     // Advance text matrix horizontally
     float tx = (adv * fs + st->gs.text.char_space) * hs + st->gs.text.word_space;
