@@ -136,8 +136,17 @@ void dvi_exec_char(fz_context *ctx, dvi_context *dc, dvi_state *st, uint32_t c, 
       if (dc->dev)
       {
         float s = dc->scale * scale_factor.value;
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        static int txt_dbg = 80;
+        if (txt_dbg > 0) {
+          int32_t h = st->registers.h - st->gs.h;
+          int32_t v = st->registers.v - st->gs.v;
+          fprintf(stderr, "DBG dvi_text: ch='%c'(%d) ctm=[%.1f %.1f %.1f %.1f %.1f %.1f] s=%.4f h_off=%d v_off=%d\n",
+                  (c>=32&&c<127)?c:'?', c, ctm.a,ctm.b,ctm.c,ctm.d,ctm.e,ctm.f, s, h, v);
+          txt_dbg--;
+        }
         fz_show_glyph(ctx, get_text(ctx, dc), font->fz,
-                      fz_pre_scale(dvi_get_ctm(dc, st), s, s), u, c, 0, 0,
+                      fz_pre_scale(ctm, s, s), u, c, 0, 0,
                       FZ_BIDI_LTR, FZ_LANG_UNSET);
       }
     }
