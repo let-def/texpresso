@@ -2011,16 +2011,14 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         mat.a = a; mat.b = b; mat.c = c;
         mat.d = d; mat.e = e; mat.f = f;
         fz_matrix ctm_before = st->gs.ctm;
-        // Use a base CTM without the Y flip (d=1 instead of d=-1).
-        // PS concat's mat.f is a Y-down coordinate from the top-left
-        // margin, and the draw device handles the final Y flip,
-        // so we must not double-flip here.
-        fz_matrix base_no_flip = dc->base_ctm;
-        base_no_flip.d = 1;
-        st->gs.ctm = fz_concat(mat, base_no_flip);
-        fprintf(stderr, "DBG concat: mat=[%.2f %.2f %.2f %.2f %.2f %.2f] base_no_flip=[%.2f %.2f %.2f %.2f %.2f %.2f] ctm=[%.2f %.2f %.2f %.2f %.2f %.2f]\n",
-                a,b,c,d,e,f, base_no_flip.a,base_no_flip.b,base_no_flip.c,base_no_flip.d,base_no_flip.e,base_no_flip.f,
-                st->gs.ctm.a,st->gs.ctm.b,st->gs.ctm.c,st->gs.ctm.d,st->gs.ctm.e,st->gs.ctm.f);
+        // Use base_ctm with d=-1 for correct text orientation (glyphs
+        // are Y-up internally).  Fix the Y position: PS mat.f is a
+        // Y-down coordinate from the top-left margin, and the device
+        // uses Y-down display, so display_y = mat.f + 72.
+        st->gs.ctm = fz_concat(mat, dc->base_ctm);
+        st->gs.ctm.f = f + 72;
+        fprintf(stderr, "DBG concat: mat=[%.2f %.2f %.2f %.2f %.2f %.2f] ctm=[%.2f %.2f %.2f %.2f %.2f %.2f]\n",
+                a,b,c,d,e,f, st->gs.ctm.a,st->gs.ctm.b,st->gs.ctm.c,st->gs.ctm.d,st->gs.ctm.e,st->gs.ctm.f);
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
         ps_clear();
@@ -2300,9 +2298,8 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
         fz_matrix mat;
         mat.a = a; mat.b = b; mat.c = c;
         mat.d = d; mat.e = e; mat.f = f;
-        fz_matrix base_no_flip = dc->base_ctm;
-        base_no_flip.d = 1;
-        st->gs.ctm = fz_concat(mat, base_no_flip);
+        st->gs.ctm = fz_concat(mat, dc->base_ctm);
+        st->gs.ctm.f = f + 72;
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
         // 6 values already popped, stack is correct
