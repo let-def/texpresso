@@ -1993,8 +1993,9 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         const char *body = ps_lookup_func("pgfe");
         // Default PGF rectangle pgfe uses rlineto; ellipse shapes redefine it
         if (body && strstr(body, "rlineto")) {
-          // Rectangle: args are (width, x, y, height) for SW corner + extents
-          fz_rectto(ctx, path, c, d, c + a, d + b);
+          // Rectangle: args are (width, x_SW, y_SW, height)
+          // Stack bottom→top: [width, x, y, height]; popped: d=ht, c=y, b=x, a=w
+          fz_rectto(ctx, path, b, c, b + a, c + d);
         } else {
           // Ellipse: args are (rx, ry, x, y) center + radii
           float rx = a, ry = b, x = c, y = d;
@@ -2041,6 +2042,17 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     }
     else if (strcmp(tmp, "pop") == 0) {
       ps_pop(); // discard top of stack
+    }
+    // PS clip operators: W (nonzero winding), W* (even-odd)
+    else if (strcmp(tmp, "W") == 0 || strcmp(tmp, "W*") == 0) {
+      int eofill = (tmp[0] == 'W' && tmp[1] == '*') ? 1 : 0;
+      if (dc->dev) {
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        fz_clip_path(ctx, dc->dev, get_path(ctx, dc), eofill, ctm,
+                     fz_infinite_rect);
+        st->gs.clip_depth += 1;
+      }
+      drop_path(ctx, dc);
     }
     else if (strcmp(tmp, "get") == 0 || strcmp(tmp, "ifelse") == 0) {
       // PS dict/array get and conditional — not needed, consume 2 values
@@ -2289,6 +2301,17 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
     }
     else if (strcmp(tmp, "pop") == 0) {
       ps_pop();
+    }
+    // PS clip operators in function bodies
+    else if (strcmp(tmp, "W") == 0 || strcmp(tmp, "W*") == 0) {
+      int eofill = (tmp[0] == 'W' && tmp[1] == '*') ? 1 : 0;
+      if (dc->dev) {
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        fz_clip_path(ctx, dc->dev, get_path(ctx, dc), eofill, ctm,
+                     fz_infinite_rect);
+        st->gs.clip_depth += 1;
+      }
+      drop_path(ctx, dc);
     }
     else if (strcmp(tmp, "get") == 0 || strcmp(tmp, "ifelse") == 0) {
       if (ps_depth() >= 2) { ps_pop(); ps_pop(); }
