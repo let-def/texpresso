@@ -1680,7 +1680,7 @@ static void ps_push(float v)   { if (ps_sp < PS_STACK_MAX) ps_stack[ps_sp++] = v
 static float ps_pop()           { return ps_sp > 0 ? ps_stack[--ps_sp] : 0.0f; }
 static int   ps_depth()         { return ps_sp; }
 static void  ps_clear()         { ps_sp = 0; }
-void ps_state_reset()           { ps_sp = 0; ps_func_count = 0; }
+void ps_state_reset()           { ps_sp = 0; /* preserve ps_func_count across pages */ }
 
 // Forward declaration
 static void ps_define_func(const char *name, int nl, const char *body, int bl);
@@ -1985,28 +1985,13 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         color_set_cmyk(st->gs.colors.line, c, m, y, k);
       }
     }
-    // PGF pgfe (shape background path: rectangle or ellipse)
+    // PGF pgfe: default rectangle (height, width, x, y) from PS stack
+    // PGF always redefines pgfe for non-rectangle shapes via other PS commands
     else if (strcmp(tmp, "pgfe") == 0) {
       if (ps_depth() >= 4) {
-        float d=ps_pop(), c=ps_pop(), b=ps_pop(), a=ps_pop();
-        fz_path *path = get_path(ctx, dc);
-        const char *body = ps_lookup_func("pgfe");
-        // Default PGF rectangle pgfe uses rlineto; ellipse shapes redefine it
-        if (body && strstr(body, "rlineto")) {
-          // Rectangle: args are (width, x_SW, y_SW, height)
-          // Stack bottom→top: [width, x, y, height]; popped: d=ht, c=y, b=x, a=w
-          fz_rectto(ctx, path, b, c, b + a, c + d);
-        } else {
-          // Ellipse: args are (rx, ry, x, y) center + radii
-          float rx = a, ry = b, x = c, y = d;
-          float k = 0.5522847498f;
-          fz_moveto(ctx, path, x+rx, y);
-          fz_curveto(ctx, path, x+rx,y+k*ry, x+k*rx,y+ry, x,y+ry);
-          fz_curveto(ctx, path, x-k*rx,y+ry, x-rx,y+k*ry, x-rx,y);
-          fz_curveto(ctx, path, x-rx,y-k*ry, x-k*rx,y-ry, x,y-ry);
-          fz_curveto(ctx, path, x+k*rx,y-ry, x+rx,y-k*ry, x+rx,y);
-          fz_closepath(ctx, path);
-        }
+        float y=ps_pop(), x=ps_pop(), w=ps_pop(), h=ps_pop();
+        // Args: bottom→top [height, width, x_start, y_start]
+        fz_rectto(ctx, get_path(ctx, dc), x, y, x + w, y + h);
       }
     }
     // PS concat: [a b c d e f] concat — concatenate matrix to CTM
@@ -2042,6 +2027,27 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     }
     else if (strcmp(tmp, "pop") == 0) {
       ps_pop(); // discard top of stack
+    }
+    else if (strcmp(tmp, "exch") == 0) {
+      if (ps_depth() >= 2) { float a=ps_pop(), b=ps_pop(); ps_push(a); ps_push(b); }
+    }
+    else if (strcmp(tmp, "neg") == 0) {
+      if (ps_depth() >= 1) { float v = ps_pop(); ps_push(-v); }
+    }
+    // PGF /a function: pops x,y, does moveto (initializes path start)
+    else if (strcmp(tmp, "a") == 0) {
+      if (ps_depth() >= 2) {
+        float y=ps_pop(), x=ps_pop();
+        fz_moveto(ctx, get_path(ctx, dc), x, y);
+      }
+    }
+    else if (strcmp(tmp, "rlineto") == 0) {
+      if (ps_depth() >= 2) {
+        float y=ps_pop(), x=ps_pop();
+        fz_path *p = get_path(ctx, dc);
+        fz_point cp = fz_currentpoint(ctx, p);
+        fz_lineto(ctx, p, cp.x + x, cp.y + y);
+      }
     }
     // PS clip operators: W (nonzero winding), W* (even-odd)
     else if (strcmp(tmp, "W") == 0 || strcmp(tmp, "W*") == 0) {
@@ -2113,12 +2119,12 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
 }
 
 // Execute a stored PS function body (simple token interpreter)
+// The stack should already have the function arguments; body consumes them.
+// Do NOT save/restore ps_sp — let the body naturally consume and push values.
 static void
 ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
               const char *body, int body_len, int color_target)
 {
-  // Save stack pointer: a PS function should not leak values to the caller
-  int saved_sp = ps_sp;
   const char *p = body, *end = body + body_len;
   bool rendered = false;
   while (p < end)
@@ -2197,7 +2203,7 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
         if (n > 32) n = 32;
         for (int i = 0; i < n; i++)
           st->gs.dash[i] = ps_stack[ps_sp - n + i];
-        ps_sp = saved_sp;
+        ps_sp -= n; // only consume the dash array values
       }
     }
     // Path building commands (used in pgf function bodies like pgf1-pgf8)
@@ -2255,26 +2261,6 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
       rendered = true;
       // Do NOT drop path — pgfstr may follow
     }
-    // PGF pgfe within function bodies: rectangle or ellipse
-    else if (strcmp(tmp, "pgfe") == 0) {
-      if (ps_depth() >= 4) {
-        float d=ps_pop(), c=ps_pop(), b=ps_pop(), a=ps_pop();
-        fz_path *path = get_path(ctx, dc);
-        const char *body = ps_lookup_func("pgfe");
-        if (body && strstr(body, "rlineto")) {
-          fz_rectto(ctx, path, c, d, c + a, d + b);
-        } else {
-          float rx = a, ry = b, x = c, y = d;
-          float k = 0.5522847498f;
-          fz_moveto(ctx, path, x+rx, y);
-          fz_curveto(ctx, path, x+rx,y+k*ry, x+k*rx,y+ry, x,y+ry);
-          fz_curveto(ctx, path, x-k*rx,y+ry, x-rx,y+k*ry, x-rx,y);
-          fz_curveto(ctx, path, x-rx,y-k*ry, x-k*rx,y-ry, x,y-ry);
-          fz_curveto(ctx, path, x+k*rx,y-ry, x+rx,y-k*ry, x+rx,y);
-          fz_closepath(ctx, path);
-        }
-      }
-    }
     // concat for CTM transforms within function bodies
     else if (strcmp(tmp, "concat") == 0) {
       if (ps_depth() >= 6) {
@@ -2287,7 +2273,7 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
           st->gs.ctm.f = dc->page_height - 72 - mat.f;
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
-        ps_sp = saved_sp;
+        // 6 values already popped, stack is correct
       }
     }
     // PGF opacity within function bodies
@@ -2303,6 +2289,27 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
     }
     else if (strcmp(tmp, "pop") == 0) {
       ps_pop();
+    }
+    else if (strcmp(tmp, "exch") == 0) {
+      if (ps_depth() >= 2) { float a=ps_pop(), b=ps_pop(); ps_push(a); ps_push(b); }
+    }
+    else if (strcmp(tmp, "neg") == 0) {
+      if (ps_depth() >= 1) { float v = ps_pop(); ps_push(-v); }
+    }
+    else if (strcmp(tmp, "a") == 0) {
+      // PGF /a function: pops x,y, does moveto
+      if (ps_depth() >= 2) {
+        float y=ps_pop(), x=ps_pop();
+        fz_moveto(ctx, get_path(ctx, dc), x, y);
+      }
+    }
+    else if (strcmp(tmp, "rlineto") == 0) {
+      if (ps_depth() >= 2) {
+        float y=ps_pop(), x=ps_pop();
+        fz_path *p = get_path(ctx, dc);
+        fz_point cp = fz_currentpoint(ctx, p);
+        fz_lineto(ctx, p, cp.x + x, cp.y + y);
+      }
     }
     // PS clip operators in function bodies
     else if (strcmp(tmp, "W") == 0 || strcmp(tmp, "W*") == 0) {
@@ -2345,9 +2352,6 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
   // Drop path if a fill left it behind (same rationale as ps_code)
   if (rendered && dc->path)
     drop_path(ctx, dc);
-
-  // Restore stack to pre-function state: PS functions must not leak values
-  ps_sp = saved_sp;
 }
 
 // Parse a pgf PostScript shading special and render natively.
@@ -2631,7 +2635,7 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
 {
   cursor_t mar, i, j;
 
-  { int plen = lim - cur; if (plen > 60) plen = 60;
+  { int plen = lim - cur; if (plen > 200) plen = 200;
     fprintf(stderr, "TRACE sp(%.*s) gs.h=%d gs.v=%d\n", plen, cur, st->gs.h, st->gs.v); }
 
   for (;;)
@@ -2690,17 +2694,11 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
 
     "!" ws* "/pgf"
     {
-      // PGF "!" specials contain two kinds of content:
-      // 1. Function definitions (pgfsc, pgffc, pgfstr, pgf1-8, shading
-      //    functions) — often using "bind def".
-      // 2. Shading invocations that we can render natively.
-      //
-      // Pre-scan for function definitions so ps_code can use them later,
-      // then try native shading rendering.
-      if (dc->dev) {
-        ps_parse_defs(cur, lim);
+      // PGF "!" specials: always parse function definitions (they are
+      // needed for ps_code during page rendering), optionally try shading.
+      ps_parse_defs(cur, lim);
+      if (dc->dev)
         return dvi_exec_pgf_shading(ctx, dc, st, cur, lim);
-      }
       return 1;
     }
 
