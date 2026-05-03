@@ -1999,10 +1999,21 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         fz_matrix mat;
         mat.a = a; mat.b = b; mat.c = c;
         mat.d = d; mat.e = e; mat.f = f;
+        fz_matrix ctm_before = st->gs.ctm;
         st->gs.ctm = fz_concat(mat, dc->base_ctm);
+        fprintf(stderr, "DBG concat: mat=[%.2f %.2f %.2f %.2f %.2f %.2f] base=[%.2f %.2f %.2f %.2f %.2f %.2f] ctm_before=[%.2f %.2f %.2f %.2f %.2f %.2f] ",
+                a,b,c,d,e,f, dc->base_ctm.a,dc->base_ctm.b,dc->base_ctm.c,dc->base_ctm.d,dc->base_ctm.e,dc->base_ctm.f,
+                ctm_before.a,ctm_before.b,ctm_before.c,ctm_before.d,ctm_before.e,ctm_before.f);
         // Fix Y: PS Y-down-from-top → device Y-up-from-bottom
-        if (dc->page_height > 0)
+        if (dc->page_height > 0) {
+          float old_f = st->gs.ctm.f;
           st->gs.ctm.f = dc->page_height - 72 - mat.f;
+          fprintf(stderr, "Yfix: old_f=%.2f page_h=%.2f mat.f=%.2f new_f=%.2f\n",
+                  old_f, dc->page_height, mat.f, st->gs.ctm.f);
+        } else {
+          fprintf(stderr, "NO Yfix: page_h=%.2f ctm.f=%.2f\n",
+                  dc->page_height, st->gs.ctm.f);
+        }
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
         ps_clear();
@@ -2691,9 +2702,12 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
 
     "!" ws* "/pgf"
     {
-      // PGF "!" specials: always parse function definitions (they are
-      // needed for ps_code during page rendering), optionally try shading.
-      ps_parse_defs(cur, lim);
+      // PGF "!" specials: always parse function definitions.
+      // IMPORTANT: the match consumed "/pgf" from the content (e.g. from
+      // "/pgfsc"), so back up 4 chars so ps_parse_defs sees the full
+      // function name including the /pgf prefix.
+      cursor_t content_start = cur - 4; // include "/pgf" that was consumed
+      ps_parse_defs(content_start, lim);
       if (dc->dev)
         return dvi_exec_pgf_shading(ctx, dc, st, cur, lim);
       return 1;
