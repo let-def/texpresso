@@ -2117,6 +2117,8 @@ static void
 ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
               const char *body, int body_len, int color_target)
 {
+  // Save stack pointer: a PS function should not leak values to the caller
+  int saved_sp = ps_sp;
   const char *p = body, *end = body + body_len;
   bool rendered = false;
   while (p < end)
@@ -2195,7 +2197,7 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
         if (n > 32) n = 32;
         for (int i = 0; i < n; i++)
           st->gs.dash[i] = ps_stack[ps_sp - n + i];
-        ps_clear();
+        ps_sp = saved_sp;
       }
     }
     // Path building commands (used in pgf function bodies like pgf1-pgf8)
@@ -2285,7 +2287,7 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
           st->gs.ctm.f = dc->page_height - 72 - mat.f;
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
-        ps_clear();
+        ps_sp = saved_sp;
       }
     }
     // PGF opacity within function bodies
@@ -2344,7 +2346,8 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
   if (rendered && dc->path)
     drop_path(ctx, dc);
 
-  ps_clear();
+  // Restore stack to pre-function state: PS functions must not leak values
+  ps_sp = saved_sp;
 }
 
 // Parse a pgf PostScript shading special and render natively.
