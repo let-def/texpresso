@@ -1899,6 +1899,11 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     else if (strcmp(tmp, "pgfstr") == 0) {
       const char *b = ps_lookup_func("pgfsc");
       if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_STROKE);
+      else {
+        // Fallback: when pgfsc is not defined, use fill color for stroke
+        // (PS setrgbcolor sets a "current color" for both fill and stroke)
+        memcpy(st->gs.colors.line, st->gs.colors.fill, sizeof(st->gs.colors.fill));
+      }
       float *lc = st->gs.colors.line;
       fprintf(stderr, "DBG pgfstr: pgfsc=%s LINE=[%.2f %.2f %.2f] lw=%.2f alpha=%.2f\n",
               b&&*b?b:"(empty)", lc[0], lc[1], lc[2], st->gs.line_width, st->gs.stroke_alpha);
@@ -1980,18 +1985,27 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         color_set_cmyk(st->gs.colors.line, c, m, y, k);
       }
     }
-    // PGF ellipse (rx ry x y pgfe)
+    // PGF pgfe (shape background path: rectangle or ellipse)
     else if (strcmp(tmp, "pgfe") == 0) {
       if (ps_depth() >= 4) {
-        float y=ps_pop(), x=ps_pop(), ry=ps_pop(), rx=ps_pop();
+        float d=ps_pop(), c=ps_pop(), b=ps_pop(), a=ps_pop();
         fz_path *path = get_path(ctx, dc);
-        float k = 0.5522847498f;
-        fz_moveto(ctx, path, x+rx, y);
-        fz_curveto(ctx, path, x+rx,y+k*ry, x+k*rx,y+ry, x,y+ry);
-        fz_curveto(ctx, path, x-k*rx,y+ry, x-rx,y+k*ry, x-rx,y);
-        fz_curveto(ctx, path, x-rx,y-k*ry, x-k*rx,y-ry, x,y-ry);
-        fz_curveto(ctx, path, x+k*rx,y-ry, x+rx,y-k*ry, x+rx,y);
-        fz_closepath(ctx, path);
+        const char *body = ps_lookup_func("pgfe");
+        // Default PGF rectangle pgfe uses rlineto; ellipse shapes redefine it
+        if (body && strstr(body, "rlineto")) {
+          // Rectangle: args are (width, x, y, height) for SW corner + extents
+          fz_rectto(ctx, path, c, d, c + a, d + b);
+        } else {
+          // Ellipse: args are (rx, ry, x, y) center + radii
+          float rx = a, ry = b, x = c, y = d;
+          float k = 0.5522847498f;
+          fz_moveto(ctx, path, x+rx, y);
+          fz_curveto(ctx, path, x+rx,y+k*ry, x+k*rx,y+ry, x,y+ry);
+          fz_curveto(ctx, path, x-k*rx,y+ry, x-rx,y+k*ry, x-rx,y);
+          fz_curveto(ctx, path, x-rx,y-k*ry, x-k*rx,y-ry, x,y-ry);
+          fz_curveto(ctx, path, x+k*rx,y-ry, x+rx,y-k*ry, x+rx,y);
+          fz_closepath(ctx, path);
+        }
       }
     }
     // PS concat: [a b c d e f] concat — concatenate matrix to CTM
@@ -2040,6 +2054,7 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
       // pgfs = PGF stroke (dvips alias for pgfstr)
       const char *b = ps_lookup_func("pgfsc");
       if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_STROKE);
+      else memcpy(st->gs.colors.line, st->gs.colors.fill, sizeof(st->gs.colors.fill));
       if (dc->dev) {
         fz_matrix ctm = dvi_get_ctm(dc, st);
         fz_stroke_state sst;
@@ -2128,20 +2143,20 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
     // Same commands as ps_code but without function defs
     if (strcmp(tmp, "setgray") == 0) {
       if (ps_depth() >= 1) { float g=ps_pop();
-        if (ct != PS_COLOR_STROKE) color_set_gray(st->gs.colors.fill,g);
-        if (ct != PS_COLOR_FILL)   color_set_gray(st->gs.colors.line,g);
+        color_set_gray(st->gs.colors.fill,g);
+        color_set_gray(st->gs.colors.line,g);
       }
     }
     else if (strcmp(tmp, "setrgbcolor") == 0) {
       if (ps_depth() >= 3) { float b=ps_pop(),g=ps_pop(),r=ps_pop();
-        if (ct != PS_COLOR_STROKE) color_set_rgb(st->gs.colors.fill,r,g,b);
-        if (ct != PS_COLOR_FILL)   color_set_rgb(st->gs.colors.line,r,g,b);
+        color_set_rgb(st->gs.colors.fill,r,g,b);
+        color_set_rgb(st->gs.colors.line,r,g,b);
       }
     }
     else if (strcmp(tmp, "setcmykcolor") == 0) {
       if (ps_depth() >= 4) { float k=ps_pop(),y=ps_pop(),m=ps_pop(),c=ps_pop();
-        if (ct != PS_COLOR_STROKE) color_set_cmyk(st->gs.colors.fill,c,m,y,k);
-        if (ct != PS_COLOR_FILL)   color_set_cmyk(st->gs.colors.line,c,m,y,k);
+        color_set_cmyk(st->gs.colors.fill,c,m,y,k);
+        color_set_cmyk(st->gs.colors.line,c,m,y,k);
       }
     }
     else if (strcmp(tmp, "fillopacity") == 0) {
@@ -2226,18 +2241,24 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
       rendered = true;
       // Do NOT drop path — pgfstr may follow
     }
-    // PGF ellipse within function bodies
+    // PGF pgfe within function bodies: rectangle or ellipse
     else if (strcmp(tmp, "pgfe") == 0) {
       if (ps_depth() >= 4) {
-        float y=ps_pop(), x=ps_pop(), ry=ps_pop(), rx=ps_pop();
+        float d=ps_pop(), c=ps_pop(), b=ps_pop(), a=ps_pop();
         fz_path *path = get_path(ctx, dc);
-        float k = 0.5522847498f;
-        fz_moveto(ctx, path, x+rx, y);
-        fz_curveto(ctx, path, x+rx,y+k*ry, x+k*rx,y+ry, x,y+ry);
-        fz_curveto(ctx, path, x-k*rx,y+ry, x-rx,y+k*ry, x-rx,y);
-        fz_curveto(ctx, path, x-rx,y-k*ry, x-k*rx,y-ry, x,y-ry);
-        fz_curveto(ctx, path, x+k*rx,y-ry, x+rx,y-k*ry, x+rx,y);
-        fz_closepath(ctx, path);
+        const char *body = ps_lookup_func("pgfe");
+        if (body && strstr(body, "rlineto")) {
+          fz_rectto(ctx, path, c, d, c + a, d + b);
+        } else {
+          float rx = a, ry = b, x = c, y = d;
+          float k = 0.5522847498f;
+          fz_moveto(ctx, path, x+rx, y);
+          fz_curveto(ctx, path, x+rx,y+k*ry, x+k*rx,y+ry, x,y+ry);
+          fz_curveto(ctx, path, x-k*rx,y+ry, x-rx,y+k*ry, x-rx,y);
+          fz_curveto(ctx, path, x-rx,y-k*ry, x-k*rx,y-ry, x,y-ry);
+          fz_curveto(ctx, path, x+k*rx,y-ry, x+rx,y-k*ry, x+rx,y);
+          fz_closepath(ctx, path);
+        }
       }
     }
     // concat for CTM transforms within function bodies
