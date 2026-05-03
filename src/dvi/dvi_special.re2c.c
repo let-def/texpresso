@@ -1817,6 +1817,16 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
           p += 3;
           ps_define_func(ns, nl, bs, bl);
           fprintf(stderr, "DBG ps_def: /%.*s = %.*s%s\n", nl, ns, bl, bs, is_bind ? " [bind]" : "");
+          // Immediately execute color function bodies so that colors are
+          // set even if later ps_lookup_func fails (e.g. due to corruption).
+          if ((nl == 5 && memcmp(ns, "pgffc", 5) == 0) ||
+              (nl == 5 && memcmp(ns, "pgfsc", 5) == 0)) {
+            ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_BOTH);
+            ps_clear();
+            fprintf(stderr, "DBG color_exec: /%.*s fill=[%.2f %.2f %.2f] line=[%.2f %.2f %.2f]\n",
+                    nl, ns, st->gs.colors.fill[0], st->gs.colors.fill[1], st->gs.colors.fill[2],
+                    st->gs.colors.line[0], st->gs.colors.line[1], st->gs.colors.line[2]);
+          }
           continue;
         }
       }
@@ -2527,6 +2537,7 @@ dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, curs
   {
     dc->page_width  = pdim(f0, lim);
     dc->page_height = pdim(f1, lim);
+    fprintf(stderr, "DBG papersize: w=%.2f h=%.2f\n", dc->page_width, dc->page_height);
     return 1;
   }
 
