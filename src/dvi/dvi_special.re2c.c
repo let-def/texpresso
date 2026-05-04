@@ -1638,7 +1638,7 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
             s = ns;
           }
           if (vi >= 3) {
-            if (is_c0) { c0[0]=vals[0]; c0[1]=vals[1]; c0[2]=vals[2]; has_c0 = true;
+            if (is_c0) { if (!has_c0) { c0[0]=vals[0]; c0[1]=vals[1]; c0[2]=vals[2]; has_c0 = true; }
               fprintf(stderr, "DBG shade: found C0=[%.2f %.2f %.2f] at offset %d\n", vals[0],vals[1],vals[2], (int)(s - end + (end-p))); }
             else       { c1[0]=vals[0]; c1[1]=vals[1]; c1[2]=vals[2]; has_c1 = true;
               fprintf(stderr, "DBG shade: found C1=[%.2f %.2f %.2f] at offset %d\n", vals[0],vals[1],vals[2], (int)(s - end + (end-p))); }
