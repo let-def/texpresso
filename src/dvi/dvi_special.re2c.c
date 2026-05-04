@@ -1566,7 +1566,7 @@ static cursor_t parse_pdf_string(char *buf, char *end, cursor_t cur, cursor_t li
 }
 
 static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
-    float x0, float y0, float x1, float y1, float c0[3], float c1[3]);
+    float x0, float y0, float x1, float y1, float c0[3], float c1[3], fz_path *clip_path);
 static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
     float cx, float cy, float r0, float r1, float c0[3], float c1[3]);
 
@@ -1678,7 +1678,9 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
       fprintf(stderr, "DBG shade: CTM=[%.2f %.2f %.2f %.2f %.2f %.2f]\n",
               ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f);
     }
-    render_axial_shade(ctx, dc, st, cx0, cy0, cx1, cy1, c0, c1);
+    fprintf(stderr, "DBG shade: calling render_axial_shade now\n");
+    render_axial_shade(ctx, dc, st, cx0, cy0, cx1, cy1, c0, c1, get_path(ctx, dc));
+    fprintf(stderr, "DBG shade: render_axial_shade returned\n");
   } else if (shade_type == 3) {
     fprintf(stderr, "DBG shade: radial coords=[%.2f %.2f %.2f %.2f] c0=[%.2f %.2f %.2f] c1=[%.2f %.2f %.2f]\n",
             cx0, cy0, cx1, cy1, c0[0], c0[1], c0[2], c1[0], c1[1], c1[2]);
@@ -1694,8 +1696,9 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
 // Used when pgf PostScript shading specials are encountered.
 static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
     float x0, float y0, float x1, float y1,
-    float c0[3], float c1[3])
+    float c0[3], float c1[3], fz_path *clip_path)
 {
+  fprintf(stderr, "DBG render_axial ENTER: dev=%p %s\n", (void*)dc->dev, dc->dev ? "ok" : "NULL");
   if (!dc->dev) return;
 
   fz_matrix ctm = dvi_get_ctm(dc, st);
@@ -1708,8 +1711,29 @@ static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
   float len = sqrtf(dx * dx + dy * dy);
   if (len < 0.001f) return;
 
-  // Perpendicular direction for line width
+  // Perpendicular direction
   float px = -dy / len, py = dx / len;
+
+  // Determine perpendicular half-width from path bounds or use large default
+  float hw = 200.0f; // large default to cover typical pattern tiles
+  if (clip_path) {
+    fz_rect bounds = fz_bound_path(ctx, clip_path, 0, fz_identity);
+    if (!fz_is_infinite_rect(bounds) && !fz_is_empty_rect(bounds)) {
+      // Max perpendicular distance from any bbox corner to the gradient axis
+      float max_dist = 0;
+      float corners[4][2] = {{bounds.x0, bounds.y0}, {bounds.x0, bounds.y1},
+                             {bounds.x1, bounds.y0}, {bounds.x1, bounds.y1}};
+      for (int c = 0; c < 4; c++) {
+        float rx = corners[c][0] - x0;
+        float ry = corners[c][1] - y0;
+        float perp = fabsf(ry * dx - rx * dy) / len;
+        if (perp > max_dist) max_dist = perp;
+      }
+      hw = max_dist + 1.0f; // add margin
+      fprintf(stderr, "DBG render_axial: bbox=[%.1f %.1f %.1f %.1f] max_perp=%.1f hw=%.1f\n",
+              bounds.x0, bounds.y0, bounds.x1, bounds.y1, max_dist, hw);
+    }
+  }
 
   for (int i = 0; i < steps; i++)
   {
@@ -1725,9 +1749,8 @@ static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
     float nx = x0 + dx * (float)(i + 1) / steps;
     float ny = y0 + dy * (float)(i + 1) / steps;
 
-    // Build a thin trapezoid along the gradient
+    // Build a trapezoid along the gradient, extending perpendicular by hw
     fz_path *path = fz_new_path(ctx);
-    float hw = len / steps * 0.6f; // half-width for overlap
     fz_moveto(ctx, path, cx + px * hw, cy + py * hw);
     fz_lineto(ctx, path, nx + px * hw, ny + py * hw);
     fz_lineto(ctx, path, nx - px * hw, ny - py * hw);
@@ -2310,7 +2333,7 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         float c0[3] = {r1, g1, b1};
         float c1[3] = {r2, g2, b2};
         (void)depth;
-        render_axial_shade(ctx, dc, st, sx, sy, ex, ey, c0, c1);
+        render_axial_shade(ctx, dc, st, sx, sy, ex, ey, c0, c1, NULL);
         ps_clear();
         rendered = true;
       }
@@ -2327,7 +2350,7 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         float c0[3], c1[3];
         color_set_cmyk(c0, c1_c, m1, y1, k1);
         color_set_cmyk(c1, c2_c, m2, y2, k2);
-        render_axial_shade(ctx, dc, st, sx, sy, ex, ey, c0, c1);
+        render_axial_shade(ctx, dc, st, sx, sy, ex, ey, c0, c1, NULL);
         ps_clear();
         rendered = true;
       }
@@ -2766,7 +2789,7 @@ dvi_exec_pgf_shading(fz_context *ctx, dvi_context *dc, dvi_state *st,
             color_set_rgb(c1, params[8], params[9], params[10]);
           }
 
-          render_axial_shade(ctx, dc, st, sx, sy, ex, ey, c0, c1);
+          render_axial_shade(ctx, dc, st, sx, sy, ex, ey, c0, c1, NULL);
           return 1;
         }
 
