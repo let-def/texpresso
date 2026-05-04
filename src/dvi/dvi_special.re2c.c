@@ -1673,6 +1673,11 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
   if (shade_type == 2) {
     fprintf(stderr, "DBG shade: axial coords=[%.2f %.2f %.2f %.2f] c0=[%.2f %.2f %.2f] c1=[%.2f %.2f %.2f]\n",
             cx0, cy0, cx1, cy1, c0[0], c0[1], c0[2], c1[0], c1[1], c1[2]);
+    {
+      fz_matrix ctm = dvi_get_ctm(dc, st);
+      fprintf(stderr, "DBG shade: CTM=[%.2f %.2f %.2f %.2f %.2f %.2f]\n",
+              ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f);
+    }
     render_axial_shade(ctx, dc, st, cx0, cy0, cx1, cy1, c0, c1);
   } else if (shade_type == 3) {
     fprintf(stderr, "DBG shade: radial coords=[%.2f %.2f %.2f %.2f] c0=[%.2f %.2f %.2f] c1=[%.2f %.2f %.2f]\n",
@@ -1694,6 +1699,8 @@ static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
   if (!dc->dev) return;
 
   fz_matrix ctm = dvi_get_ctm(dc, st);
+  fprintf(stderr, "DBG render_axial: ctm=[%.2f %.2f %.2f %.2f %.2f %.2f] coords=[%.2f %.2f %.2f %.2f] c0=[%.2f %.2f %.2f] c1=[%.2f %.2f %.2f] alpha=%.2f\n",
+          ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f, x0, y0, x1, y1, c0[0], c0[1], c0[2], c1[0], c1[1], c1[2], st->gs.fill_alpha);
   int steps = 80;
 
   // Compute gradient direction and perpendicular
@@ -2123,6 +2130,7 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     // Parse the following dictionary content for shading parameters
     // and render natively via try_parse_ps_shading.
     else if (strcmp(tmp, "<<") == 0) {
+      fprintf(stderr, "DBG shade << handler: dev=%p trying parse\n", (void*)dc->dev);
       if (try_parse_ps_shading(ctx, dc, st, p, end)) {
         drop_path(ctx, dc);
         ps_clear();
