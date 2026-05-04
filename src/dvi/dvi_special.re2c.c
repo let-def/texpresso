@@ -1949,13 +1949,7 @@ static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
     float t = (t_inner + t_outer) * 0.5f;
 
     float color[3];
-    {
-      float c0r = sf[0].c0[0], c0g = sf[0].c0[1], c0b = sf[0].c0[2];
-      float c1r = sf[nsub-1].c1[0], c1g = sf[nsub-1].c1[1], c1b = sf[nsub-1].c1[2];
-      color[0] = c0r + t * (c1r - c0r);
-      color[1] = c0g + t * (c1g - c0g);
-      color[2] = c0b + t * (c1b - c0b);
-    }
+    shade_eval_color(color, nsub, sf, bounds, t);
 
     // Thick ring via even-odd fill
     fz_path *path = fz_new_path(ctx);
