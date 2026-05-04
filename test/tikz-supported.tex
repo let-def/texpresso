@@ -1,6 +1,6 @@
 \documentclass[12pt]{article}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta, shapes, calc, backgrounds, positioning, patterns, decorations.markings, decorations.pathmorphing, fit, matrix, shadings}
+\usetikzlibrary{arrows.meta, shapes, calc, backgrounds, positioning, patterns, decorations.markings, decorations.pathmorphing, decorations.pathreplacing, decorations.text, fit, matrix, shadings}
 \usepackage{xcolor}
 \usepackage{graphicx}
 
@@ -374,6 +374,232 @@
   \draw[red, thick] (8,-0.5) -- (9,-0.5) node[right] {Line 1};
   \draw[blue, thick, dashed] (8,-1) -- (9,-1) node[right] {Line 2};
   \draw (7.5,-2) rectangle (10,0.5);
+\end{tikzpicture}
+
+\subsection*{Phase 12: Shading Variants}
+
+\begin{tikzpicture}
+  % horizontal shading (top to bottom)
+  \shade[top color=yellow, bottom color=orange] (0,0) rectangle (3,1.5);
+
+  % tricolor shading
+  \shade[left color=white, right color=black!40] (4,0) rectangle (7,1.5);
+
+  % vertical + horizontal combo
+  \shade[top color=green!40, bottom color=blue!40,
+         left color=green!40, right color=blue!40]
+    (8,0) rectangle (11,1.5);
+
+  % inner color / outer color (radial-like axial)
+  \shade[inner color=red!30, outer color=blue!70]
+    (0,-2.5) circle (1);
+
+  \shade[inner color=yellow!60, outer color=black!20]
+    (4,-2.5) ellipse (1.5 and 0.8);
+
+  % shading with opacity
+  \shade[top color=red, bottom color=blue, opacity=0.6]
+    (7,-3) rectangle (10,-1.5);
+\end{tikzpicture}
+
+\subsection*{Phase 13: Patterns and Decoration Extras}
+
+\begin{tikzpicture}
+  % pattern fill (crosshatch)
+  \fill[pattern=crosshatch, pattern color=red!50]
+    (0,0) rectangle (2.5,1.5);
+  \draw[thick] (0,0) rectangle (2.5,1.5);
+
+  % pattern fill (horizontal lines)
+  \fill[pattern=horizontal lines, pattern color=blue!50]
+    (3,0) rectangle (5.5,1.5);
+  \draw[thick] (3,0) rectangle (5.5,1.5);
+
+  % pattern fill (north east lines)
+  \fill[pattern=north east lines, pattern color=green!60!black]
+    (6,0) rectangle (8.5,1.5);
+  \draw[thick] (6,0) rectangle (8.5,1.5);
+
+  % pattern fill (dots)
+  \fill[pattern=dots, pattern color=purple]
+    (9,0) rectangle (11.5,1.5);
+  \draw[thick] (9,0) rectangle (11.5,1.5);
+
+  % decoration: brace
+  \draw[decorate, decoration={brace, amplitude=6pt}]
+    (0,-1) -- (4,-1) node[midway, below=8pt] {brace};
+
+  % decoration: text along path
+  \draw[decorate, decoration={text along path,
+        text={A wavy path}}] (0,-2.5) sin (2,-2) cos (4,-2.5) sin (6,-2);
+
+  % more complex decoration
+  \draw[very thick, decorate, decoration={
+        zigzag, segment length=6pt, amplitude=3pt}]
+    (7,-3) -- (11,-3);
+\end{tikzpicture}
+
+\subsection*{Phase 14: Advanced Path Connectors}
+
+\begin{tikzpicture}
+  % orthogonal connectors
+  \node[draw] (A) at (0,0) {A};
+  \node[draw] (B) at (2,1.5) {B};
+  \draw[->] (A) |- (B);
+  \draw[->] (A) -| (B);
+
+  % various to-paths
+  \node[draw] (C) at (5,0) {C};
+  \node[draw] (D) at (8,1.5) {D};
+  \draw[->, to path={-- (\tikztotarget)}] (C) -- (D);
+
+  \node[draw] (E) at (5,-2) {E};
+  \node[draw] (F) at (8,-0.5) {F};
+  \draw[->] (E) to[out=60, in=180] (F);
+
+  \node[draw] (G) at (5,-3.5) {G};
+  \node[draw] (H) at (8,-3.5) {H};
+  \draw[->] (G) to[bend left=45] (H);
+  \draw[->] (H) to[bend left=45] (G);
+
+  % edge with label
+  \node[draw] (I) at (10,0) {I};
+  \node[draw] (J) at (12,1) {J};
+  \draw (I) edge[->, bend left] node[right] {label} (J);
+
+  % loop
+  \node[draw] (K) at (0,-3) {K};
+  \draw[->] (K) edge[loop above] ();
+  \draw[->] (K) edge[loop left] ();
+\end{tikzpicture}
+
+\subsection*{Phase 15: Node Anchor and Positioning}
+
+\begin{tikzpicture}
+  % named anchors
+  \node[draw, shape=rectangle] (R) at (2,0)
+    {\shortstack{anchor\\test}};
+  \fill[red] (R.north) circle (1.5pt) node[above] {n};
+  \fill[red] (R.south) circle (1.5pt) node[below] {s};
+  \fill[red] (R.east)  circle (1.5pt) node[right] {e};
+  \fill[red] (R.west)  circle (1.5pt) node[left] {w};
+  \fill[red] (R.north east) circle (1.5pt);
+  \fill[red] (R.north west) circle (1.5pt);
+  \fill[red] (R.south east) circle (1.5pt);
+  \fill[red] (R.south west) circle (1.5pt);
+
+  % positioning with angles
+  \node[draw] (S) at (7,0) {Source};
+  \node[draw, above right=1cm and 0.5cm of S] {Above Right};
+  \node[draw, below left=0.8cm and 0.3cm of S] {Below Left};
+
+  % chain-like positioning
+  \node[draw] (X0) at (2,-3.5) {X0};
+  \node[draw, right=0.5cm of X0] (X1) {X1};
+  \node[draw, right=0.5cm of X1] (X2) {X2};
+  \draw[->] (X0) -- (X1) -- (X2);
+
+  % above/below with offsets
+  \node[draw] (P) at (8,-3) {P};
+  \node[draw, above=0.3cm of P, xshift=8pt] {$Q_{up}$};
+  \node[draw, below=0.5cm of P, xshift=-4pt] {$R_{dn}$};
+\end{tikzpicture}
+
+\subsection*{Phase 16: Foreach with Calculations}
+
+\begin{tikzpicture}
+  % nested foreach
+  \foreach \x in {1,...,4} {
+    \foreach \y in {1,...,3} {
+      \fill (\x*1.2, \y*1.2) circle (0.3);
+    }
+  }
+
+  % foreach with evaluate
+  \foreach \i [evaluate=\i as \j using \i*2] in {1,...,5} {
+    \node[draw] at (\i*1.5+5, 0) {\j};
+  }
+
+  % count
+  \foreach \x [count=\c] in {a,b,c,d,e} {
+    \node[draw] at (\c*1.2+5, -2) {\x};
+  }
+
+  % remember
+  \foreach \x [remember=\x as \lastx (initially 0)] in {1,...,4} {
+    \node[draw, fill=yellow!20] at (\x*1.5+5, -4) {\lastx\,$\to$\,\x};
+  }
+
+  % foreach on named coordinates
+  \coordinate (base) at (2,-6);
+  \foreach \a/\r in {0/red, 60/green!60!black, 120/blue, 180/orange, 240/purple, 300/teal} {
+    \fill[\r] ($(base) + (\a:1.5)$) circle (0.3);
+  }
+\end{tikzpicture}
+
+\subsection*{Phase 17: Scopes with Style Inheritance}
+
+\begin{tikzpicture}
+  % scoped opacity
+  \begin{scope}[transparency group, opacity=0.5]
+    \fill[red]   (0,0) circle (0.8);
+    \fill[green] (0.6,0) circle (0.8);
+    \fill[blue]  (0.3,0.5) circle (0.8);
+  \end{scope}
+
+  % scoped transform
+  \begin{scope}[shift={(5,0)}, scale=1.3, rotate=15]
+    \draw[thick, ->] (0,0) -- (1,0) node[right] {$x$};
+    \draw[thick, ->] (0,0) -- (0,1) node[above] {$y$};
+    \node[draw, fill=white] at (0.5,0.5) {T};
+  \end{scope}
+
+  % scoped line style
+  \begin{scope}[very thick, color=teal, dashed]
+    \draw (0,-3) -- (3,-3);
+    \draw (0,-3.8) -- (3,-3.8);
+  \end{scope}
+
+  % scoped fill with pattern
+  \begin{scope}[shift={(6,-2)}]
+    \fill[pattern=north east lines, pattern color=blue!30]
+      (0,-1) rectangle (3,1);
+    \draw[thick] (0,-1) rectangle (3,1);
+    \node at (1.5,0) {scope};
+  \end{scope}
+\end{tikzpicture}
+
+\subsection*{Phase 18: Coordinate Calculations}
+
+\begin{tikzpicture}
+  % basic calculation
+  \coordinate (A) at (0,0);
+  \coordinate (B) at (3,2);
+  \coordinate (C) at ($(A)!0.5!(B)$);
+  \fill (A) circle (2pt) node[below] {A};
+  \fill (B) circle (2pt) node[right] {B};
+  \fill[red] (C) circle (2pt) node[above] {C (mid)};
+
+  % point with offset
+  \coordinate (D) at ($(A)!0.3!(B) + (0,1)$);
+  \fill[blue] (D) circle (2pt) node[above] {D};
+
+  % projection
+  \coordinate (E) at ($(A)!(C)!(B)$);
+  \fill[green!60!black] (E) circle (2pt) node[below] {E};
+
+  % vector arithmetic
+  \coordinate (V) at (5,0);
+  \coordinate (W) at ($(V) + (2,1.5)$);
+  \draw[->, thick] (5,0) -- (W) node[midway, above] {$\vec{v}$};
+  \draw[->, thick] (5,0) -- ($(5,0) + (0.5,2)$)
+    node[midway, left] {$\vec{w}$};
+
+  % polar coordinates
+  \foreach \angle in {0,45,...,315} {
+    \fill (\angle:1.5) circle (2pt);
+  }
+  \draw (0,0) circle (1.5);
 \end{tikzpicture}
 
 \end{document}
