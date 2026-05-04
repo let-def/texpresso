@@ -1576,7 +1576,11 @@ static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
 static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st,
                                   const char *p, const char *end)
 {
-  fprintf(stderr, "DBG shade: try_parse_ps_shading called, content=%.500s\n", p);
+  fprintf(stderr, "DBG shade: called, len=%d content=%.500s\n", (int)(end-p), p);
+  // Also dump full content to stderr for inspection
+  fprintf(stderr, "DBG shade full[%d]: ", (int)(end-p));
+  for (const char *dp = p; dp < end; dp++) fputc(*dp, stderr);
+  fprintf(stderr, "\n");
   // Scan for /Coords [x0 y0 x1 y1]
   float cx0=0, cy0=0, cx1=0, cy1=0;
   bool has_coords = false;
