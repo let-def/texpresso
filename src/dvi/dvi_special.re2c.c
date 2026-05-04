@@ -1605,7 +1605,8 @@ static void render_axial_shade_full(fz_context *ctx, dvi_context *dc, dvi_state 
     int nsub, const shade_subfunc *sf, const float *bounds,
     fz_path *clip_path);
 static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
-    float cx, float cy, float r0, float r1, float c0[3], float c1[3]);
+    float cx, float cy, float r0, float r1,
+    const shade_subfunc *sf, int nsub, const float *bounds, int nbounds);
 static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
     float x0, float y0, float x1, float y1, float c0[3], float c1[3], fz_path *clip_path);
 
@@ -1783,13 +1784,16 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
                             nsub, subs, nbounds > 0 ? bounds : NULL, get_path(ctx, dc));
     fprintf(stderr, "DBG shade: render_axial_shade_full returned\n");
   } else if (shade_type == 3) {
-    fprintf(stderr, "DBG shade: radial coords=[%.2f %.2f %.2f %.2f] nsub=%d\n",
-            cx0, cy0, cx1, cy1, nsub);
+    fprintf(stderr, "DBG shade: radial nsub=%d\n", nsub);
+    for (int i = 0; i < nsub; i++)
+      fprintf(stderr, "DBG shade:   sub[%d] c0=[%.2f %.2f %.2f] c1=[%.2f %.2f %.2f]\n",
+              i, subs[i].c0[0],subs[i].c0[1],subs[i].c0[2],
+              subs[i].c1[0],subs[i].c1[1],subs[i].c1[2]);
+    float cx=cx0, cy=cy0, r0=0, r1=(float)sqrt((cx1-cx0)*(cx1-cx0)+(cy1-cy0)*(cy1-cy0));
+    fprintf(stderr, "DBG shade: radial cx=%.1f cy=%.1f r0=%.1f r1=%.1f\n", cx, cy, r0, r1);
     if (nsub > 0) {
-      float c0[3]={subs[0].c0[0],subs[0].c0[1],subs[0].c0[2]};
-      float c1[3]={subs[nsub-1].c1[0],subs[nsub-1].c1[1],subs[nsub-1].c1[2]};
-      float r0 = 0, r1 = sqrtf((cx1-cx0)*(cx1-cx0) + (cy1-cy0)*(cy1-cy0));
-      render_radial_shade(ctx, dc, st, cx0, cy0, r0, r1, c0, c1);
+      render_radial_shade(ctx, dc, st, cx, cy, r0, r1,
+                          subs, nsub, bounds, nbounds > 0 ? bounds : NULL);
     }
   } else {
     return false;
@@ -1902,14 +1906,23 @@ static void render_axial_shade_full(fz_context *ctx, dvi_context *dc, dvi_state 
 // Render a simple radial gradient natively.
 static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
     float cx, float cy, float r0, float r1,
-    float c0[3], float c1[3])
+    const shade_subfunc *sf, int nsub, const float *bounds, int nbounds)
 {
   if (!dc->dev) return;
 
   fz_matrix ctm = dvi_get_ctm(dc, st);
-  int steps = 60;
+  int steps = 400;
   float r_max = r1 > r0 ? r1 : r0;
   float r_min = r0 < r1 ? r0 : r1;
+
+  float alpha = st->gs.fill_alpha;
+  bool use_group = (alpha < 0.999f);
+  if (use_group) {
+    fz_rect r = {cx - r_max, cy - r_max, cx + r_max, cy + r_max};
+    fz_rect dev_bbox = fz_transform_rect(r, ctm);
+    fz_begin_group(ctx, dc->dev, dev_bbox, NULL, 1, 0, 0, alpha);
+  }
+  float fill_a = use_group ? 1.0f : alpha;
 
   for (int i = 0; i < steps; i++)
   {
@@ -1919,22 +1932,17 @@ static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
     float ro = r_min + (r_max - r_min) * t_outer;
     float t = (t_inner + t_outer) * 0.5f;
 
-    float color[3] = {
-      c0[0] + (c1[0] - c0[0]) * t,
-      c0[1] + (c1[1] - c0[1]) * t,
-      c0[2] + (c1[2] - c0[2]) * t,
-    };
+    float color[3];
+    shade_eval_color(color, nsub, sf, bounds, t);
 
-    // Draw a thick ring
+    // Thick ring via even-odd fill
     fz_path *path = fz_new_path(ctx);
-    // Outer circle
     fz_moveto(ctx, path, cx + ro, cy);
     fz_curveto(ctx, path, cx + ro, cy + ro * 0.552f, cx + ro * 0.552f, cy + ro, cx, cy + ro);
     fz_curveto(ctx, path, cx - ro * 0.552f, cy + ro, cx - ro, cy + ro * 0.552f, cx - ro, cy);
     fz_curveto(ctx, path, cx - ro, cy - ro * 0.552f, cx - ro * 0.552f, cy - ro, cx, cy - ro);
     fz_curveto(ctx, path, cx + ro * 0.552f, cy - ro, cx + ro, cy - ro * 0.552f, cx + ro, cy);
     fz_closepath(ctx, path);
-    // Inner circle (reverse direction for even-odd fill)
     fz_moveto(ctx, path, cx + ri, cy);
     fz_curveto(ctx, path, cx + ri, cy - ri * 0.552f, cx + ri * 0.552f, cy - ri, cx, cy - ri);
     fz_curveto(ctx, path, cx - ri * 0.552f, cy - ri, cx - ri, cy - ri * 0.552f, cx - ri, cy);
@@ -1942,9 +1950,12 @@ static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
     fz_curveto(ctx, path, cx + ri * 0.552f, cy + ri, cx + ri, cy + ri * 0.552f, cx + ri, cy);
     fz_closepath(ctx, path);
     fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
-                 color, st->gs.fill_alpha, color_params);
+                 color, fill_a, color_params);
     fz_drop_path(ctx, path);
   }
+
+  if (use_group)
+    fz_end_group(ctx, dc->dev);
 }
 
 // ---- PS (PostScript) command interpreter for PGF/TikZ ----
@@ -2501,7 +2512,10 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         float sr=ps_pop(), sy=ps_pop(), sx=ps_pop();
         float c0[3] = {r1, g1, b1};
         float c1[3] = {r2, g2, b2};
-        render_radial_shade(ctx, dc, st, sx, sy, sr, er, c0, c1);
+        {
+        shade_subfunc sf = {{c0[0],c0[1],c0[2]},{c1[0],c1[1],c1[2]}};
+        render_radial_shade(ctx, dc, st, sx, sy, sr, er, &sf, 1, NULL, 0);
+        }
         ps_clear();
         rendered = true;
       }
@@ -2939,7 +2953,10 @@ dvi_exec_pgf_shading(fz_context *ctx, dvi_context *dc, dvi_state *st,
           float c1[3] = {params[7], params[8], params[9]};
           float r0 = 0, r1 = sqrtf((ex - sx) * (ex - sx) + (ey - sy) * (ey - sy));
 
-          render_radial_shade(ctx, dc, st, sx, sy, r0, r1, c0, c1);
+          {
+          shade_subfunc sf = {{c0[0],c0[1],c0[2]},{c1[0],c1[1],c1[2]}};
+          render_radial_shade(ctx, dc, st, sx, sy, r0, r1, &sf, 1, NULL, 0);
+          }
           return 1;
         }
 
