@@ -267,33 +267,14 @@
 
 \subsection*{Phase 7: Resizebox / Scaling}
 
-% Test resizebox with a simple tikzpicture
+% Test resizebox: shrink a tikzpicture to 40% of text width
 {
   \centering
-  \resizebox{0.6\textwidth}{!}{%
+  \resizebox{0.4\textwidth}{!}{%
     \begin{tikzpicture}
-      \draw[blue, thick, fill=blue!10] (0,0) rectangle (4,3);
-      \node at (2,1.5) {Scaled to 0.6 textwidth};
-      \draw[->, red, thick] (0,0) -- (4,3);
-    \end{tikzpicture}%
-  }
-
-  \medskip
-  \resizebox{0.5\textwidth}{!}{Hello World!}
-
-  \medskip
-  \scalebox{0.3}{%
-    \begin{tikzpicture}
-      \draw[fill=red!20] (0,0) circle (2);
-      \node at (0,0) {Scalebox 0.3};
-    \end{tikzpicture}%
-  }
-
-  \medskip
-  \rotatebox{45}{%
-    \begin{tikzpicture}
-      \draw[fill=green!20] (0,0) rectangle (3,1);
-      \node at (1.5,0.5) {Rotate 45};
+      \fill[blue!20] (0,0) rectangle (5,2);
+      \draw[blue, thick] (0,0) rectangle (5,2);
+      \node[font=\large\bfseries] at (2.5,1) {Resized 0.4x};
     \end{tikzpicture}%
   }
 }
