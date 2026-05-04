@@ -2063,7 +2063,16 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     else if (strcmp(tmp, "scale") == 0) {
       if (ps_depth() >= 2) {
         float sy=ps_pop(), sx=ps_pop();
-        st->gs.ctm = fz_pre_scale(dvi_get_ctm(dc, st), sx, sy);
+        fz_matrix before = dvi_get_ctm(dc, st);
+        st->gs.ctm = fz_pre_scale(before, sx, sy);
+        static int scale_dbg = 10;
+        if (scale_dbg > 0) {
+          fprintf(stderr, "DBG PS scale: sx=%.4f sy=%.4f before=[%.2f %.2f %.2f %.2f %.2f %.2f] after=[%.2f %.2f %.2f %.2f %.2f %.2f] gs.h=%d->%d\n",
+                  sx, sy, before.a,before.b,before.c,before.d,before.e,before.f,
+                  st->gs.ctm.a,st->gs.ctm.b,st->gs.ctm.c,st->gs.ctm.d,st->gs.ctm.e,st->gs.ctm.f,
+                  st->gs.h, st->registers.h);
+          scale_dbg--;
+        }
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
       }
