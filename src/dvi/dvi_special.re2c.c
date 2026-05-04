@@ -1565,6 +1565,113 @@ static cursor_t parse_pdf_string(char *buf, char *end, cursor_t cur, cursor_t li
   return cur;
 }
 
+static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
+    float x0, float y0, float x1, float y1, float c0[3], float c1[3]);
+static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
+    float cx, float cy, float r0, float r1, float c0[3], float c1[3]);
+
+// Parse a PostScript shading pattern dictionary from raw PS content.
+// Scans for /Coords [x0 y0 x1 y1], /C0 [r g b], /C1 [r g b].
+// Returns true if a shading was found and rendered natively.
+static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st,
+                                  const char *p, const char *end)
+{
+  // Scan for /Coords [x0 y0 x1 y1]
+  float cx0=0, cy0=0, cx1=0, cy1=0;
+  bool has_coords = false;
+  {
+    const char *s = p;
+    while (s + 8 < end) {
+      if (memcmp(s, "/Coords", 7) == 0 && (s[7] == ' ' || s[7] == '\n' || s[7] == '[')) {
+        s += 7;
+        while (s < end && (*s == ' ' || *s == '\n')) s++;
+        if (s < end && *s == '[') { s++; // skip [
+          char tmp[64]; int ti;
+          // read 4 floats
+          float vals[4]; int vi = 0;
+          while (vi < 4 && s < end) {
+            while (s < end && (*s == ' ' || *s == '\n')) s++;
+            if (s >= end || *s == ']') break;
+            const char *ns = s;
+            while (ns < end && *ns != ' ' && *ns != '\n' && *ns != ']') ns++;
+            ti = ns - s; if (ti > 63) ti = 63;
+            memcpy(tmp, s, ti); tmp[ti] = 0;
+            vals[vi++] = strtof(tmp, NULL);
+            s = ns;
+          }
+          if (vi >= 4) { cx0=vals[0]; cy0=vals[1]; cx1=vals[2]; cy1=vals[3]; has_coords = true; }
+        }
+        break;
+      }
+      s++;
+    }
+  }
+  if (!has_coords) return false;
+
+  // Scan for /C0 [r g b] and /C1 [r g b] within function definitions.
+  // For stitching functions (FunctionType 3), we want the first /C0 and last /C1.
+  float c0[3] = {0,0,0}, c1[3] = {0,0,0};
+  bool has_c0 = false, has_c1 = false;
+  {
+    const char *s = p;
+    while (s + 4 < end) {
+      bool is_c0 = (memcmp(s, "/C0", 3) == 0 && (s[3] == ' ' || s[3] == '\n' || s[3] == '['));
+      bool is_c1 = (memcmp(s, "/C1", 3) == 0 && (s[3] == ' ' || s[3] == '\n' || s[3] == '['));
+      if (is_c0 || is_c1) {
+        s += 3;
+        while (s < end && (*s == ' ' || *s == '\n')) s++;
+        if (s < end && *s == '[') { s++; // skip [
+          float vals[3]; int vi = 0;
+          while (vi < 3 && s < end) {
+            while (s < end && (*s == ' ' || *s == '\n')) s++;
+            if (s >= end || *s == ']') break;
+            const char *ns = s;
+            while (ns < end && *ns != ' ' && *ns != '\n' && *ns != ']') ns++;
+            int ti = ns - s; if (ti > 63) ti = 63;
+            char tmp[64]; memcpy(tmp, s, ti); tmp[ti] = 0;
+            vals[vi++] = strtof(tmp, NULL);
+            s = ns;
+          }
+          if (vi >= 3) {
+            if (is_c0) { c0[0]=vals[0]; c0[1]=vals[1]; c0[2]=vals[2]; has_c0 = true; }
+            else       { c1[0]=vals[0]; c1[1]=vals[1]; c1[2]=vals[2]; has_c1 = true; }
+          }
+        }
+      } else {
+        s++;
+      }
+    }
+  }
+  if (!has_c0 || !has_c1) return false;
+
+  // Determine shading type: look for /ShadingType
+  int shade_type = 2; // default axial
+  {
+    const char *s = p;
+    while (s + 13 < end) {
+      if (memcmp(s, "/ShadingType", 12) == 0) {
+        s += 12;
+        while (s < end && (*s == ' ' || *s == '\n')) s++;
+        if (s < end && *s >= '0' && *s <= '9') {
+          shade_type = *s - '0';
+        }
+        break;
+      }
+      s++;
+    }
+  }
+
+  if (shade_type == 2) {
+    render_axial_shade(ctx, dc, st, cx0, cy0, cx1, cy1, c0, c1);
+  } else if (shade_type == 3) {
+    float r0 = 0, r1 = sqrtf((cx1-cx0)*(cx1-cx0) + (cy1-cy0)*(cy1-cy0));
+    render_radial_shade(ctx, dc, st, cx0, cy0, r0, r1, c0, c1);
+  } else {
+    return false;
+  }
+  return true;
+}
+
 // Render a simple 2-color axial gradient natively using sampled fills.
 // Used when pgf PostScript shading specials are encountered.
 static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
@@ -1997,6 +2104,17 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         float y=ps_pop(), x=ps_pop(), w=ps_pop(), h=ps_pop();
         // Args: bottom→top [height, width, x_start, y_start]
         fz_rectto(ctx, get_path(ctx, dc), x, y, x + w, y + h);
+      }
+    }
+    // PS << dictionary start — used by PGF for shading patterns.
+    // Parse the following dictionary content for shading parameters
+    // and render natively via try_parse_ps_shading.
+    else if (strcmp(tmp, "<<") == 0) {
+      if (try_parse_ps_shading(ctx, dc, st, p, end)) {
+        drop_path(ctx, dc);
+        ps_clear();
+        rendered = true;
+        break;
       }
     }
     // PS concat: [a b c d e f] concat — concatenate matrix to CTM
