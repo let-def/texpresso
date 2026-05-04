@@ -3950,8 +3950,33 @@ static void render_axial_shade_full(fz_context *ctx, dvi_context *dc, dvi_state 
     }
   }
 
+  // When alpha < 1, use a transparency group so strip overlaps
+  // don't cause double-blending.  Render at full opacity then
+  // composite the whole group at the correct alpha.
+  float alpha = st->gs.fill_alpha;
+  bool use_group = (alpha < 0.999f);
+  if (use_group) {
+    fz_rect dev_bbox;
+    if (clip_path) {
+      fz_rect r = fz_bound_path(ctx, clip_path, 0, fz_identity);
+      dev_bbox = fz_transform_rect(r, ctm);
+    } else {
+      // Fallback: bounding box of gradient axis ±hw in device space
+      float corners[4][2] = {
+        {x0 + px * hw, y0 + py * hw}, {x0 - px * hw, y0 - py * hw},
+        {x1 + px * hw, y1 + py * hw}, {x1 - px * hw, y1 - py * hw}};
+      dev_bbox = fz_empty_rect;
+      for (int c = 0; c < 4; c++) {
+        fz_point pt = fz_transform_point_xy(corners[c][0], corners[c][1], ctm);
+        dev_bbox = fz_include_point_in_rect(dev_bbox, pt);
+      }
+    }
+    fz_begin_group(ctx, dc->dev, dev_bbox, NULL, 1, 0, 0, alpha);
+  }
+
   float step_size = len / steps;
   float overlap = step_size * 0.5f;
+  float fill_a = use_group ? 1.0f : alpha;
   for (int i = 0; i < steps; i++)
   {
     float t = (i + 0.5f) / steps;
@@ -3972,9 +3997,12 @@ static void render_axial_shade_full(fz_context *ctx, dvi_context *dc, dvi_state 
     fz_lineto(ctx, path, cx - px * hw, cy - py * hw);
     fz_closepath(ctx, path);
     fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
-                 color, st->gs.fill_alpha, color_params);
+                 color, fill_a, color_params);
     fz_drop_path(ctx, path);
   }
+
+  if (use_group)
+    fz_end_group(ctx, dc->dev);
 }
 
 // Render a simple radial gradient natively.
