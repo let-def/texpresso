@@ -1,7 +1,8 @@
 \documentclass[12pt]{article}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta, shapes, calc, backgrounds, positioning, patterns, decorations.markings, decorations.pathmorphing, fit}
+\usetikzlibrary{arrows.meta, shapes, calc, backgrounds, positioning, patterns, decorations.markings, decorations.pathmorphing, fit, matrix, shadings}
 \usepackage{xcolor}
+\usepackage{graphicx}
 
 \begin{document}
 
@@ -235,6 +236,177 @@
   \draw[dashed, dash pattern=on 2pt off 2pt, gray] (0,0) -- (1,2);
   \draw[dashed, dash pattern=on 2pt off 2pt on 6pt off 3pt, gray] (1,2) -- (3,3);
   \draw[dashed, dash pattern=on 3pt off 1.5pt on 1pt off 1.5pt, gray] (3,3) -- (4,1);
+\end{tikzpicture}
+
+\subsection*{Phase 6: Arrows and Advanced Node Placement}
+
+\begin{tikzpicture}
+  % various arrow tips
+  \draw[->] (0,0) -- (2,0) node[right] {default};
+  \draw[->, thick] (0,-0.5) -- (2,-0.5) node[right] {thick};
+  \draw[->, thin] (0,-1) -- (2,-1) node[right] {thin};
+  \draw[->, dashed] (0,-1.5) -- (2,-1.5) node[right] {dashed};
+
+  % different arrow styles
+  \draw[->>] (4,0) -- (6,0) node[right] {->>};
+  \draw[->>] (4,-0.5) -- (6,-0.5) node[right] {->>};
+
+  % node positioning with named anchors
+  \node[draw] (A) at (0,-3) {Node A};
+  \node[draw] (B) at (3,-3) {Node B};
+  \draw[->] (A) -- (B);
+  \node[draw, below=0.5cm of A] {Below A};
+  \node[draw, right=0.5cm of B] {Right B};
+
+  % curved arrows
+  \node[draw] (C) at (0,-5) {C};
+  \node[draw] (D) at (3,-5) {D};
+  \draw[->, bend left] (C) to (D);
+  \draw[->, bend right] (C) to (D);
+\end{tikzpicture}
+
+\subsection*{Phase 6: Patterns}
+
+\begin{tikzpicture}
+  % horizontal lines pattern
+  \fill[pattern=horizontal lines] (0,0) rectangle (3,1);
+  \fill[pattern=vertical lines] (3.5,0) rectangle (6.5,1);
+  \fill[pattern=north east lines] (0,-1.5) rectangle (3,-0.5);
+  \fill[pattern=north west lines] (3.5,-1.5) rectangle (6.5,-0.5);
+  \fill[pattern=crosshatch] (0,-3) rectangle (3,-2);
+  \fill[pattern=dots] (3.5,-3) rectangle (6.5,-2);
+  \fill[pattern=grid] (0,-4.5) rectangle (3,-3.5);
+  \fill[pattern=checkerboard] (3.5,-4.5) rectangle (6.5,-3.5);
+\end{tikzpicture}
+
+\subsection*{Phase 7: Resizebox / Scaling}
+
+% Test resizebox with a simple tikzpicture
+\begin{figure}[htbp]
+  \centering
+  \resizebox{0.6\textwidth}{!}{%
+    \begin{tikzpicture}
+      \draw[blue, thick, fill=blue!10] (0,0) rectangle (4,3);
+      \node at (2,1.5) {Scaled to 0.6\textbackslash textwidth};
+      \draw[->, red, thick] (0,0) -- (4,3);
+    \end{tikzpicture}%
+  }
+  \caption{Resizebox scaled tikzpicture}
+\end{figure}
+
+% Test resizebox with simple text
+\begin{figure}[htbp]
+  \centering
+  \resizebox{0.5\textwidth}{!}{Hello World!}
+  \caption{Resizebox text scaling}
+\end{figure}
+
+% Test scalebox directly
+\scalebox{0.3}{%
+  \begin{tikzpicture}
+    \draw[fill=red!20] (0,0) circle (2);
+    \node at (0,0) {Scalebox 0.3};
+  \end{tikzpicture}%
+}
+
+% Test rotatebox
+\rotatebox{45}{%
+  \begin{tikzpicture}
+    \draw[fill=green!20] (0,0) rectangle (3,1);
+    \node at (1.5,0.5) {Rotate 45};
+  \end{tikzpicture}%
+}
+
+\subsection*{Phase 7: Complex Path Operations}
+
+\begin{tikzpicture}
+  % arc
+  \draw[thick] (0,0) arc (0:180:2);
+  \draw[thick, dashed] (4,0) arc (0:-180:2);
+
+  % grid
+  \draw[gray, very thin] (0,-2) grid (3,-0.5);
+  \draw[blue] (0,-2) rectangle (3,-0.5);
+
+  % parabola
+  \draw[thick] (5,0) parabola bend (6,2) (7,0);
+  \draw[thick, red] (5,-1) parabola (7,-0.5);
+
+  % sin / cos (via plot coordinates)
+  \draw[blue, thick] plot coordinates {(0,-2) (0.5,-1.5) (1,-1) (1.5,-0.5) (2,0)};
+
+  % to with various options
+  \draw (8,0) to[out=45, in=135] (10,0);
+  \draw (8,-0.5) to[bend left] (10,-0.5);
+  \draw (8,-1) to[out=-45, in=-135, looseness=2] (10,-1);
+\end{tikzpicture}
+
+\subsection*{Phase 8: Matrix and Fit}
+
+\begin{tikzpicture}
+  % matrix
+  \matrix[matrix of nodes, draw, row sep=4pt, column sep=8pt] (m) at (0,0) {
+    A \& B \& C \\
+    D \& E \& F \\
+    G \& H \& I \\
+  };
+  \node[draw, fit=(m-1-1)(m-1-3), fill=red!10] {};
+  \node[draw, fit=(m-2-2)(m-3-3), fill=blue!10] {};
+\end{tikzpicture}
+
+\subsection*{Phase 9: Foreach and Calculations}
+
+\begin{tikzpicture}
+  % foreach loop
+  \foreach \x in {0,0.5,...,3} {
+    \draw[gray] (\x,0) -- (\x,2);
+  }
+
+  % concentric circles
+  \foreach \r in {0.25,0.5,0.75,1,1.25,1.5} {
+    \draw (4,1) circle (\r);
+  }
+
+  % radial lines using foreach
+  \foreach \angle in {0,30,...,330} {
+    \draw (8,1) -- ++(\angle:1.5);
+  }
+
+  % labeled points with foreach
+  \foreach \x/\c in {1/red, 2/blue, 3/green!60!black, 4/orange} {
+    \fill[\c] (\x*1.5-1,-2) circle (0.3) node[below] {\x};
+  }
+\end{tikzpicture}
+
+\subsection*{Phase 9: Edge Cases and Advanced Features}
+
+\begin{tikzpicture}
+  % opacity on text
+  \node[draw, fill=blue!20, fill opacity=0.3, text opacity=0.8] at (0,0)
+    {Faded text};
+
+  % double line
+  \draw[double, double distance=3pt] (4,-0.5) -- (7,-0.5)
+    node[right] {double line};
+
+  % pin
+  \node[circle, draw, pin=above:Pin text] at (0,-2) {Pin};
+
+  % label with distance
+  \node[draw, label={[red]90:Label}, label={[blue]-90:Bottom}] at (5,-2) {Labeled};
+
+  % shading (basic)
+  \shade[left color=red, right color=blue] (0,-3.5) rectangle (3,-2.5);
+
+  % precision line join/cap cases
+  \draw[line width=6pt, blue!30] (4,-3) -- (4.5,-3.5);
+  \draw[line width=6pt, line cap=round, blue!60] (5.5,-3) -- (5,-3.5);
+  \draw[line width=6pt, line cap=round] (7,-3) -- (7,-3.5);
+
+  % legend style via scope
+  \draw[red, thick] (8,-0.5) -- (9,-0.5) node[right] {Line 1};
+  \draw[blue, thick, dashed] (8,-1) -- (9,-1) node[right] {Line 2};
+  \draw (7.5,-2) rectangle (10,0.5);
 \end{tikzpicture}
 
 \end{document}
