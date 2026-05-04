@@ -1983,7 +1983,7 @@ static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
 
 typedef struct {
   char name[32];
-  char body[256];
+  char body[512];
   int body_len;
 } ps_func_def;
 
@@ -2056,7 +2056,7 @@ static void ps_define_func(const char *name, int nl, const char *body, int bl)
   // Overwrite existing definition with the same name
   for (int i = 0; i < ps_func_count; i++) {
     if ((int)strlen(ps_funcs[i].name) == nl && memcmp(ps_funcs[i].name, name, nl) == 0) {
-      if (bl > 255) bl = 255;
+      if (bl > 511) bl = 511;
       memcpy(ps_funcs[i].body, body, bl);
       ps_funcs[i].body[bl] = 0;
       ps_funcs[i].body_len = bl;
@@ -2067,7 +2067,7 @@ static void ps_define_func(const char *name, int nl, const char *body, int bl)
   if (ps_func_count >= PS_FUNC_MAX) return;
   ps_func_def *f = &ps_funcs[ps_func_count++];
   if (nl > 31) nl = 31;  memcpy(f->name, name, nl); f->name[nl] = 0;
-  if (bl > 255) bl = 255; memcpy(f->body, body, bl); f->body[bl] = 0;
+  if (bl > 511) bl = 511; memcpy(f->body, body, bl); f->body[bl] = 0;
   f->body_len = bl;
 }
 
@@ -2553,13 +2553,15 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
       const char *b = ps_lookup_func(tmp);
       if (b) {
         if (memcmp(tmp, "pgfpat", 6) == 0) {
-          // Pattern function: parse and prepare tiling pattern state
+          // Pattern function: parse and prepare tiling pattern state.
+          // Do NOT set rendered=true — the pattern does not draw,
+          // it just sets state for the subsequent pgffill handler.
           handle_tiling_pattern(ctx, dc, st, b, strlen(b));
         } else {
           ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_BOTH);
+          ps_clear(); // user functions must not leak stack values
+          rendered = true; // user-defined functions typically render
         }
-        ps_clear(); // user functions must not leak stack values
-        rendered = true; // user-defined functions typically render
       }
     }
   }
@@ -2739,6 +2741,9 @@ render_pattern_tiles(fz_context *ctx, dvi_context *dc, dvi_state *st)
 
   int nx = (int)ceilf((fill_bounds.x1 - fill_bounds.x0) / w) + 1;
   int ny = (int)ceilf((fill_bounds.y1 - fill_bounds.y0) / h) + 1;
+  // Safety: cap tile count to avoid runaway loops on degenerate bounds
+  if (nx < 0 || nx > 500) nx = 1;
+  if (ny < 0 || ny > 500) ny = 1;
 
   for (int ix = 0; ix < nx; ix++) {
     for (int iy = 0; iy < ny; iy++) {
@@ -3049,13 +3054,15 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
       const char *fn_body = ps_lookup_func(tmp);
       if (fn_body) {
         if (memcmp(tmp, "pgfpat", 6) == 0) {
-          // Pattern function: parse and prepare tiling pattern state
+          // Pattern function: parse and prepare tiling pattern state.
+          // Do NOT set rendered=true — the pattern does not draw,
+          // it just sets state for a subsequent pgffill.
           handle_tiling_pattern(ctx, dc, st, fn_body, strlen(fn_body));
         } else {
           ps_exec_body(ctx, dc, st, fn_body, strlen(fn_body), PS_COLOR_BOTH);
+          ps_clear(); // user functions must not leak stack values
+          rendered = true;
         }
-        ps_clear(); // user functions must not leak stack values
-        rendered = true;
       }
     }
   }
