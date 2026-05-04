@@ -1979,11 +1979,11 @@ static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
 // We maintain a small value stack and a function dictionary.
 
 #define PS_STACK_MAX 32
-#define PS_FUNC_MAX  16
+#define PS_FUNC_MAX  64
 
 typedef struct {
   char name[32];
-  char body[256];
+  char body[512];
   int body_len;
 } ps_func_def;
 
@@ -2056,7 +2056,7 @@ static void ps_define_func(const char *name, int nl, const char *body, int bl)
   // Overwrite existing definition with the same name
   for (int i = 0; i < ps_func_count; i++) {
     if ((int)strlen(ps_funcs[i].name) == nl && memcmp(ps_funcs[i].name, name, nl) == 0) {
-      if (bl > 255) bl = 255;
+      if (bl > 511) bl = 511;
       memcpy(ps_funcs[i].body, body, bl);
       ps_funcs[i].body[bl] = 0;
       ps_funcs[i].body_len = bl;
@@ -2067,7 +2067,7 @@ static void ps_define_func(const char *name, int nl, const char *body, int bl)
   if (ps_func_count >= PS_FUNC_MAX) return;
   ps_func_def *f = &ps_funcs[ps_func_count++];
   if (nl > 31) nl = 31;  memcpy(f->name, name, nl); f->name[nl] = 0;
-  if (bl > 255) bl = 255; memcpy(f->body, body, bl); f->body[bl] = 0;
+  if (bl > 511) bl = 511; memcpy(f->body, body, bl); f->body[bl] = 0;
   f->body_len = bl;
 }
 
@@ -2081,6 +2081,13 @@ static const char *ps_lookup_func(const char *name)
 enum { PS_COLOR_FILL=0, PS_COLOR_STROKE=1, PS_COLOR_BOTH=2 };
 static void ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
                           const char *body, int body_len, int color_target);
+static int parse_tiling_pattern(const char *body, int body_len,
+    float bbox[4], float *xstep, float *ystep, float matrix[6],
+    const char **paintproc, int *paintproc_len);
+static void handle_tiling_pattern(fz_context *ctx, dvi_context *dc,
+    dvi_state *st, const char *body, int body_len);
+static void render_pattern_tiles(fz_context *ctx, dvi_context *dc,
+    dvi_state *st);
 
 static bool
 ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t lim)
@@ -2136,6 +2143,7 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
           // Immediately execute color function bodies so that colors are
           // set even if later ps_lookup_func fails (e.g. due to corruption).
           if (nl == 5 && memcmp(ns, "pgffc", 5) == 0) {
+            st->gs.pattern_active = 0; // reset before body may set it
             ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_FILL);
             ps_clear();
           } else if (nl == 5 && memcmp(ns, "pgfsc", 5) == 0) {
@@ -2207,13 +2215,19 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     else if (strcmp(tmp, "pgffill") == 0) {
       const char *b = ps_lookup_func("pgffc");
       if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
+      int was_pattern = st->gs.pattern_active;
+      st->gs.pattern_active = 0;
       float *fc = st->gs.colors.fill;
-      fprintf(stderr, "DBG pgffill: pgffc=%s FILL=[%.2f %.2f %.2f] alpha=%.2f\n",
-              b&&*b?b:"(empty)", fc[0], fc[1], fc[2], st->gs.fill_alpha);
+      fprintf(stderr, "DBG pgffill: pgffc=%s FILL=[%.2f %.2f %.2f] alpha=%.2f pattern=%d\n",
+              b&&*b?b:"(empty)", fc[0], fc[1], fc[2], st->gs.fill_alpha, was_pattern);
       if (dc->dev) {
         fz_matrix ctm = dvi_get_ctm(dc, st);
-        fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
-                     device_cs(ctx), fc, st->gs.fill_alpha, color_params);
+        if (was_pattern) {
+          render_pattern_tiles(ctx, dc, st);
+        } else {
+          fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
+                       device_cs(ctx), fc, st->gs.fill_alpha, color_params);
+        }
       }
       rendered = true;
       // Do NOT drop path — pgfstr may follow within the same special
@@ -2558,6 +2572,204 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
   return 1;
 }
 
+// ---- Tiling pattern support ----
+// Parse a PatternType 1 (tiling) pattern body to extract BBox, XStep, YStep,
+// Matrix, and PaintProc body. Returns 1 on success, 0 on failure.
+static int
+parse_tiling_pattern(const char *body, int body_len,
+                     float bbox[4], float *xstep, float *ystep,
+                     float matrix[6],
+                     const char **paintproc, int *paintproc_len)
+{
+  const char *p = body, *end = body + body_len;
+  int got_bbox = 0, got_xstep = 0, got_ystep = 0, got_matrix = 0, got_pp = 0;
+
+  while (p < end) {
+    while (p < end && *p == ' ') p++;
+    if (p >= end) break;
+
+    if (memcmp(p, "/BBox", 5) == 0 && (p[5] == ' ' || p[5] == '\n' || p[5] == '[')) {
+      p += 5;
+      while (p < end && (*p == ' ' || *p == '\n')) p++;
+      if (*p == '[') { p++;
+        for (int i = 0; i < 4 && p < end; i++) {
+          while (p < end && (*p == ' ' || *p == '\n')) p++;
+          if (*p == ']') break;
+          char tmp[64]; int ti = 0;
+          while (p < end && *p != ' ' && *p != '\n' && *p != ']' && ti < 63) tmp[ti++] = *p++;
+          tmp[ti] = 0;
+          if (ti > 0) bbox[i] = strtof(tmp, NULL);
+        }
+      }
+      got_bbox = 1;
+    } else if (memcmp(p, "/XStep", 6) == 0 && (p[6] == ' ' || p[6] == '\n')) {
+      p += 6;
+      while (p < end && (*p == ' ' || *p == '\n')) p++;
+      char tmp[64]; int ti = 0;
+      while (p < end && *p != ' ' && *p != '\n' && *p != '/' && ti < 63) tmp[ti++] = *p++;
+      tmp[ti] = 0;
+      if (ti > 0) { *xstep = strtof(tmp, NULL); got_xstep = 1; }
+    } else if (memcmp(p, "/YStep", 6) == 0 && (p[6] == ' ' || p[6] == '\n')) {
+      p += 6;
+      while (p < end && (*p == ' ' || *p == '\n')) p++;
+      char tmp[64]; int ti = 0;
+      while (p < end && *p != ' ' && *p != '\n' && *p != '/' && ti < 63) tmp[ti++] = *p++;
+      tmp[ti] = 0;
+      if (ti > 0) { *ystep = strtof(tmp, NULL); got_ystep = 1; }
+    } else if (memcmp(p, "/Matrix", 7) == 0 && (p[7] == ' ' || p[7] == '\n' || p[7] == '[')) {
+      p += 7;
+      while (p < end && (*p == ' ' || *p == '\n')) p++;
+      if (*p == '[') { p++;
+        for (int i = 0; i < 6 && p < end; i++) {
+          while (p < end && (*p == ' ' || *p == '\n')) p++;
+          if (*p == ']') break;
+          char tmp[64]; int ti = 0;
+          while (p < end && *p != ' ' && *p != '\n' && *p != ']' && ti < 63) tmp[ti++] = *p++;
+          tmp[ti] = 0;
+          if (ti > 0) matrix[i] = strtof(tmp, NULL);
+        }
+      }
+      got_matrix = 1;
+    } else if (memcmp(p, "/PaintProc", 10) == 0 && (p[10] == ' ' || p[10] == '\n' || p[10] == '{')) {
+      p += 10;
+      while (p < end && (*p == ' ' || *p == '\n')) p++;
+      if (p < end && *p == '{') {
+        p++;
+        const char *pp_start = p;
+        int depth = 1;
+        while (p < end && depth > 0) {
+          if (*p == '{') depth++;
+          else if (*p == '}') depth--;
+          p++;
+        }
+        *paintproc = pp_start;
+        *paintproc_len = p - pp_start - 1;
+        got_pp = 1;
+      }
+    } else {
+      p++;
+    }
+  }
+  return got_bbox && got_pp;
+}
+
+// Pop the pattern color from the PS stack and parse the pattern body to
+// extract tiling parameters. The actual tiling is deferred to the next
+// pgffill, which checks st->gs.pattern_active.
+static void
+handle_tiling_pattern(fz_context *ctx, dvi_context *dc, dvi_state *st,
+                      const char *body, int body_len)
+{
+  if (ps_depth() >= 3) {
+    float fb = ps_pop();
+    float fg = ps_pop();
+    float fr = ps_pop();
+    st->gs.pattern_color[0] = fr;
+    st->gs.pattern_color[1] = fg;
+    st->gs.pattern_color[2] = fb;
+  } else {
+    st->gs.pattern_color[0] = 0;
+    st->gs.pattern_color[1] = 0;
+    st->gs.pattern_color[2] = 0;
+  }
+
+  float bbox[4] = {0, 0, 1, 1};
+  float xstep = 1, ystep = 1;
+  float matrix[6] = {1, 0, 0, 1, 0, 0};
+  const char *pp = NULL;
+  int pp_len = 0;
+
+  if (!parse_tiling_pattern(body, body_len, bbox, &xstep, &ystep, matrix, &pp, &pp_len)) {
+    st->gs.pattern_active = 0;
+    return;
+  }
+
+  st->gs.pattern_active = 1;
+  st->gs.pattern_bbox[0] = bbox[0];
+  st->gs.pattern_bbox[1] = bbox[1];
+  st->gs.pattern_bbox[2] = bbox[2];
+  st->gs.pattern_bbox[3] = bbox[3];
+  st->gs.pattern_xstep = xstep;
+  st->gs.pattern_ystep = ystep;
+  st->gs.pattern_matrix[0] = matrix[0];
+  st->gs.pattern_matrix[1] = matrix[1];
+  st->gs.pattern_matrix[2] = matrix[2];
+  st->gs.pattern_matrix[3] = matrix[3];
+  st->gs.pattern_matrix[4] = matrix[4];
+  st->gs.pattern_matrix[5] = matrix[5];
+  if (pp_len > 479) pp_len = 479;
+  memcpy(st->gs.pattern_body, pp, pp_len);
+  st->gs.pattern_body[pp_len] = 0;
+  st->gs.pattern_body_len = pp_len;
+}
+
+// Render tiled pattern content across the fill area defined by the current
+// path. Called from the pgffill handler when pattern_active was set.
+static void
+render_pattern_tiles(fz_context *ctx, dvi_context *dc, dvi_state *st)
+{
+  if (!dc->dev || !dc->path) return;
+
+  float saved_fill[3], saved_line[3];
+  float saved_fa, saved_sa, saved_lw;
+  memcpy(saved_fill, st->gs.colors.fill, sizeof(saved_fill));
+  memcpy(saved_line, st->gs.colors.line, sizeof(saved_line));
+  saved_fa = st->gs.fill_alpha;
+  saved_sa = st->gs.stroke_alpha;
+  saved_lw = st->gs.line_width;
+
+  // Set the pattern color for stroke/fill within PaintProc
+  color_set_rgb(st->gs.colors.fill,
+                st->gs.pattern_color[0], st->gs.pattern_color[1], st->gs.pattern_color[2]);
+  color_set_rgb(st->gs.colors.line,
+                st->gs.pattern_color[0], st->gs.pattern_color[1], st->gs.pattern_color[2]);
+  st->gs.fill_alpha = 1.0;
+  st->gs.stroke_alpha = 1.0;
+
+  // Compute tile grid bounds in path coordinate space
+  fz_rect fill_bounds = fz_bound_path(ctx, dc->path, NULL, fz_identity);
+  float w = st->gs.pattern_bbox[2] - st->gs.pattern_bbox[0];
+  float h = st->gs.pattern_bbox[3] - st->gs.pattern_bbox[1];
+  if (w <= 0 || h <= 0) goto restore;
+
+  int nx = (int)ceilf((fill_bounds.x1 - fill_bounds.x0) / w) + 1;
+  int ny = (int)ceilf((fill_bounds.y1 - fill_bounds.y0) / h) + 1;
+
+  for (int ix = 0; ix < nx; ix++) {
+    for (int iy = 0; iy < ny; iy++) {
+      float tx = fill_bounds.x0 + ix * w - st->gs.pattern_bbox[0];
+      float ty = fill_bounds.y0 + iy * h - st->gs.pattern_bbox[1];
+
+      // Translate the CTM for this tile
+      fz_matrix saved_ctm = st->gs.ctm;
+      int saved_h = st->gs.h, saved_v = st->gs.v;
+      st->gs.ctm = fz_pre_translate(dvi_get_ctm(dc, st), tx, ty);
+      st->gs.h = st->registers.h;
+      st->gs.v = st->registers.v;
+
+      fz_path *saved_path = dc->path;
+      dc->path = NULL;
+
+      ps_exec_body(ctx, dc, st, st->gs.pattern_body, st->gs.pattern_body_len, PS_COLOR_BOTH);
+
+      if (dc->path) drop_path(ctx, dc);
+      dc->path = saved_path;
+
+      st->gs.ctm = saved_ctm;
+      st->gs.h = saved_h;
+      st->gs.v = saved_v;
+    }
+  }
+
+restore:
+  // Restore colors and line width
+  memcpy(st->gs.colors.fill, saved_fill, sizeof(saved_fill));
+  memcpy(st->gs.colors.line, saved_line, sizeof(saved_line));
+  st->gs.fill_alpha = saved_fa;
+  st->gs.stroke_alpha = saved_sa;
+  st->gs.line_width = saved_lw;
+}
+
 // Execute a stored PS function body (simple token interpreter)
 // The stack should already have the function arguments; body consumes them.
 // Do NOT save/restore ps_sp — let the body naturally consume and push values.
@@ -2827,6 +3039,15 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
       }
       rendered = true;
       // Do NOT drop path — pgfstr may follow within the same body
+    }
+    // Intercept pgfpat* pattern function calls; set up tiling state for
+    // the next pgffill. Do NOT set rendered=true — the path must survive.
+    else if (tl >= 6 && memcmp(tmp, "pgfpat", 6) == 0) {
+      const char *fn_body = ps_lookup_func(tmp);
+      if (fn_body) {
+        handle_tiling_pattern(ctx, dc, st, fn_body, strlen(fn_body));
+        // handle_tiling_pattern popped the pattern color from the stack
+      }
     }
     // ignore other commands in body
   }
