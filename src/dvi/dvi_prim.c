@@ -218,6 +218,14 @@ bool dvi_exec_push(fz_context *ctx, dvi_context *dc, dvi_state *st)
   if (st->registers_stack.depth >= st->registers_stack.limit)
     return 0;
   st->registers_stack.base[st->registers_stack.depth] = st->registers;
+  // Save graphics state so that PS specials within TeX groups (e.g.
+  // \resizebox measurement passes) don't leak CTM / color changes to
+  // subsequent content.  Reuses the same gs_stack as PS gsave/grestore
+  // because TeX groups and PS save/restore pairs are properly nested.
+  if (st->gs_stack.depth < st->gs_stack.limit) {
+    st->gs_stack.base[st->gs_stack.depth] = st->gs;
+    st->gs_stack.depth += 1;
+  }
   st->registers_stack.depth += 1;
   return 1;
 }
@@ -229,6 +237,13 @@ bool dvi_exec_pop(fz_context *ctx, dvi_context *dc, dvi_state *st)
     return 0;
   st->registers_stack.depth -= 1;
   st->registers = st->registers_stack.base[st->registers_stack.depth];
+  // Restore graphics state saved in matching push.
+  if (st->gs_stack.depth > 0) {
+    int cd0 = st->gs.clip_depth;
+    st->gs_stack.depth -= 1;
+    st->gs = st->gs_stack.base[st->gs_stack.depth];
+    if (dc->dev) for (int i = st->gs.clip_depth; i < cd0; ++i) fz_pop_clip(ctx, dc->dev);
+  }
   return 1;
 }
 

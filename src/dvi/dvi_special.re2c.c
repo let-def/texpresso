@@ -2155,6 +2155,58 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     }
     // PGF cleanup / end markers
     else if (strcmp(tmp, "pgfc") == 0 || strcmp(tmp, "pgfo") == 0) { /* no-op */ }
+    // PGF shading function invocations — intercept for native rendering.
+    // These are called via ps:: specials with params on the PS stack.
+    // We handle them before the general ps_lookup_func fallback because
+    // ps_exec_body cannot execute the shading PS operators natively,
+    // which would leave the path filled with the default (black) color.
+    else if (strcmp(tmp, "pgfHrgb") == 0 || strcmp(tmp, "pgfVrgb") == 0 ||
+             strcmp(tmp, "pgfArgb") == 0) {
+      // Axial RGB: sx sy ex ey R1 G1 B1 R2 G2 B2 depth (11 params)
+      if (ps_depth() >= 11) {
+        float depth = ps_pop();
+        float b2=ps_pop(), g2=ps_pop(), r2=ps_pop();
+        float b1=ps_pop(), g1=ps_pop(), r1=ps_pop();
+        float ey=ps_pop(), ex=ps_pop(), sy=ps_pop(), sx=ps_pop();
+        float c0[3] = {r1, g1, b1};
+        float c1[3] = {r2, g2, b2};
+        (void)depth;
+        render_axial_shade(ctx, dc, st, sx, sy, ex, ey, c0, c1);
+        ps_clear();
+        rendered = true;
+      }
+    }
+    else if (strcmp(tmp, "pgfHcmyk") == 0 || strcmp(tmp, "pgfVcmyk") == 0 ||
+             strcmp(tmp, "pgfAcmyk") == 0) {
+      // Axial CMYK: sx sy ex ey C1 M1 Y1 K1 C2 M2 Y2 K2 depth (13 params)
+      if (ps_depth() >= 13) {
+        float depth = ps_pop();
+        float k2=ps_pop(), y2=ps_pop(), m2=ps_pop(), c2_c=ps_pop();
+        float k1=ps_pop(), y1=ps_pop(), m1=ps_pop(), c1_c=ps_pop();
+        float ey=ps_pop(), ex=ps_pop(), sy=ps_pop(), sx=ps_pop();
+        (void)depth;
+        float c0[3], c1[3];
+        color_set_cmyk(c0, c1_c, m1, y1, k1);
+        color_set_cmyk(c1, c2_c, m2, y2, k2);
+        render_axial_shade(ctx, dc, st, sx, sy, ex, ey, c0, c1);
+        ps_clear();
+        rendered = true;
+      }
+    }
+    else if (strcmp(tmp, "pgfRrgb") == 0 || strcmp(tmp, "pgfR1rgb") == 0) {
+      // Radial RGB: sx sy sr ex ey er R1 G1 B1 R2 G2 B2 (12 params)
+      if (ps_depth() >= 12) {
+        float b2=ps_pop(), g2=ps_pop(), r2=ps_pop();
+        float b1=ps_pop(), g1=ps_pop(), r1=ps_pop();
+        float er=ps_pop(), ey=ps_pop(), ex=ps_pop();
+        float sr=ps_pop(), sy=ps_pop(), sx=ps_pop();
+        float c0[3] = {r1, g1, b1};
+        float c1[3] = {r2, g2, b2};
+        render_radial_shade(ctx, dc, st, sx, sy, sr, er, c0, c1);
+        ps_clear();
+        rendered = true;
+      }
+    }
     // Try as a user-defined function call
     else {
       const char *b = ps_lookup_func(tmp);
