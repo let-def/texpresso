@@ -1979,7 +1979,7 @@ static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
 // We maintain a small value stack and a function dictionary.
 
 #define PS_STACK_MAX 32
-#define PS_FUNC_MAX  16
+#define PS_FUNC_MAX  64
 
 typedef struct {
   char name[32];
@@ -2060,6 +2060,9 @@ static void ps_define_func(const char *name, int nl, const char *body, int bl)
       memcpy(ps_funcs[i].body, body, bl);
       ps_funcs[i].body[bl] = 0;
       ps_funcs[i].body_len = bl;
+      if (nl == 5 && memcmp(name, "pgffc", 5) == 0)
+        fprintf(stderr, "DBG ps_define: OVERWRITE '%s' at i=%d bl=%d body='%.*s'\n",
+                ps_funcs[i].name, i, bl, bl > 30 ? 30 : bl, ps_funcs[i].body);
       return;
     }
   }
@@ -2069,12 +2072,23 @@ static void ps_define_func(const char *name, int nl, const char *body, int bl)
   if (nl > 31) nl = 31;  memcpy(f->name, name, nl); f->name[nl] = 0;
   if (bl > 511) bl = 511; memcpy(f->body, body, bl); f->body[bl] = 0;
   f->body_len = bl;
+  if (nl == 5 && memcmp(name, "pgffc", 5) == 0)
+    fprintf(stderr, "DBG ps_define: NEW '%s' at i=%d bl=%d body='%.*s'\n",
+            f->name, ps_func_count-1, bl, bl > 30 ? 30 : bl, f->body);
 }
 
 static const char *ps_lookup_func(const char *name)
 {
   for (int i = 0; i < ps_func_count; i++)
-    if (strcmp(ps_funcs[i].name, name) == 0) return ps_funcs[i].body;
+    if (strcmp(ps_funcs[i].name, name) == 0) {
+      if (strcmp(name, "pgffc") == 0)
+        fprintf(stderr, "DBG ps_lookup: '%s' -> body='%.*s' (i=%d)\n",
+                name, ps_funcs[i].body_len > 30 ? 30 : ps_funcs[i].body_len,
+                ps_funcs[i].body, i);
+      return ps_funcs[i].body;
+    }
+  if (strcmp(name, "pgffc") == 0)
+    fprintf(stderr, "DBG ps_lookup: 'pgffc' NOT FOUND (ps_func_count=%d)\n", ps_func_count);
   return NULL;
 }
 
@@ -2215,8 +2229,8 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
       const char *b = ps_lookup_func("pgffc");
       if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
       float *fc = st->gs.colors.fill;
-      fprintf(stderr, "DBG pgffill: pgffc=%s FILL=[%.2f %.2f %.2f] alpha=%.2f pattern=%d\n",
-              b&&*b?b:"(empty)", fc[0], fc[1], fc[2], st->gs.fill_alpha, st->gs.pattern_active);
+      fprintf(stderr, "DBG pgffill: pgffc=%s b=%p FILL=[%.2f %.2f %.2f] alpha=%.2f pattern=%d\n",
+              b&&*b?b:"(empty)", (void*)b, fc[0], fc[1], fc[2], st->gs.fill_alpha, st->gs.pattern_active);
       if (dc->dev) {
         fz_matrix ctm = dvi_get_ctm(dc, st);
         if (st->gs.pattern_active) {
@@ -2666,6 +2680,8 @@ static void
 handle_tiling_pattern(fz_context *ctx, dvi_context *dc, dvi_state *st,
                       const char *body, int body_len)
 {
+  fprintf(stderr, "DBG handle_tiling_pattern: called body_len=%d body=%.*s\n",
+          body_len, body_len > 100 ? 100 : body_len, body);
   if (ps_depth() >= 3) {
     float fb = ps_pop();
     float fg = ps_pop();
@@ -2673,10 +2689,12 @@ handle_tiling_pattern(fz_context *ctx, dvi_context *dc, dvi_state *st,
     st->gs.pattern_color[0] = fr;
     st->gs.pattern_color[1] = fg;
     st->gs.pattern_color[2] = fb;
+    fprintf(stderr, "DBG handle_tiling_pattern: color=[%.2f %.2f %.2f]\n", fr, fg, fb);
   } else {
     st->gs.pattern_color[0] = 1;
     st->gs.pattern_color[1] = 1;
     st->gs.pattern_color[2] = 1;
+    fprintf(stderr, "DBG handle_tiling_pattern: no color on stack, using white\n");
   }
 
   float bbox[4] = {0, 0, 1, 1};
@@ -2686,10 +2704,13 @@ handle_tiling_pattern(fz_context *ctx, dvi_context *dc, dvi_state *st,
   int pp_len = 0;
 
   if (!parse_tiling_pattern(body, body_len, bbox, &xstep, &ystep, matrix, &pp, &pp_len)) {
+    fprintf(stderr, "DBG handle_tiling_pattern: parse_tiling_pattern FAILED\n");
     st->gs.pattern_active = 0;
     return;
   }
 
+  fprintf(stderr, "DBG handle_tiling_pattern: PARSE OK bbox=[%.1f %.1f %.1f %.1f] xstep=%.1f ystep=%.1f pp_len=%d\n",
+          bbox[0], bbox[1], bbox[2], bbox[3], xstep, ystep, pp_len);
   st->gs.pattern_active = 1;
   st->gs.pattern_bbox[0] = bbox[0];
   st->gs.pattern_bbox[1] = bbox[1];
@@ -2714,7 +2735,12 @@ handle_tiling_pattern(fz_context *ctx, dvi_context *dc, dvi_state *st,
 static void
 render_pattern_tiles(fz_context *ctx, dvi_context *dc, dvi_state *st)
 {
-  if (!dc->dev || !dc->path) return;
+  fprintf(stderr, "DBG render_pattern_tiles: called dev=%p path=%p\n",
+          (void*)dc->dev, (void*)dc->path);
+  if (!dc->dev || !dc->path) {
+    fprintf(stderr, "DBG render_pattern_tiles: EARLY RETURN (no dev or path)\n");
+    return;
+  }
 
   float saved_fill[3], saved_line[3];
   float saved_fa, saved_sa, saved_lw;
@@ -2739,8 +2765,11 @@ render_pattern_tiles(fz_context *ctx, dvi_context *dc, dvi_state *st)
   float ox = st->gs.pattern_bbox[0];
   float oy = st->gs.pattern_bbox[1];
 
+  fprintf(stderr, "DBG render_pattern_tiles: fill_bounds=[%.1f %.1f %.1f %.1f] tile=[%.1f x %.1f]\n",
+          fill_bounds.x0, fill_bounds.y0, fill_bounds.x1, fill_bounds.y1, w, h);
   int nx = (int)ceilf((fill_bounds.x1 - fill_bounds.x0) / w) + 1;
   int ny = (int)ceilf((fill_bounds.y1 - fill_bounds.y0) / h) + 1;
+  fprintf(stderr, "DBG render_pattern_tiles: nx=%d ny=%d\n", nx, ny);
   // Safety: cap tile count to avoid runaway loops on degenerate bounds
   if (nx < 0 || nx > 500) nx = 1;
   if (ny < 0 || ny > 500) ny = 1;
