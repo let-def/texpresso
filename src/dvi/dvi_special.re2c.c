@@ -1704,7 +1704,7 @@ static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
   fz_matrix ctm = dvi_get_ctm(dc, st);
   fprintf(stderr, "DBG render_axial: ctm=[%.2f %.2f %.2f %.2f %.2f %.2f] coords=[%.2f %.2f %.2f %.2f] c0=[%.2f %.2f %.2f] c1=[%.2f %.2f %.2f] alpha=%.2f\n",
           ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f, x0, y0, x1, y1, c0[0], c0[1], c0[2], c1[0], c1[1], c1[2], st->gs.fill_alpha);
-  int steps = 80;
+  int steps = 200;
 
   // Compute gradient direction and perpendicular
   float dx = x1 - x0, dy = y1 - y0;
@@ -1713,6 +1713,9 @@ static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
 
   // Perpendicular direction
   float px = -dy / len, py = dx / len;
+
+  // Gradient direction unit vector
+  float gx = dx / len, gy = dy / len;
 
   // Determine perpendicular half-width from path bounds or use large default
   float hw = 200.0f; // large default to cover typical pattern tiles
@@ -1735,6 +1738,8 @@ static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
     }
   }
 
+  float step_size = len / steps;
+  float overlap = step_size * 0.3f; // overlap adjacent strips along gradient
   for (int i = 0; i < steps; i++)
   {
     float t = (i + 0.5f) / steps;
@@ -1744,10 +1749,12 @@ static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
       c0[2] + (c1[2] - c0[2]) * t,
     };
 
-    float cx = x0 + dx * (float)i / steps;
-    float cy = y0 + dy * (float)i / steps;
-    float nx = x0 + dx * (float)(i + 1) / steps;
-    float ny = y0 + dy * (float)(i + 1) / steps;
+    float tv0 = (float)i / steps;
+    float tv1 = (float)(i + 1) / steps;
+    float cx = x0 + dx * tv0 - gx * overlap;
+    float cy = y0 + dy * tv0 - gy * overlap;
+    float nx = x0 + dx * tv1 + gx * overlap;
+    float ny = y0 + dy * tv1 + gy * overlap;
 
     // Build a trapezoid along the gradient, extending perpendicular by hw
     fz_path *path = fz_new_path(ctx);
