@@ -3906,8 +3906,16 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
     } else {
       r1 = (float)sqrt((cx1-cx0)*(cx1-cx0)+(cy1-cy0)*(cy1-cy0));
     }
-    fprintf(stderr, "DBG shade: radial cx=%.1f cy=%.1f r0=%.1f r1=%.1f ncoords=%d\n",
-            cx, cy, r0, r1, ncoords);
+    fprintf(stderr, "DBG shade: radial cx=%.1f cy=%.1f r0=%.1f r1=%.1f ncoords=%d nbounds=%d\n",
+            cx, cy, r0, r1, ncoords, nbounds);
+    for (int i = 0; i < nbounds; i++)
+      fprintf(stderr, "DBG shade:   bound[%d]=%.4f\n", i, bounds[i]);
+    // Print sample colors
+    for (int st = 0; st <= 4; st++) {
+      float ts = st * 0.25f;
+      float cs[3]; shade_eval_color(cs, nsub, subs, nbounds > 0 ? bounds : NULL, ts);
+      fprintf(stderr, "DBG shade:   t=%.2f color=[%.2f %.2f %.2f]\n", ts, cs[0], cs[1], cs[2]);
+    }
     if (nsub > 0) {
       render_radial_shade(ctx, dc, st, cx, cy, r0, r1,
                           subs, nsub, bounds, nbounds > 0 ? bounds : NULL);
