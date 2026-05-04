@@ -301,23 +301,31 @@
   \caption{Resizebox text scaling}
 \end{figure}
 
-% Test scalebox directly
-\scalebox{0.3}{%
-  \begin{tikzpicture}
-    \draw[fill=red!20] (0,0) circle (2);
-    \node at (0,0) {Scalebox 0.3};
-  \end{tikzpicture}%
-}
+% Test scalebox with figure
+\begin{figure}[htbp]
+  \centering
+  \scalebox{0.3}{%
+    \begin{tikzpicture}
+      \draw[fill=red!20] (0,0) circle (2);
+      \node at (0,0) {Scalebox 0.3};
+    \end{tikzpicture}%
+  }
+  \caption{Scalebox 0.3}
+\end{figure}
 
-% Test rotatebox
-\rotatebox{45}{%
-  \begin{tikzpicture}
-    \draw[fill=green!20] (0,0) rectangle (3,1);
-    \node at (1.5,0.5) {Rotate 45};
-  \end{tikzpicture}%
-}
+% Test rotatebox with figure
+\begin{figure}[htbp]
+  \centering
+  \rotatebox{45}{%
+    \begin{tikzpicture}
+      \draw[fill=green!20] (0,0) rectangle (3,1);
+      \node at (1.5,0.5) {Rotate 45};
+    \end{tikzpicture}%
+  }
+  \caption{Rotatebox 45 degrees}
+\end{figure}
 
-\subsection*{Phase 7: Complex Path Operations}
+\subsection*{Phase 8: Complex Path Operations}
 
 \begin{tikzpicture}
   % arc
@@ -341,7 +349,7 @@
   \draw (8,-1) to[out=-45, in=-135, looseness=2] (10,-1);
 \end{tikzpicture}
 
-\subsection*{Phase 8: Matrix and Fit}
+\subsection*{Phase 9: Matrix and Fit}
 
 \begin{tikzpicture}
   % matrix
@@ -354,40 +362,40 @@
   \node[draw, fit=(m-2-2)(m-3-3), fill=blue!10] {};
 \end{tikzpicture}
 
-\subsection*{Phase 9: Foreach and Calculations}
+\subsection*{Phase 10: Foreach and Calculations}
 
 \begin{tikzpicture}
   % foreach loop
   \foreach \x in {0,0.5,...,3} {
-    \draw[gray] (\x,0) -- (\x,2);
-  }
+      \draw[gray] (\x,0) -- (\x,2);
+    }
 
   % concentric circles
   \foreach \r in {0.25,0.5,0.75,1,1.25,1.5} {
-    \draw (4,1) circle (\r);
-  }
+      \draw (4,1) circle (\r);
+    }
 
   % radial lines using foreach
   \foreach \angle in {0,30,...,330} {
-    \draw (8,1) -- ++(\angle:1.5);
-  }
+      \draw (8,1) -- ++(\angle:1.5);
+    }
 
   % labeled points with foreach
   \foreach \x/\c in {1/red, 2/blue, 3/green!60!black, 4/orange} {
-    \fill[\c] (\x*1.5-1,-2) circle (0.3) node[below] {\x};
-  }
+      \fill[\c] (\x*1.5-1,-2) circle (0.3) node[below] {\x};
+    }
 \end{tikzpicture}
 
-\subsection*{Phase 9: Edge Cases and Advanced Features}
+\subsection*{Phase 11: Edge Cases and Advanced Features}
 
 \begin{tikzpicture}
   % opacity on text
   \node[draw, fill=blue!20, fill opacity=0.3, text opacity=0.8] at (0,0)
-    {Faded text};
+  {Faded text};
 
   % double line
   \draw[double, double distance=3pt] (4,-0.5) -- (7,-0.5)
-    node[right] {double line};
+  node[right] {double line};
 
   % pin
   \node[circle, draw, pin=above:Pin text] at (0,-2) {Pin};
