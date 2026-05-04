@@ -1817,6 +1817,12 @@ static void render_axial_shade_full(fz_context *ctx, dvi_context *dc, dvi_state 
   if (!dc->dev) return;
 
   fz_matrix ctm = dvi_get_ctm(dc, st);
+  fprintf(stderr, "DBG render_axial_full: alpha=%.2f steps=500\n", st->gs.fill_alpha);
+  for (int st = 0; st <= 4; st++) {
+    float ts = st * 0.25f;
+    float cs[3]; shade_eval_color(cs, nsub, sf, bounds, ts);
+    fprintf(stderr, "DBG render_axial_full: t=%.2f color=[%.2f %.2f %.2f]\n", ts, cs[0], cs[1], cs[2]);
+  }
   int steps = 500;
 
   float dx = x1 - x0, dy = y1 - y0;
