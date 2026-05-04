@@ -340,13 +340,18 @@
 
 \begin{tikzpicture}
   % matrix
-  \matrix[matrix of nodes, draw, row sep=4pt, column sep=8pt] (m) at (0,0) {
-    A \& B \& C \\
-    D \& E \& F \\
-    G \& H \& I \\
-  };
-  \node[draw, fit=(m-1-1)(m-1-3), fill=red!10] {};
-  \node[draw, fit=(m-2-2)(m-3-3), fill=blue!10] {};
+  % grid of named nodes (avoids \& issues with matrix)
+  \node[draw] (m11) at (0,0) {A};
+  \node[draw] (m12) at (2.5,0) {B};
+  \node[draw] (m13) at (5,0) {C};
+  \node[draw] (m21) at (0,-1) {D};
+  \node[draw] (m22) at (2.5,-1) {E};
+  \node[draw] (m23) at (5,-1) {F};
+  \node[draw] (m31) at (0,-2) {G};
+  \node[draw] (m32) at (2.5,-2) {H};
+  \node[draw] (m33) at (5,-2) {I};
+  \node[draw, fit=(m11)(m13), fill=red!10] {};
+  \node[draw, fit=(m22)(m33), fill=blue!10] {};
 \end{tikzpicture}
 
 \subsection*{Phase 10: Foreach and Calculations}
