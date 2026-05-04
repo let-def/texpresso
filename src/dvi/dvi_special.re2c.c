@@ -2050,25 +2050,31 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
       fz_point pt = fz_currentpoint(ctx, get_path(ctx, dc));
       ps_push(pt.x); ps_push(pt.y);
     }
-    // PS translate: tx ty translate — translate CTM
+    // PS translate: tx ty translate — apply to full CTM (incl. TeX position)
     else if (strcmp(tmp, "translate") == 0) {
       if (ps_depth() >= 2) {
         float ty=ps_pop(), tx=ps_pop();
-        st->gs.ctm = fz_pre_translate(st->gs.ctm, tx, ty);
+        st->gs.ctm = fz_pre_translate(dvi_get_ctm(dc, st), tx, ty);
+        st->gs.h = st->registers.h;
+        st->gs.v = st->registers.v;
       }
     }
-    // PS scale: sx sy scale — scale CTM
+    // PS scale: sx sy scale — apply to full CTM (incl. TeX position)
     else if (strcmp(tmp, "scale") == 0) {
       if (ps_depth() >= 2) {
         float sy=ps_pop(), sx=ps_pop();
-        st->gs.ctm = fz_pre_scale(st->gs.ctm, sx, sy);
+        st->gs.ctm = fz_pre_scale(dvi_get_ctm(dc, st), sx, sy);
+        st->gs.h = st->registers.h;
+        st->gs.v = st->registers.v;
       }
     }
-    // PS rotate: angle rotate — rotate CTM (angle in degrees)
+    // PS rotate: angle rotate — apply to full CTM (incl. TeX position)
     else if (strcmp(tmp, "rotate") == 0) {
       if (ps_depth() >= 1) {
         float angle = ps_pop();
-        st->gs.ctm = fz_pre_rotate(st->gs.ctm, angle);
+        st->gs.ctm = fz_pre_rotate(dvi_get_ctm(dc, st), angle);
+        st->gs.h = st->registers.h;
+        st->gs.v = st->registers.v;
       }
     }
     // PGF /a function: pops x,y, does moveto (initializes path start)
@@ -2361,19 +2367,25 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
     else if (strcmp(tmp, "translate") == 0) {
       if (ps_depth() >= 2) {
         float ty=ps_pop(), tx=ps_pop();
-        st->gs.ctm = fz_pre_translate(st->gs.ctm, tx, ty);
+        st->gs.ctm = fz_pre_translate(dvi_get_ctm(dc, st), tx, ty);
+        st->gs.h = st->registers.h;
+        st->gs.v = st->registers.v;
       }
     }
     else if (strcmp(tmp, "scale") == 0) {
       if (ps_depth() >= 2) {
         float sy=ps_pop(), sx=ps_pop();
-        st->gs.ctm = fz_pre_scale(st->gs.ctm, sx, sy);
+        st->gs.ctm = fz_pre_scale(dvi_get_ctm(dc, st), sx, sy);
+        st->gs.h = st->registers.h;
+        st->gs.v = st->registers.v;
       }
     }
     else if (strcmp(tmp, "rotate") == 0) {
       if (ps_depth() >= 1) {
         float angle = ps_pop();
-        st->gs.ctm = fz_pre_rotate(st->gs.ctm, angle);
+        st->gs.ctm = fz_pre_rotate(dvi_get_ctm(dc, st), angle);
+        st->gs.h = st->registers.h;
+        st->gs.v = st->registers.v;
       }
     }
     else if (strcmp(tmp, "a") == 0) {
