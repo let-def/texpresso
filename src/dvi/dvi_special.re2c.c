@@ -1576,7 +1576,7 @@ static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
 static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st,
                                   const char *p, const char *end)
 {
-  fprintf(stderr, "DBG shade: try_parse_ps_shading called, content=%.200s\n", p);
+  fprintf(stderr, "DBG shade: try_parse_ps_shading called, content=%.500s\n", p);
   // Scan for /Coords [x0 y0 x1 y1]
   float cx0=0, cy0=0, cx1=0, cy1=0;
   bool has_coords = false;
@@ -2908,7 +2908,7 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
 {
   cursor_t mar, i, j;
 
-  { int plen = lim - cur; if (plen > 200) plen = 200;
+  { int plen = lim - cur; if (plen > 500) plen = 500;
     fprintf(stderr, "TRACE sp(%.*s) gs.h=%d gs.v=%d\n", plen, cur, st->gs.h, st->gs.v); }
 
   for (;;)
