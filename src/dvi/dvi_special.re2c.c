@@ -1565,19 +1565,58 @@ static cursor_t parse_pdf_string(char *buf, char *end, cursor_t cur, cursor_t li
   return cur;
 }
 
-static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
-    float x0, float y0, float x1, float y1, float c0[3], float c1[3], fz_path *clip_path);
+#define MAX_SUBFUNC 8
+
+typedef struct {
+  float c0[3], c1[3];
+} shade_subfunc;
+
+// Evaluate a stitching function at parameter t (0..1).
+// nsub sub-functions partition the domain via nsub-1 bounds.
+// Each sub-function i has C0[i], C1[i] and does linear interpolation
+// across its sub-domain.
+static void shade_eval_color(float out[3], int nsub, const shade_subfunc *sf,
+                             const float *bounds, float t)
+{
+  if (t < 0) t = 0; if (t > 1) t = 1;
+  if (nsub <= 1) {
+    float s = t;
+    out[0] = sf[0].c0[0] + s * (sf[0].c1[0] - sf[0].c0[0]);
+    out[1] = sf[0].c0[1] + s * (sf[0].c1[1] - sf[0].c0[1]);
+    out[2] = sf[0].c0[2] + s * (sf[0].c1[2] - sf[0].c0[2]);
+    return;
+  }
+  // Find which sub-function covers t
+  int k = nsub - 1; // default: last segment
+  for (int i = 0; i < nsub - 1; i++) {
+    if (t < bounds[i]) { k = i; break; }
+  }
+  // Map t to sub-function's local [0,1]
+  float lo = (k == 0) ? 0.0f : bounds[k-1];
+  float hi = (k == nsub - 1) ? 1.0f : bounds[k];
+  float s = (t - lo) / (hi - lo);
+  out[0] = sf[k].c0[0] + s * (sf[k].c1[0] - sf[k].c0[0]);
+  out[1] = sf[k].c0[1] + s * (sf[k].c1[1] - sf[k].c0[1]);
+  out[2] = sf[k].c0[2] + s * (sf[k].c1[2] - sf[k].c0[2]);
+}
+
+static void render_axial_shade_full(fz_context *ctx, dvi_context *dc, dvi_state *st,
+    float x0, float y0, float x1, float y1,
+    int nsub, const shade_subfunc *sf, const float *bounds,
+    fz_path *clip_path);
 static void render_radial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
     float cx, float cy, float r0, float r1, float c0[3], float c1[3]);
+static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
+    float x0, float y0, float x1, float y1, float c0[3], float c1[3], fz_path *clip_path);
 
 // Parse a PostScript shading pattern dictionary from raw PS content.
-// Scans for /Coords [x0 y0 x1 y1], /C0 [r g b], /C1 [r g b].
+// Scans for /Coords [x0 y0 x1 y1], /C0 [r g b], /C1 [r g b],
+// and /Bounds for stitching functions.
 // Returns true if a shading was found and rendered natively.
 static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st,
                                   const char *p, const char *end)
 {
   fprintf(stderr, "DBG shade: called, len=%d content=%.500s\n", (int)(end-p), p);
-  // Also dump full content to stderr for inspection
   fprintf(stderr, "DBG shade full[%d]: ", (int)(end-p));
   for (const char *dp = p; dp < end; dp++) fputc(*dp, stderr);
   fprintf(stderr, "\n");
@@ -1590,9 +1629,8 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
       if (memcmp(s, "/Coords", 7) == 0 && (s[7] == ' ' || s[7] == '\n' || s[7] == '[')) {
         s += 7;
         while (s < end && (*s == ' ' || *s == '\n')) s++;
-        if (s < end && *s == '[') { s++; // skip [
+        if (s < end && *s == '[') { s++;
           char tmp[64]; int ti;
-          // read 4 floats
           float vals[4]; int vi = 0;
           while (vi < 4 && s < end) {
             while (s < end && (*s == ' ' || *s == '\n')) s++;
@@ -1613,10 +1651,12 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
   }
   if (!has_coords) return false;
 
-  // Scan for /C0 [r g b] and /C1 [r g b] within function definitions.
-  // For stitching functions (FunctionType 3), we want the first /C0 and last /C1.
-  float c0[3] = {0,0,0}, c1[3] = {0,0,0};
-  bool has_c0 = false, has_c1 = false;
+  // Collect sub-function C0/C1 values in order.
+  // Also parse /Bounds array for stitching function domain partition.
+  shade_subfunc subs[MAX_SUBFUNC];
+  int nsub = 0;
+  float bounds[MAX_SUBFUNC - 1];
+  int nbounds = 0;
   {
     const char *s = p;
     while (s + 4 < end) {
@@ -1625,7 +1665,7 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
       if (is_c0 || is_c1) {
         s += 3;
         while (s < end && (*s == ' ' || *s == '\n')) s++;
-        if (s < end && *s == '[') { s++; // skip [
+        if (s < end && *s == '[') { s++;
           float vals[3]; int vi = 0;
           while (vi < 3 && s < end) {
             while (s < end && (*s == ' ' || *s == '\n')) s++;
@@ -1638,10 +1678,36 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
             s = ns;
           }
           if (vi >= 3) {
-            if (is_c0) { if (!has_c0) { c0[0]=vals[0]; c0[1]=vals[1]; c0[2]=vals[2]; has_c0 = true; }
-              fprintf(stderr, "DBG shade: found C0=[%.2f %.2f %.2f] at offset %d\n", vals[0],vals[1],vals[2], (int)(s - end + (end-p))); }
-            else       { c1[0]=vals[0]; c1[1]=vals[1]; c1[2]=vals[2]; has_c1 = true;
-              fprintf(stderr, "DBG shade: found C1=[%.2f %.2f %.2f] at offset %d\n", vals[0],vals[1],vals[2], (int)(s - end + (end-p))); }
+            if (is_c0) {
+              if (nsub < MAX_SUBFUNC) {
+                subs[nsub].c0[0]=vals[0]; subs[nsub].c0[1]=vals[1]; subs[nsub].c0[2]=vals[2];
+                subs[nsub].c1[0]=vals[0]; subs[nsub].c1[1]=vals[1]; subs[nsub].c1[2]=vals[2];
+                // If this is after the first sub-function, c1 of previous was already set.
+                // The previous sub's c1 is either still default or was set by a /C1 entry.
+                nsub++;
+              }
+              fprintf(stderr, "DBG shade: found C0=[%.2f %.2f %.2f] (sub %d)\n", vals[0],vals[1],vals[2], nsub-1);
+            } else {
+              if (nsub > 0) {
+                subs[nsub-1].c1[0]=vals[0]; subs[nsub-1].c1[1]=vals[1]; subs[nsub-1].c1[2]=vals[2];
+              }
+              fprintf(stderr, "DBG shade: found C1=[%.2f %.2f %.2f] (sub %d)\n", vals[0],vals[1],vals[2], nsub-1);
+            }
+          }
+        }
+      } else if (memcmp(s, "/Bounds", 7) == 0 && (s[7]==' ' || s[7]=='\n' || s[7]=='[')) {
+        s += 7;
+        while (s < end && (*s == ' ' || *s == '\n')) s++;
+        if (s < end && *s == '[') { s++;
+          while (nbounds < MAX_SUBFUNC - 1 && s < end) {
+            while (s < end && (*s == ' ' || *s == '\n')) s++;
+            if (s >= end || *s == ']') break;
+            const char *ns = s;
+            while (ns < end && *ns != ' ' && *ns != '\n' && *ns != ']') ns++;
+            int ti = ns - s; if (ti > 63) ti = 63;
+            char tmp[64]; memcpy(tmp, s, ti); tmp[ti] = 0;
+            bounds[nbounds++] = strtof(tmp, NULL);
+            s = ns;
           }
         }
       } else {
@@ -1649,9 +1715,37 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
       }
     }
   }
-  if (!has_c0) { fprintf(stderr, "DBG shade: no C0 found\n"); }
-  if (!has_c1) { fprintf(stderr, "DBG shade: no C1 found\n"); }
-  if (!has_c0 || !has_c1) return false;
+  if (nsub == 0) { fprintf(stderr, "DBG shade: no sub-functions found\n"); return false; }
+
+  // Normalise bounds from absolute to [0,1] range using the shading domain.
+  {
+    const char *s = p;
+    while (s + 8 < end) {
+      if (memcmp(s, "/Domain", 7) == 0 && (s[7]==' ' || s[7]=='\n' || s[7]=='[')) {
+        s += 7;
+        while (s < end && (*s == ' ' || *s == '\n')) s++;
+        if (s < end && *s == '[') { s++;
+          float d0=0, d1=100;
+          char tmp[64]; int ti;
+          const char *ns = s;
+          while (ns < end && *ns != ' ' && *ns != '\n' && *ns != ']') ns++;
+          ti = ns - s; if (ti > 63) ti = 63;
+          memcpy(tmp, s, ti); tmp[ti]=0; d0 = strtof(tmp, NULL);
+          s = ns;
+          while (s < end && (*s == ' ' || *s == '\n')) s++;
+          ns = s;
+          while (ns < end && *ns != ' ' && *ns != '\n' && *ns != ']') ns++;
+          ti = ns - s; if (ti > 63) ti = 63;
+          memcpy(tmp, s, ti); tmp[ti]=0; d1 = strtof(tmp, NULL);
+          float dr = (d1 != d0) ? d1 - d0 : 1.0f;
+          for (int i = 0; i < nbounds; i++)
+            bounds[i] = (bounds[i] - d0) / dr;
+        }
+        break;
+      }
+      s++;
+    }
+  }
 
   // Determine shading type: look for /ShadingType
   int shade_type = 2; // default axial
@@ -1671,83 +1765,90 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
   }
 
   if (shade_type == 2) {
-    fprintf(stderr, "DBG shade: axial coords=[%.2f %.2f %.2f %.2f] c0=[%.2f %.2f %.2f] c1=[%.2f %.2f %.2f]\n",
-            cx0, cy0, cx1, cy1, c0[0], c0[1], c0[2], c1[0], c1[1], c1[2]);
+    fprintf(stderr, "DBG shade: axial coords=[%.2f %.2f %.2f %.2f] nsub=%d nbounds=%d\n",
+            cx0, cy0, cx1, cy1, nsub, nbounds);
+    for (int i = 0; i < nsub; i++)
+      fprintf(stderr, "DBG shade:   sub[%d] c0=[%.2f %.2f %.2f] c1=[%.2f %.2f %.2f]\n",
+              i, subs[i].c0[0],subs[i].c0[1],subs[i].c0[2],
+              subs[i].c1[0],subs[i].c1[1],subs[i].c1[2]);
+    for (int i = 0; i < nbounds; i++)
+      fprintf(stderr, "DBG shade:   bound[%d]=%.4f\n", i, bounds[i]);
     {
       fz_matrix ctm = dvi_get_ctm(dc, st);
       fprintf(stderr, "DBG shade: CTM=[%.2f %.2f %.2f %.2f %.2f %.2f]\n",
               ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f);
     }
-    fprintf(stderr, "DBG shade: calling render_axial_shade now\n");
-    render_axial_shade(ctx, dc, st, cx0, cy0, cx1, cy1, c0, c1, get_path(ctx, dc));
-    fprintf(stderr, "DBG shade: render_axial_shade returned\n");
+    fprintf(stderr, "DBG shade: calling render_axial_shade_full now\n");
+    render_axial_shade_full(ctx, dc, st, cx0, cy0, cx1, cy1,
+                            nsub, subs, nbounds > 0 ? bounds : NULL, get_path(ctx, dc));
+    fprintf(stderr, "DBG shade: render_axial_shade_full returned\n");
   } else if (shade_type == 3) {
-    fprintf(stderr, "DBG shade: radial coords=[%.2f %.2f %.2f %.2f] c0=[%.2f %.2f %.2f] c1=[%.2f %.2f %.2f]\n",
-            cx0, cy0, cx1, cy1, c0[0], c0[1], c0[2], c1[0], c1[1], c1[2]);
-    float r0 = 0, r1 = sqrtf((cx1-cx0)*(cx1-cx0) + (cy1-cy0)*(cy1-cy0));
-    render_radial_shade(ctx, dc, st, cx0, cy0, r0, r1, c0, c1);
+    fprintf(stderr, "DBG shade: radial coords=[%.2f %.2f %.2f %.2f] nsub=%d\n",
+            cx0, cy0, cx1, cy1, nsub);
+    if (nsub > 0) {
+      float c0[3]={subs[0].c0[0],subs[0].c0[1],subs[0].c0[2]};
+      float c1[3]={subs[nsub-1].c1[0],subs[nsub-1].c1[1],subs[nsub-1].c1[2]};
+      float r0 = 0, r1 = sqrtf((cx1-cx0)*(cx1-cx0) + (cy1-cy0)*(cy1-cy0));
+      render_radial_shade(ctx, dc, st, cx0, cy0, r0, r1, c0, c1);
+    }
   } else {
     return false;
   }
   return true;
 }
 
-// Render a simple 2-color axial gradient natively using sampled fills.
-// Used when pgf PostScript shading specials are encountered.
+// Simple wrapper for callers with a single C0/C1 pair.
 static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
     float x0, float y0, float x1, float y1,
     float c0[3], float c1[3], fz_path *clip_path)
 {
-  fprintf(stderr, "DBG render_axial ENTER: dev=%p %s\n", (void*)dc->dev, dc->dev ? "ok" : "NULL");
+  shade_subfunc sf;
+  sf.c0[0]=c0[0]; sf.c0[1]=c0[1]; sf.c0[2]=c0[2];
+  sf.c1[0]=c1[0]; sf.c1[1]=c1[1]; sf.c1[2]=c1[2];
+  render_axial_shade_full(ctx, dc, st, x0, y0, x1, y1, 1, &sf, NULL, clip_path);
+}
+
+// Render axial gradient with proper stitching function support.
+static void render_axial_shade_full(fz_context *ctx, dvi_context *dc, dvi_state *st,
+    float x0, float y0, float x1, float y1,
+    int nsub, const shade_subfunc *sf, const float *bounds,
+    fz_path *clip_path)
+{
   if (!dc->dev) return;
 
   fz_matrix ctm = dvi_get_ctm(dc, st);
-  fprintf(stderr, "DBG render_axial: ctm=[%.2f %.2f %.2f %.2f %.2f %.2f] coords=[%.2f %.2f %.2f %.2f] c0=[%.2f %.2f %.2f] c1=[%.2f %.2f %.2f] alpha=%.2f\n",
-          ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f, x0, y0, x1, y1, c0[0], c0[1], c0[2], c1[0], c1[1], c1[2], st->gs.fill_alpha);
-  int steps = 200;
+  int steps = 500;
 
-  // Compute gradient direction and perpendicular
   float dx = x1 - x0, dy = y1 - y0;
   float len = sqrtf(dx * dx + dy * dy);
   if (len < 0.001f) return;
 
-  // Perpendicular direction
   float px = -dy / len, py = dx / len;
-
-  // Gradient direction unit vector
   float gx = dx / len, gy = dy / len;
 
-  // Determine perpendicular half-width from path bounds or use large default
-  float hw = 200.0f; // large default to cover typical pattern tiles
+  // Perpendicular half-width from path bounds
+  float hw = 200.0f;
   if (clip_path) {
-    fz_rect bounds = fz_bound_path(ctx, clip_path, 0, fz_identity);
-    if (!fz_is_infinite_rect(bounds) && !fz_is_empty_rect(bounds)) {
-      // Max perpendicular distance from any bbox corner to the gradient axis
+    fz_rect r = fz_bound_path(ctx, clip_path, 0, fz_identity);
+    if (!fz_is_infinite_rect(r) && !fz_is_empty_rect(r)) {
       float max_dist = 0;
-      float corners[4][2] = {{bounds.x0, bounds.y0}, {bounds.x0, bounds.y1},
-                             {bounds.x1, bounds.y0}, {bounds.x1, bounds.y1}};
+      float corners[4][2] = {{r.x0, r.y0}, {r.x0, r.y1}, {r.x1, r.y0}, {r.x1, r.y1}};
       for (int c = 0; c < 4; c++) {
-        float rx = corners[c][0] - x0;
-        float ry = corners[c][1] - y0;
+        float rx = corners[c][0] - x0, ry = corners[c][1] - y0;
         float perp = fabsf(ry * dx - rx * dy) / len;
         if (perp > max_dist) max_dist = perp;
       }
-      hw = max_dist + 1.0f; // add margin
-      fprintf(stderr, "DBG render_axial: bbox=[%.1f %.1f %.1f %.1f] max_perp=%.1f hw=%.1f\n",
-              bounds.x0, bounds.y0, bounds.x1, bounds.y1, max_dist, hw);
+      hw = max_dist + 1.0f;
     }
   }
 
   float step_size = len / steps;
-  float overlap = step_size * 0.3f; // overlap adjacent strips along gradient
+  float overlap = step_size * 0.5f;
   for (int i = 0; i < steps; i++)
   {
     float t = (i + 0.5f) / steps;
-    float color[3] = {
-      c0[0] + (c1[0] - c0[0]) * t,
-      c0[1] + (c1[1] - c0[1]) * t,
-      c0[2] + (c1[2] - c0[2]) * t,
-    };
+    float color[3];
+    shade_eval_color(color, nsub, sf, bounds, t);
 
     float tv0 = (float)i / steps;
     float tv1 = (float)(i + 1) / steps;
@@ -1756,7 +1857,6 @@ static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
     float nx = x0 + dx * tv1 + gx * overlap;
     float ny = y0 + dy * tv1 + gy * overlap;
 
-    // Build a trapezoid along the gradient, extending perpendicular by hw
     fz_path *path = fz_new_path(ctx);
     fz_moveto(ctx, path, cx + px * hw, cy + py * hw);
     fz_lineto(ctx, path, nx + px * hw, ny + py * hw);
