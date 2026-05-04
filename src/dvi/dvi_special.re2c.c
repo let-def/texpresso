@@ -1621,8 +1621,10 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
   fprintf(stderr, "DBG shade full[%d]: ", (int)(end-p));
   for (const char *dp = p; dp < end; dp++) fputc(*dp, stderr);
   fprintf(stderr, "\n");
-  // Scan for /Coords [x0 y0 x1 y1]
-  float cx0=0, cy0=0, cx1=0, cy1=0;
+  // Scan for /Coords [x0 y0 x1 y1] (axial, 4 vals) or
+  // /Coords [x0 y0 r0 x1 y1 r1] (radial, 6 vals)
+  float cx0=0, cy0=0, cx1=0, cy1=0, rad_r0=0, rad_r1=0;
+  int ncoords = 0;
   bool has_coords = false;
   {
     const char *s = p;
@@ -1632,8 +1634,8 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
         while (s < end && (*s == ' ' || *s == '\n')) s++;
         if (s < end && *s == '[') { s++;
           char tmp[64]; int ti;
-          float vals[4]; int vi = 0;
-          while (vi < 4 && s < end) {
+          float vals[6]; int vi = 0;
+          while (vi < 6 && s < end) {
             while (s < end && (*s == ' ' || *s == '\n')) s++;
             if (s >= end || *s == ']') break;
             const char *ns = s;
@@ -1643,7 +1645,14 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
             vals[vi++] = strtof(tmp, NULL);
             s = ns;
           }
-          if (vi >= 4) { cx0=vals[0]; cy0=vals[1]; cx1=vals[2]; cy1=vals[3]; has_coords = true; }
+          ncoords = vi;
+          if (vi >= 4) {
+            cx0=vals[0]; cy0=vals[1]; cx1=vals[2]; cy1=vals[3]; has_coords = true;
+          }
+          if (vi >= 6) {
+            rad_r0 = vals[2];
+            rad_r1 = vals[5];
+          }
         }
         break;
       }
@@ -1789,8 +1798,15 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
       fprintf(stderr, "DBG shade:   sub[%d] c0=[%.2f %.2f %.2f] c1=[%.2f %.2f %.2f]\n",
               i, subs[i].c0[0],subs[i].c0[1],subs[i].c0[2],
               subs[i].c1[0],subs[i].c1[1],subs[i].c1[2]);
-    float cx=cx0, cy=cy0, r0=0, r1=(float)sqrt((cx1-cx0)*(cx1-cx0)+(cy1-cy0)*(cy1-cy0));
-    fprintf(stderr, "DBG shade: radial cx=%.1f cy=%.1f r0=%.1f r1=%.1f\n", cx, cy, r0, r1);
+    float cx=cx0, cy=cy0, r0=0, r1;
+    if (ncoords >= 6) {
+      r0 = rad_r0;
+      r1 = rad_r1;
+    } else {
+      r1 = (float)sqrt((cx1-cx0)*(cx1-cx0)+(cy1-cy0)*(cy1-cy0));
+    }
+    fprintf(stderr, "DBG shade: radial cx=%.1f cy=%.1f r0=%.1f r1=%.1f ncoords=%d\n",
+            cx, cy, r0, r1, ncoords);
     if (nsub > 0) {
       render_radial_shade(ctx, dc, st, cx, cy, r0, r1,
                           subs, nsub, bounds, nbounds > 0 ? bounds : NULL);
