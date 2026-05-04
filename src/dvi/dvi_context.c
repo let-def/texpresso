@@ -79,7 +79,6 @@ void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev)
   st->gs.stroke_alpha = 1.0f;
   st->gs.text.scale = 1.0f;   // Tz default: 100% = no horizontal scaling
   st->gs.text.font_size = 1.0f; // minimum safe default
-  st->gs.pattern_active = 0;   // pattern state reset
   st->gs_stack.depth = 0;
 
   dc->colorstack.depth = 0;
