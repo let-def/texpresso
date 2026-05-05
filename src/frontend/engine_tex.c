@@ -527,6 +527,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
             log_fileentry(ctx, self->log, e);
             record_seen(self, e, INT_MAX, q->time);
             a.tag = A_PASS;
+            editor_notify_lookup(q->open.path, strlen(q->open.path), q->tag == Q_OPRD, false);
             channel_write_answer(self->c, p->fd, &a);
             break;
           }
@@ -560,6 +561,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
                 log_fileentry(ctx, self->log, e);
                 record_seen(self, e, INT_MAX, q->time);
                 a.tag = A_PASS;
+                editor_notify_lookup(q->open.path, strlen(q->open.path), q->tag == Q_OPRD, false);
                 channel_write_answer(self->c, p->fd, &a);
                 break;
               }
@@ -651,6 +653,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       int n = strlen(q->open.path);
       a.open.path_len = n;
       a.tag = A_OPEN;
+      editor_notify_lookup(q->open.path, n, q->tag == Q_OPRD, true);
       memmove(channel_get_buffer(self->c, n), q->open.path, n);
       channel_write_answer(self->c, p->fd, &a);
       break;

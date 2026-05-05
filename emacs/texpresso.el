@@ -319,6 +319,8 @@ standard output. This function interprets one of these."
 
      ((eq tag 'input-file))
 
+     ((eq tag 'lookup-file))
+
      (t (message "Unknown message in texpresso output: %S" expr)))))
 
 (defun texpresso--stdout-filter (process text)
