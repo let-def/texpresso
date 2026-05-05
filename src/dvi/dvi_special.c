@@ -4244,8 +4244,24 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
           fprintf(stderr, "DBG ps_def: /%.*s = %.*s%s\n", nl, ns, bl, bs, is_bind ? " [bind]" : "");
           // Immediately execute color function bodies so that colors are
           // set even if later ps_lookup_func fails (e.g. due to corruption).
+          // Pattern bodies (containing pgfpat) can't execute because
+          // makepattern/setcolor are not implemented; extract color directly.
           if (nl == 5 && memcmp(ns, "pgffc", 5) == 0) {
-            ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_FILL);
+            if (bl >= 6) {
+              const char *pat = bs;
+              int found = 0;
+              for (int i = 0; i <= bl - 6; i++)
+                if (memcmp(pat + i, "pgfpat", 6) == 0) { found = 1; break; }
+              if (found) {
+                float pr = 1, pg = 1, pb = 1;
+                sscanf(bs, "%f %f %f", &pr, &pg, &pb);
+                color_set_rgb(st->gs.colors.fill, pr, pg, pb);
+              } else {
+                ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_FILL);
+              }
+            } else {
+              ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_FILL);
+            }
             ps_clear();
           } else if (nl == 5 && memcmp(ns, "pgfsc", 5) == 0) {
             ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_STROKE);
