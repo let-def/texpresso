@@ -37,7 +37,7 @@ static void output_fill_rect(fz_context *ctx, dvi_context *dc, dvi_state *st, in
     fz_path *path = fz_new_path(ctx);
     fz_rectto(ctx, path, x0 * s, - y0 * s, x1 * s, - y1 * s);
     fz_fill_path(ctx, dc->dev, path, 0, st->gs.ctm, fz_device_rgb(ctx),
-                 st->gs.colors.fill, 1.0, color_params);
+                 st->gs.colors.fill, st->gs.fill_alpha, color_params);
     fz_drop_path(ctx, path);
   }
 }
@@ -61,7 +61,7 @@ void dvi_context_flush_text(fz_context *ctx, dvi_context *dc, dvi_state *st)
     if (!dc->dev)
       abort();
     fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
-        st->gs.colors.fill, 1.0, color_params);
+        st->gs.colors.fill, st->gs.fill_alpha, color_params);
     fz_drop_text(ctx, dc->text);
     dc->text = NULL;
   }
@@ -136,8 +136,17 @@ void dvi_exec_char(fz_context *ctx, dvi_context *dc, dvi_state *st, uint32_t c, 
       if (dc->dev)
       {
         float s = dc->scale * scale_factor.value;
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        static int txt_dbg = 80;
+        if (txt_dbg > 0) {
+          int32_t h = st->registers.h - st->gs.h;
+          int32_t v = st->registers.v - st->gs.v;
+          fprintf(stderr, "DBG dvi_text: ch='%c'(%d) ctm=[%.1f %.1f %.1f %.1f %.1f %.1f] s=%.4f h_off=%d v_off=%d\n",
+                  (c>=32&&c<127)?c:'?', c, ctm.a,ctm.b,ctm.c,ctm.d,ctm.e,ctm.f, s, h, v);
+          txt_dbg--;
+        }
         fz_show_glyph(ctx, get_text(ctx, dc), font->fz,
-                      fz_pre_scale(dvi_get_ctm(dc, st), s, s), u, c, 0, 0,
+                      fz_pre_scale(ctm, s, s), u, c, 0, 0,
                       FZ_BIDI_LTR, FZ_LANG_UNSET);
       }
     }
@@ -209,6 +218,14 @@ bool dvi_exec_push(fz_context *ctx, dvi_context *dc, dvi_state *st)
   if (st->registers_stack.depth >= st->registers_stack.limit)
     return 0;
   st->registers_stack.base[st->registers_stack.depth] = st->registers;
+  // Save graphics state so that PS specials within TeX groups (e.g.
+  // \resizebox measurement passes) don't leak CTM / color changes to
+  // subsequent content.  Reuses the same gs_stack as PS gsave/grestore
+  // because TeX groups and PS save/restore pairs are properly nested.
+  if (st->gs_stack.depth < st->gs_stack.limit) {
+    st->gs_stack.base[st->gs_stack.depth] = st->gs;
+    st->gs_stack.depth += 1;
+  }
   st->registers_stack.depth += 1;
   return 1;
 }
@@ -220,6 +237,13 @@ bool dvi_exec_pop(fz_context *ctx, dvi_context *dc, dvi_state *st)
     return 0;
   st->registers_stack.depth -= 1;
   st->registers = st->registers_stack.base[st->registers_stack.depth];
+  // Restore graphics state saved in matching push.
+  if (st->gs_stack.depth > 0) {
+    int cd0 = st->gs.clip_depth;
+    st->gs_stack.depth -= 1;
+    st->gs = st->gs_stack.base[st->gs_stack.depth];
+    if (dc->dev) for (int i = st->gs.clip_depth; i < cd0; ++i) fz_pop_clip(ctx, dc->dev);
+  }
   return 1;
 }
 
@@ -326,6 +350,15 @@ void dvi_exec_xdvglyphs(fz_context *ctx, dvi_context *dc, dvi_state *st, fixed_t
                 int num_glyphs, fixed_t *dx, fixed_t dy0, fixed_t *dy, uint16_t *glyphs)
 {
   //fprintf(stderr, "dvi_exec_xdvglyphs: width:%d, chars:%d, glyphs:%d\n", width.value, char_count, num_glyphs);
+  extern int g_debug_ctr;
+  if (g_debug_ctr > 0 && num_glyphs > 0) {
+    fprintf(stderr, "DBG xdvglyphs: reg.h=%d gs.h=%d reg.v=%d gs.v=%d sh=%d sv=%d n=%d ctm=[%.1f %.1f %.1f %.1f %.1f %.1f]\n",
+      st->registers.h, st->gs.h, st->registers.v, st->gs.v,
+      (int32_t)(st->registers.h - st->gs.h), (int32_t)(st->registers.v - st->gs.v),
+      num_glyphs,
+      st->gs.ctm.a, st->gs.ctm.b, st->gs.ctm.c, st->gs.ctm.d, st->gs.ctm.e, st->gs.ctm.f);
+    g_debug_ctr--;
+  }
   dvi_fontdef *def = dvi_current_font(ctx, st);
   if (def->kind != XDV_FONT)
   {

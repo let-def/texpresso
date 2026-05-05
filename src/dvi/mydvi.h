@@ -273,6 +273,32 @@ typedef enum
   PDF_SQUARE_CAPS = 2,
 } pdf_line_caps;
 
+// Text state for PDF text operators (BT/ET/Tf/Tj/TJ etc.)
+// Used by TikZ specials to render node labels and decorations.
+typedef struct
+{
+  fz_matrix Tm;        // text matrix
+  fz_matrix Tlm;       // text line matrix
+  float char_space;    // Tc
+  float word_space;    // Tw
+  float scale;         // Tz (horizontal scaling, default 100 = 1.0)
+  float leading;       // TL
+  int render;          // Tr (0=fill, 1=stroke, 2=fill+stroke, 3=invisible)
+  float rise;          // Ts
+  char font_name[64];  // font name from Tf
+  float font_size;     // font size from Tf
+  int in_text;         // true between BT and ET
+} dvi_textstate;
+
+// Simple font cache for special (TikZ) text rendering.
+// Standard PDF 14 fonts are resolved lazily and cached here.
+#define DVI_FONT_CACHE_SIZE 8
+typedef struct
+{
+  char name[64];
+  fz_font *font;
+} dvi_font_cache_entry;
+
 typedef struct
 {
   fz_matrix ctm;
@@ -281,10 +307,13 @@ typedef struct
   pdf_line_join line_join;
   pdf_line_caps line_caps;
   int clip_depth;
-  float dash[4];
+  float fill_alpha;
+  float stroke_alpha;
+  float dash[32];
   int dash_len;
   float dash_phase;
   int h, v;
+  dvi_textstate text;
 } dvi_graphicstate;
 
 typedef struct
@@ -336,6 +365,15 @@ typedef struct
   // Pdf color stacks (introduced by pdftex)
   dvi_colorstacks pdfcolorstacks;
   float scale;
+
+  // Font cache for special (TikZ) text operators
+  dvi_font_cache_entry font_cache[DVI_FONT_CACHE_SIZE];
+  int font_cache_count;
+
+  // Saved frame base CTM (for PS concat to build from)
+  fz_matrix base_ctm;
+  // Page dimensions in big points (for PS coordinate conversion)
+  float page_width, page_height;
 } dvi_context;
 
 #define DC_ALLOC(ctx, dc, type, count) ((type*)dvi_scratch_alloc(ctx, &(dc)->scratch, sizeof(type) * (count)))
@@ -350,11 +388,22 @@ void dvi_context_end_frame(fz_context *ctx, dvi_context *dc);
 
 #define inlined static inline __attribute__((unused))
 
+// PS state reset (called at begin_frame to prevent cross-page contamination)
+void ps_state_reset(void);
+
+// Debug counter for limiting diagnostic output
+extern int g_debug_ctr;
 inlined fz_matrix dvi_get_ctm(const dvi_context *dc, const dvi_state *st)
 {
   float s = dc->scale;
   int32_t h = st->registers.h - st->gs.h;
   int32_t v = st->registers.v - st->gs.v;
+  if (g_debug_ctr > 0) {
+    fprintf(stderr, "DBG get_ctm: gs.ctm=[%.2f %.2f %.2f %.2f %.2f %.2f] reg.h=%d gs.h=%d reg.v=%d gs.v=%d s=%.4f off=(%.1f,%.1f)\n",
+      st->gs.ctm.a, st->gs.ctm.b, st->gs.ctm.c, st->gs.ctm.d, st->gs.ctm.e, st->gs.ctm.f,
+      st->registers.h, st->gs.h, st->registers.v, st->gs.v, s, h*s, -v*s);
+    g_debug_ctr--;
+  }
   return fz_pre_translate(st->gs.ctm, h * s, - v * s);
 }
 
