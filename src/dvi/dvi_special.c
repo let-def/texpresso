@@ -6730,8 +6730,14 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
 {
   cursor_t mar, i, j;
 
-  { int plen = lim - cur; if (plen > 500) plen = 500;
-    fprintf(stderr, "TRACE sp(%.*s) gs.h=%d gs.v=%d\n", plen, cur, st->gs.h, st->gs.v); }
+  // Guarded trace: only log first 100 specials to avoid flooding stderr
+  { static int trace_ctr = 100;
+    if (trace_ctr > 0) {
+      int plen = lim - cur; if (plen > 500) plen = 500;
+      fprintf(stderr, "TRACE sp(%.*s) gs.h=%d gs.v=%d\n", plen, cur, st->gs.h, st->gs.v);
+      trace_ctr--;
+    }
+  }
 
   for (;;)
   {

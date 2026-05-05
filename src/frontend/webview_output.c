@@ -79,12 +79,25 @@ static int compute_dirty_rects(unsigned char *old_rgb, unsigned char *new_rgb,
   int dirty_pixels = 0;
   int rect_count = 0;
 
-  // For each row, find min/max changed column
-  int row_min_x[4096]; // max page height ~4000
-  int row_max_x[4096];
-  int dirty_start = -1;
+  // Use stack buffer for common page heights, heap for very tall renders
+  int stack_buf[8192]; // covers up to 4096 rows (2 ints per row)
+  int *row_min_x, *row_max_x;
+  int alloc_h = (h > 4096) ? h : 0;
+  if (alloc_h > 0) {
+    row_min_x = malloc(alloc_h * sizeof(int));
+    row_max_x = malloc(alloc_h * sizeof(int));
+    if (!row_min_x || !row_max_x) {
+      free(row_min_x);
+      free(row_max_x);
+      *dirty_ratio = 1.0f;
+      return -1;
+    }
+  } else {
+    row_min_x = stack_buf;
+    row_max_x = stack_buf + 4096;
+  }
 
-  if (h > 4096) h = 4096; // safety
+  int dirty_start = -1;
 
   for (int y = 0; y < h; y++) {
     unsigned char *old_row = old_rgb + y * w * 3;
@@ -128,6 +141,7 @@ static int compute_dirty_rects(unsigned char *old_rgb, unsigned char *new_rgb,
         rect_count++;
       } else if (rect_count >= max_rects) {
         // Too many rects, fall back to full page
+        if (alloc_h > 0) { free(row_min_x); free(row_max_x); }
         *dirty_ratio = 1.0f;
         return -1;
       }
@@ -136,6 +150,7 @@ static int compute_dirty_rects(unsigned char *old_rgb, unsigned char *new_rgb,
     }
   }
 
+  if (alloc_h > 0) { free(row_min_x); free(row_max_x); }
   *dirty_ratio = (float)dirty_pixels / (float)total_pixels;
   return rect_count;
 }
