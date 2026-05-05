@@ -848,14 +848,15 @@ static void show_special_text(fz_context *ctx, dvi_context *dc, dvi_state *st,
       continue;
     }
     float adv = fz_advance_glyph(ctx, font, glyph, 0);
-    // TRM = CTM × Tm × Tfs: font_size scales the glyph only,
-    // not the page-level translation.
+    // TRM = translate(0,rise) × CTM × Tm × Tfs
     fz_matrix trm = fz_pre_scale(fz_identity, fs * hs, fs);  // Tfs
     trm = fz_concat(trm, st->gs.text.Tm);                     // Tfs × Tm
     trm = fz_concat(trm, ctm);                                // (Tfs × Tm) × CTM
+    trm = fz_pre_translate(trm, 0, st->gs.text.rise);        // apply text rise
     fz_show_glyph(ctx, text, font, trm, glyph, cp, 0, 0, FZ_BIDI_LTR, FZ_LANG_UNSET);
-    // Advance text matrix horizontally
-    float tx = (adv * fs + st->gs.text.char_space) * hs + st->gs.text.word_space;
+    // Advance text matrix; word_space only applies to space chars (U+0020)
+    float tx = (adv * fs + st->gs.text.char_space) * hs;
+    if (cp == 32) tx += st->gs.text.word_space;
     st->gs.text.Tm = fz_pre_translate(st->gs.text.Tm, tx, 0);
   }
 }
