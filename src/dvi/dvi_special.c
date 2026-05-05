@@ -4315,7 +4315,20 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     // pgfstr, newpath, or pgfc.
     else if (strcmp(tmp, "pgffill") == 0) {
       const char *b = ps_lookup_func("pgffc");
-      if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
+      if (b && *b) {
+        // If pgffc references a pgfpat pattern, the pattern's makepattern/
+        // setcolor operators are not implemented, so ps_exec_body would be a
+        // no-op and the fill color stays black.  Extract the pattern color
+        // directly from the pgffc body instead.
+        if (strstr(b, "pgfpat")) {
+          float pr = 1, pg = 1, pb = 1;
+          sscanf(b, "%f %f %f", &pr, &pg, &pb);
+          color_set_rgb(st->gs.colors.fill, pr, pg, pb);
+          color_set_rgb(st->gs.colors.line, pr, pg, pb);
+        } else {
+          ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
+        }
+      }
       float *fc = st->gs.colors.fill;
       fprintf(stderr, "DBG pgffill: pgffc=%s FILL=[%.2f %.2f %.2f] alpha=%.2f\n",
               b&&*b?b:"(empty)", fc[0], fc[1], fc[2], st->gs.fill_alpha);
@@ -4579,7 +4592,16 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     else if (strcmp(tmp, "pgfr") == 0 || strcmp(tmp, "pgfR") == 0) {
       // pgfr = PGF fill (dvips alias for pgffill)
       const char *b = ps_lookup_func("pgffc");
-      if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
+      if (b && *b) {
+        if (strstr(b, "pgfpat")) {
+          float pr = 1, pg = 1, pb = 1;
+          sscanf(b, "%f %f %f", &pr, &pg, &pb);
+          color_set_rgb(st->gs.colors.fill, pr, pg, pb);
+          color_set_rgb(st->gs.colors.line, pr, pg, pb);
+        } else {
+          ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
+        }
+      }
       if (dc->dev) {
         fz_matrix ctm = dvi_get_ctm(dc, st);
         fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
