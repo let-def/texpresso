@@ -848,14 +848,15 @@ static void show_special_text(fz_context *ctx, dvi_context *dc, dvi_state *st,
       continue;
     }
     float adv = fz_advance_glyph(ctx, font, glyph, 0);
-    // TRM = CTM × Tm × Tfs: font_size scales the glyph only,
-    // not the page-level translation.
+    // TRM = translate(0,rise) × CTM × Tm × Tfs
     fz_matrix trm = fz_pre_scale(fz_identity, fs * hs, fs);  // Tfs
     trm = fz_concat(trm, st->gs.text.Tm);                     // Tfs × Tm
     trm = fz_concat(trm, ctm);                                // (Tfs × Tm) × CTM
+    trm = fz_pre_translate(trm, 0, st->gs.text.rise);        // apply text rise
     fz_show_glyph(ctx, text, font, trm, glyph, cp, 0, 0, FZ_BIDI_LTR, FZ_LANG_UNSET);
-    // Advance text matrix horizontally
-    float tx = (adv * fs + st->gs.text.char_space) * hs + st->gs.text.word_space;
+    // Advance text matrix; word_space only applies to space chars (U+0020)
+    float tx = (adv * fs + st->gs.text.char_space) * hs;
+    if (cp == 32) tx += st->gs.text.word_space;
     st->gs.text.Tm = fz_pre_translate(st->gs.text.Tm, tx, 0);
   }
 }
@@ -1371,15 +1372,14 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
         case PDF_OP_dquote:
         {
           // '' = set Tw/Tc + T* + Tj
-          float c[2];
-          vstack_get_floats(ctx, stack, c, 2);
-          st->gs.text.word_space = c[0];
-          st->gs.text.char_space = c[1];
+          // Get all 3 operands at once: aw, ac, string
+          val v[3];
+          vstack_get_arguments(ctx, stack, v, 3);
+          st->gs.text.word_space = val_number(ctx, v[0]);
+          st->gs.text.char_space = val_number(ctx, v[1]);
           fz_matrix delta = fz_translate(0, -st->gs.text.leading);
           st->gs.text.Tlm = fz_concat(delta, st->gs.text.Tlm);
           st->gs.text.Tm = st->gs.text.Tlm;
-          val v[3];
-          vstack_get_arguments(ctx, stack, v, 3);
           const char *str = val_as_string(ctx, stack, v[2]);
           size_t slen = val_string_length(ctx, stack, v[2]);
           fz_font *font = resolve_special_font(ctx, dc, st, st->gs.text.font_name);
@@ -1475,16 +1475,48 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
         }
         case PDF_OP_SCN:
         {
-          float c[3];
-          vstack_get_floats(ctx, stack, c, 3);
-          color_set_rgb(st->gs.colors.line, c[0], c[1], c[2]);
+          // SCN operand count depends on current color space:
+          // 1 (Gray), 3 (RGB), 4 (CMYK), N+1 (Pattern name + components)
+          val array = vstack_get_values(ctx, stack);
+          int n = val_array_length(ctx, stack, array);
+          if (n >= 1 && val_is_number(val_array_get(ctx, stack, array, 0))) {
+            if (n == 1) {
+              color_set_gray(st->gs.colors.line, val_number(ctx, val_array_get(ctx, stack, array, 0)));
+            } else if (n == 3) {
+              color_set_rgb(st->gs.colors.line,
+                val_number(ctx, val_array_get(ctx, stack, array, 0)),
+                val_number(ctx, val_array_get(ctx, stack, array, 1)),
+                val_number(ctx, val_array_get(ctx, stack, array, 2)));
+            } else if (n == 4) {
+              color_set_cmyk(st->gs.colors.line,
+                val_number(ctx, val_array_get(ctx, stack, array, 0)),
+                val_number(ctx, val_array_get(ctx, stack, array, 1)),
+                val_number(ctx, val_array_get(ctx, stack, array, 2)),
+                val_number(ctx, val_array_get(ctx, stack, array, 3)));
+            }
+          }
           break;
         }
         case PDF_OP_scn:
         {
-          float c[3];
-          vstack_get_floats(ctx, stack, c, 3);
-          color_set_rgb(st->gs.colors.fill, c[0], c[1], c[2]);
+          val array = vstack_get_values(ctx, stack);
+          int n = val_array_length(ctx, stack, array);
+          if (n >= 1 && val_is_number(val_array_get(ctx, stack, array, 0))) {
+            if (n == 1) {
+              color_set_gray(st->gs.colors.fill, val_number(ctx, val_array_get(ctx, stack, array, 0)));
+            } else if (n == 3) {
+              color_set_rgb(st->gs.colors.fill,
+                val_number(ctx, val_array_get(ctx, stack, array, 0)),
+                val_number(ctx, val_array_get(ctx, stack, array, 1)),
+                val_number(ctx, val_array_get(ctx, stack, array, 2)));
+            } else if (n == 4) {
+              color_set_cmyk(st->gs.colors.fill,
+                val_number(ctx, val_array_get(ctx, stack, array, 0)),
+                val_number(ctx, val_array_get(ctx, stack, array, 1)),
+                val_number(ctx, val_array_get(ctx, stack, array, 2)),
+                val_number(ctx, val_array_get(ctx, stack, array, 3)));
+            }
+          }
           break;
         }
 

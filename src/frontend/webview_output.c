@@ -37,6 +37,7 @@ static void write_qoi_file(const char *tmpdir, unsigned char *rgb,
   void *qoi_data = qoi_encode(rgb, &desc, &qoi_len);
   if (!qoi_data) {
     fprintf(stderr, "[webview] ERROR: qoi_encode returned NULL\n");
+    path_out[0] = '\0';
     return;
   }
 
@@ -198,6 +199,7 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
   // Check if we can do incremental update
   bool send_update = true; // false = no changes, skip sending
   bool is_diff = false;
+  bool page_sent = false;  // set to true iff a payload was actually emitted
   if (prev_rgb && prev_w == w && prev_h == h && prev_page == page) {
     dirty_rect_t rects[MAX_DIRTY_RECTS];
     float dirty_ratio = 0;
@@ -207,10 +209,12 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
       send_update = false;
     } else if (n_rects > 0 && dirty_ratio < DIRTY_RATIO_THRESHOLD) {
       is_diff = true;
+      int emitted = 0;
 
-      // Send page-diff message
-      fprintf(stdout, "[\"page-diff\",%d,%d,%d,%d,%d,%d,%d,[",
-              page, total_pages, w, h, page_width, page_height, n_rects);
+      // Send page-diff message — build rect array first to get accurate count
+      // and avoid invalid JSON from skipped rects
+      fprintf(stdout, "[\"page-diff\",%d,%d,%d,%d,%d,%d,[",
+              page, total_pages, w, h, page_width, page_height);
 
       for (int i = 0; i < n_rects; i++) {
         dirty_rect_t *r = &rects[i];
@@ -234,13 +238,16 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
         if (rfd >= 0) {
           write(rfd, rqoi_data, rqoi_len);
           close(rfd);
-          if (i > 0) fprintf(stdout, ",");
+          if (emitted > 0) fprintf(stdout, ",");
           fprintf(stdout, "[%d,%d,%d,%d,\"%s\"]", r->x, r->y, rw, rh, rpath);
+          emitted++;
         }
         free(rqoi_data);
       }
-      fprintf(stdout, "]]\n");
+      fprintf(stdout, "],%d]\n", emitted);
       fflush(stdout);
+      page_sent = (emitted > 0);
+      if (!page_sent) is_diff = false; // fall through to full page
     }
     // else: dirty_ratio >= threshold or n_rects < 0 — fall through to full page
   }
@@ -253,13 +260,18 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
       fprintf(stdout, "[\"page\",%d,%d,\"%s\",%d,%d,%d,%d]\n",
               page, total_pages, tmppath, w, h, page_width, page_height);
       fflush(stdout);
+      page_sent = true;
     }
   }
 
-  // Save current RGB for next incremental comparison
-  if (prev_rgb) free(prev_rgb);
-  prev_rgb = rgb;
-  prev_w = w;
-  prev_h = h;
-  prev_page = page;
+  // Only save state when a page was actually sent, to prevent permanent desync
+  if (page_sent || !prev_rgb) {
+    if (prev_rgb) free(prev_rgb);
+    prev_rgb = rgb;
+    prev_w = w;
+    prev_h = h;
+    prev_page = page;
+  } else {
+    free(rgb);
+  }
 }

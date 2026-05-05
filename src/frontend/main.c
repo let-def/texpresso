@@ -947,6 +947,7 @@ static void interpret_command(struct persistent_state *ps,
 
     case EDIT_THEME:
     {
+      if (ps->webview_mode) break;
       txp_renderer_config *config =
           txp_renderer_get_config(ps->ctx, ui->doc_renderer);
       config->background_color = convert_color(ps->ctx, stack, cmd.theme.bg);
@@ -1033,6 +1034,7 @@ static void interpret_command(struct persistent_state *ps,
 
     case EDIT_CROP:
     {
+      if (ps->webview_mode) break;
       txp_renderer_config *config =
           txp_renderer_get_config(ps->ctx, ui->doc_renderer);
       config->crop = !config->crop;
@@ -1121,9 +1123,11 @@ static void interpret_command(struct persistent_state *ps,
     break;
 
     case EDIT_SET_OUTPUT_SIZE:
-      ps->render_width = cmd.set_output_size.width;
-      ps->render_height = cmd.set_output_size.height;
-      schedule_event(RELOAD_EVENT);
+      if (cmd.set_output_size.width > 0 && cmd.set_output_size.height > 0) {
+        ps->render_width = cmd.set_output_size.width;
+        ps->render_height = cmd.set_output_size.height;
+        schedule_event(RELOAD_EVENT);
+      }
       break;
 
     case EDIT_RESET_ZOOM:
