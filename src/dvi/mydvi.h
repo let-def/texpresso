@@ -314,6 +314,12 @@ typedef struct
   float dash_phase;
   int h, v;
   dvi_textstate text;
+  int pattern_active;
+  float pattern_color[3];
+  float pattern_bbox[4];
+  float pattern_xstep, pattern_ystep;
+  char pattern_body[512];
+  int pattern_body_len;
 } dvi_graphicstate;
 
 typedef struct
