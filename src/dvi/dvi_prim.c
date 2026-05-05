@@ -60,27 +60,8 @@ void dvi_context_flush_text(fz_context *ctx, dvi_context *dc, dvi_state *st)
   {
     if (!dc->dev)
       abort();
-    switch (st->gs.text.render)
-    {
-    case 0: // Fill
-      fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
-          st->gs.colors.fill, st->gs.fill_alpha, color_params);
-      break;
-    case 1: // Stroke
-      fz_stroke_text(ctx, dc->dev, dc->text, &fz_default_stroke_state, fz_identity,
-          fz_device_rgb(ctx), st->gs.colors.line, st->gs.stroke_alpha, color_params);
-      break;
-    case 2: // Fill + stroke — fill only (text consumed after one op)
-      fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
-          st->gs.colors.fill, st->gs.fill_alpha, color_params);
-      break;
-    case 3: // Invisible
-      break;
-    default:
-      fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
-          st->gs.colors.fill, st->gs.fill_alpha, color_params);
-      break;
-    }
+    fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
+        st->gs.colors.fill, st->gs.fill_alpha, color_params);
     fz_drop_text(ctx, dc->text);
     dc->text = NULL;
   }
@@ -236,13 +217,15 @@ bool dvi_exec_push(fz_context *ctx, dvi_context *dc, dvi_state *st)
   dvi_context_flush_text(ctx, dc, st);
   if (st->registers_stack.depth >= st->registers_stack.limit)
     return 0;
-  // Refuse if gs_stack is full to prevent save/restore pairing corruption
-  // (gs_stack is shared with PS gsave/grestore).
-  if (st->gs_stack.depth >= st->gs_stack.limit)
-    return 0;
   st->registers_stack.base[st->registers_stack.depth] = st->registers;
-  st->gs_stack.base[st->gs_stack.depth] = st->gs;
-  st->gs_stack.depth += 1;
+  // Save graphics state so that PS specials within TeX groups (e.g.
+  // \resizebox measurement passes) don't leak CTM / color changes to
+  // subsequent content.  Reuses the same gs_stack as PS gsave/grestore
+  // because TeX groups and PS save/restore pairs are properly nested.
+  if (st->gs_stack.depth < st->gs_stack.limit) {
+    st->gs_stack.base[st->gs_stack.depth] = st->gs;
+    st->gs_stack.depth += 1;
+  }
   st->registers_stack.depth += 1;
   return 1;
 }
