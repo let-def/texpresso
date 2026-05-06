@@ -226,10 +226,9 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
       is_diff = true;
       int emitted = 0;
 
-      // Send page-diff message — build rect array first to get accurate count
-      // and avoid invalid JSON from skipped rects
-      fprintf(stdout, "[\"page-diff\",%d,%d,%d,%d,%d,%d,[",
-              page, total_pages, w, h, page_width, page_height);
+      // Send page-diff message — format matches VSCode extension parser
+      fprintf(stdout, "[\"page-diff\",%d,%d,%d,%d,%d,%d,%d,[",
+              page, total_pages, w, h, page_width, page_height, n_rects);
 
       for (int i = 0; i < n_rects; i++) {
         dirty_rect_t *r = &rects[i];
@@ -259,7 +258,7 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
         }
         free(rqoi_data);
       }
-      fprintf(stdout, "],%d]\n", emitted);
+      fprintf(stdout, "]]\n");
       fflush(stdout);
       page_sent = (emitted > 0);
       if (!page_sent) is_diff = false; // fall through to full page
