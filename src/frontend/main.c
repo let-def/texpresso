@@ -1371,14 +1371,33 @@ bool texpresso_main(struct persistent_state *ps)
       if (!has_event)
       {
         if (advance)
-          continue;
-        if (!stdin_eof)
-          wakeup_poll_thread(poll_stdin_pipe, 'c');
-        has_event = SDL_WaitEvent(&e);
-        if (!has_event)
         {
-          fprintf(stderr, "SDL_WaitEvent error: %s\n", SDL_GetError());
-          break;
+          // In webview mode, peek for pending custom events (RELOAD_EVENT
+          // etc.) without blocking, so page navigation and re-rendering
+          // stay responsive during long engine advances.
+          if (ps->webview_mode)
+          {
+            SDL_PumpEvents();
+            SDL_Event peek;
+            if (SDL_PeepEvents(&peek, 1, SDL_PEEKEVENT, ps->custom_event, ps->custom_event) > 0)
+            {
+              SDL_PollEvent(&e);
+              has_event = true;
+            }
+          }
+          if (!has_event)
+            continue;
+        }
+        else
+        {
+          if (!stdin_eof)
+            wakeup_poll_thread(poll_stdin_pipe, 'c');
+          has_event = SDL_WaitEvent(&e);
+          if (!has_event)
+          {
+            fprintf(stderr, "SDL_WaitEvent error: %s\n", SDL_GetError());
+            break;
+          }
         }
       }
 
