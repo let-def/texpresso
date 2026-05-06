@@ -655,6 +655,20 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       channel_write_answer(self->c, p->fd, &a);
       break;
     }
+    case Q_OPRL:
+    {
+      check_fid(q->open.fid);
+      filecell_t *cell = &self->st.table[q->open.fid];
+      if (cell->entry != NULL) mabort();
+
+      fileentry_t *e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
+      log_fileentry(ctx, self->log, e);
+      record_seen(self, e, INT_MAX, q->time);
+      a.tag = A_PASS;
+      channel_write_answer(self->c, p->fd, &a);
+      editor_request_file(q->open.path, strlen(q->open.path));
+      break;
+    }
     case Q_READ:
     {
       check_fid(q->read.fid);

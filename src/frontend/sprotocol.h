@@ -51,6 +51,7 @@ typedef int file_id;
 
 enum query {
   Q_OPRD = PACK('O','P','R','D'),
+  Q_OPRL = PACK('O','P','R','L'),
   Q_OPWR = PACK('O','P','W','R'),
   Q_READ = PACK('R','E','A','D'),
   Q_APND = PACK('A','P','N','D'),

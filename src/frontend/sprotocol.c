@@ -209,6 +209,7 @@ const char *query_to_string(enum query q)
   switch (q)
   {
     CASE(Q,OPRD);
+    CASE(Q,OPRL);
     CASE(Q,OPWR);
     CASE(Q,READ);
     CASE(Q,APND);
@@ -389,6 +390,9 @@ void log_query(FILE *f, query_t *r)
     case Q_OPRD:
       fprintf(f, "OPRD(%d, \"%s\")\n", r->open.fid, r->open.path);
       return;
+    case Q_OPRL:
+      fprintf(f, "OPRL(%d, \"%s\")\n", r->open.fid, r->open.path);
+      return;
     case Q_OPWR:
       fprintf(f, "OPWR(%d, \"%s\")\n", r->open.fid, r->open.path);
       return;
@@ -471,6 +475,7 @@ bool channel_read_query(channel_t *t, int fd, query_t *r)
   switch (tag)
   {
     case Q_OPRD:
+    case Q_OPRL:
     case Q_OPWR:
       {
         r->open.fid = read_u32(t, fd);

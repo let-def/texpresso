@@ -322,7 +322,24 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
   if (texpresso)
   {
     if (!f)
+    {
+      txp_file_id id = next_id();
+      char *ipath = txp_open_last_resort(texpresso, id, path,
+                                         kind_of_ttbc_format(format));
+      if (ipath)
+      {
+        strcpy(last_open, ipath);
+        free(ipath);
+        txp_input *input = calloc(1, sizeof(txp_input));
+        if (!input) abort();
+        alloc_id(id);
+        input->id = id;
+        input->file_size = -1;
+        input->generation = txp_generation(texpresso);
+        return txp_as_input(input);
+      }
       return NULL;
+    }
 
     txp_input_file *input = calloc(1, sizeof(txp_input_file));
     if (!input)
