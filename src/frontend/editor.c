@@ -281,6 +281,60 @@ bool editor_parse(fz_context *ctx,
       goto arity;
     *out = (struct editor_command){.tag = EDIT_INVERT, .invert = {}};
   }
+  else if (strcmp(verb, "synctex-backward") == 0)
+  {
+    if (len != 4) goto arity;
+    *out = (struct editor_command){
+        .tag = EDIT_SYNCTEX_BACKWARD,
+        .synctex_backward = {
+            .page = val_number(ctx, val_array_get(ctx, stack, command, 1)),
+            .x = val_number(ctx, val_array_get(ctx, stack, command, 2)),
+            .y = val_number(ctx, val_array_get(ctx, stack, command, 3)),
+        }};
+  }
+  else if (strcmp(verb, "set-page") == 0)
+  {
+    if (len != 2) goto arity;
+    *out = (struct editor_command){
+        .tag = EDIT_SET_PAGE,
+        .set_page = {
+            .page = val_number(ctx, val_array_get(ctx, stack, command, 1)),
+        }};
+  }
+  else if (strcmp(verb, "set-output-size") == 0)
+  {
+    if (len != 3) goto arity;
+    *out = (struct editor_command){
+        .tag = EDIT_SET_OUTPUT_SIZE,
+        .set_output_size = {
+            .width = val_number(ctx, val_array_get(ctx, stack, command, 1)),
+            .height = val_number(ctx, val_array_get(ctx, stack, command, 2)),
+        }};
+  }
+  else if (strcmp(verb, "go-home") == 0)
+  {
+    if (len != 1) goto arity;
+    *out = (struct editor_command){.tag = EDIT_GO_HOME, .go_home = {}};
+  }
+  else if (strcmp(verb, "go-end") == 0)
+  {
+    if (len != 1) goto arity;
+    *out = (struct editor_command){.tag = EDIT_GO_END, .go_end = {}};
+  }
+  else if (strcmp(verb, "reset-zoom") == 0)
+  {
+    if (len != 1) goto arity;
+    *out = (struct editor_command){.tag = EDIT_RESET_ZOOM, .reset_zoom = {}};
+  }
+  else if (strcmp(verb, "set-fit-mode") == 0)
+  {
+    if (len != 2) goto arity;
+    val mode = val_array_get(ctx, stack, command, 1);
+    if (!val_is_string(mode)) goto arguments;
+    *out = (struct editor_command){.tag = EDIT_SET_FIT_MODE};
+    const char *s = val_string(ctx, stack, mode);
+    snprintf(out->set_fit_mode.mode, sizeof(out->set_fit_mode.mode), "%s", s);
+  }
   else
   {
     fprintf(stderr, "[command] unknown verb: %s\n", verb);
