@@ -2105,7 +2105,22 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
           // Immediately execute color function bodies so that colors are
           // set even if later ps_lookup_func fails (e.g. due to corruption).
           if (nl == 5 && memcmp(ns, "pgffc", 5) == 0) {
-            ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_FILL);
+            // Pattern bodies contain pgfpat whose makepattern/setcolor
+            // operators are not implemented. Extract color directly.
+            if (bl >= 6) {
+              int found = 0;
+              for (int i = 0; i <= bl - 6; i++)
+                if (memcmp(bs + i, "pgfpat", 6) == 0) { found = 1; break; }
+              if (found) {
+                float pr = 1, pg = 1, pb = 1;
+                sscanf(bs, "%f %f %f", &pr, &pg, &pb);
+                color_set_rgb(st->gs.colors.fill, pr, pg, pb);
+              } else {
+                ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_FILL);
+              }
+            } else {
+              ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_FILL);
+            }
             ps_clear();
           } else if (nl == 5 && memcmp(ns, "pgfsc", 5) == 0) {
             ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_STROKE);
@@ -2172,7 +2187,16 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     // pgfstr, newpath, or pgfc.
     else if (strcmp(tmp, "pgffill") == 0) {
       const char *b = ps_lookup_func("pgffc");
-      if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
+      if (b && *b) {
+        if (strstr(b, "pgfpat")) {
+          float pr = 1, pg = 1, pb = 1;
+          sscanf(b, "%f %f %f", &pr, &pg, &pb);
+          color_set_rgb(st->gs.colors.fill, pr, pg, pb);
+          color_set_rgb(st->gs.colors.line, pr, pg, pb);
+        } else {
+          ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
+        }
+      }
       float *fc = st->gs.colors.fill;
       if (dc->dev) {
         fz_matrix ctm = dvi_get_ctm(dc, st);
@@ -2417,7 +2441,16 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     else if (strcmp(tmp, "pgfr") == 0 || strcmp(tmp, "pgfR") == 0) {
       // pgfr = PGF fill (dvips alias for pgffill)
       const char *b = ps_lookup_func("pgffc");
-      if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
+      if (b && *b) {
+        if (strstr(b, "pgfpat")) {
+          float pr = 1, pg = 1, pb = 1;
+          sscanf(b, "%f %f %f", &pr, &pg, &pb);
+          color_set_rgb(st->gs.colors.fill, pr, pg, pb);
+          color_set_rgb(st->gs.colors.line, pr, pg, pb);
+        } else {
+          ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
+        }
+      }
       if (dc->dev) {
         fz_matrix ctm = dvi_get_ctm(dc, st);
         fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
