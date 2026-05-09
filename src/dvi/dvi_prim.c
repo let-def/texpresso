@@ -208,7 +208,13 @@ bool dvi_exec_push(fz_context *ctx, dvi_context *dc, dvi_state *st)
   dvi_context_flush_text(ctx, dc, st);
   if (st->registers_stack.depth >= st->registers_stack.limit)
     return 0;
+  // Refuse if gs_stack is full to prevent save/restore pairing corruption
+  // (gs_stack is shared with PS gsave/grestore).
+  if (st->gs_stack.depth >= st->gs_stack.limit)
+    return 0;
   st->registers_stack.base[st->registers_stack.depth] = st->registers;
+  st->gs_stack.base[st->gs_stack.depth] = st->gs;
+  st->gs_stack.depth += 1;
   st->registers_stack.depth += 1;
   return 1;
 }
@@ -220,6 +226,13 @@ bool dvi_exec_pop(fz_context *ctx, dvi_context *dc, dvi_state *st)
     return 0;
   st->registers_stack.depth -= 1;
   st->registers = st->registers_stack.base[st->registers_stack.depth];
+  // Restore graphics state saved in matching push.
+  if (st->gs_stack.depth > 0) {
+    int cd0 = st->gs.clip_depth;
+    st->gs_stack.depth -= 1;
+    st->gs = st->gs_stack.base[st->gs_stack.depth];
+    if (dc->dev) for (int i = st->gs.clip_depth; i < cd0; ++i) fz_pop_clip(ctx, dc->dev);
+  }
   return 1;
 }
 

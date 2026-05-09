@@ -36,6 +36,9 @@
 
 typedef const char *cursor_t;
 
+// Stub: called at begin_frame to prevent cross-page PS state contamination
+void ps_state_reset(void) {}
+
 /*!re2c
 
 re2c:yyfill:enable = 0;
