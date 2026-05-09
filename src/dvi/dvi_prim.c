@@ -42,18 +42,6 @@ static void output_fill_rect(fz_context *ctx, dvi_context *dc, dvi_state *st, in
   }
 }
 
-static void output_debug_rect(fz_context *ctx, dvi_context *dc, dvi_state *st, int32_t x0, int32_t y0, int32_t x1, int32_t y1)
-{
-  if (ctx && dc->dev)
-  {
-    fz_path *path = fz_new_path(ctx);
-    fz_rectto(ctx, path, x0 * dc->scale, - y0 * dc->scale, x1 * dc->scale, - y1 * dc->scale);
-    fz_stroke_path(ctx, dc->dev, path, &fz_default_stroke_state, st->gs.ctm,
-                   fz_device_rgb(ctx), st->gs.colors.line, 0.8, color_params);
-    fz_drop_path(ctx, path);
-  }
-}
-
 void dvi_context_flush_text(fz_context *ctx, dvi_context *dc, dvi_state *st)
 {
   if (dc->text)
@@ -101,9 +89,6 @@ static dvi_fontdef *dvi_current_font(fz_context *ctx, dvi_state *st)
 
 void dvi_exec_char(fz_context *ctx, dvi_context *dc, dvi_state *st, uint32_t c, bool set)
 {
-  int debug = 0;
-
-  // fprintf(stderr, "%s_char: %C = %u\n", set ? "set" : "put", c, c);
 
   dvi_fontdef *def = dvi_current_font(ctx, st);
   if (def->kind != TEX_FONT)
@@ -156,8 +141,9 @@ void dvi_exec_char(fz_context *ctx, dvi_context *dc, dvi_state *st, uint32_t c, 
       if (dc->dev)
       {
         float s = dc->scale * scale_factor.value;
+        fz_matrix ctm = dvi_get_ctm(dc, st);
         fz_show_glyph(ctx, get_text(ctx, dc), font->fz,
-                      fz_pre_scale(dvi_get_ctm(dc, st), s, s), u, c, 0, 0,
+                      fz_pre_scale(ctm, s, s), u, c, 0, 0,
                       FZ_BIDI_LTR, FZ_LANG_UNSET);
       }
     }
@@ -195,28 +181,6 @@ void dvi_exec_char(fz_context *ctx, dvi_context *dc, dvi_state *st, uint32_t c, 
     {
       tex_tfm *tfm = font->tfm;
       fixed_t w = fixed_mul(tex_tfm_char_width(tfm, c), scale_factor);
-      if (debug)
-      {
-        float s = dc->scale * scale_factor.value;
-        fixed_t h = tex_tfm_char_height(tfm, c);
-        fixed_t d = tex_tfm_char_depth(tfm, c);
-        if (debug)
-        {
-          h = fixed_mul(h, scale_factor);
-          d = fixed_mul(d, scale_factor);
-          fprintf(stderr, "setchar%u h:=%d+%d=%d\n", c, st->registers.h,
-                  w.value, st->registers.h + w.value);
-          fprintf(stderr, "  char: w:%dr, h:%dr, d:%dr\n", w.value, h.value,
-                  d.value);
-          fprintf(stderr, "  box: (%dr, %dr, %dr, %dr)\n", st->registers.h,
-                  st->registers.v - h.value, st->registers.h + w.value,
-                  st->registers.v + d.value);
-
-          output_debug_rect(
-              ctx, dc, st, st->registers.h, st->registers.v - h.value,
-              st->registers.h + w.value, st->registers.v + d.value);
-        }
-      }
       if (set)
         st->registers.h += w.value;
     }
@@ -358,7 +322,6 @@ void dvi_exec_xdvglyphs(fz_context *ctx, dvi_context *dc, dvi_state *st, fixed_t
                 int char_count, uint16_t *chars,
                 int num_glyphs, fixed_t *dx, fixed_t dy0, fixed_t *dy, uint16_t *glyphs)
 {
-  //fprintf(stderr, "dvi_exec_xdvglyphs: width:%d, chars:%d, glyphs:%d\n", width.value, char_count, num_glyphs);
   dvi_fontdef *def = dvi_current_font(ctx, st);
   if (def->kind != XDV_FONT)
   {
