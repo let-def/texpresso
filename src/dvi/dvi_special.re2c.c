@@ -34,8 +34,6 @@
 #define device_cs fz_device_rgb
 #define color_params fz_default_color_params
 
-// Global debug counter — set >0 to enable diagnostic output
-int g_debug_ctr = 60;
 
 typedef const char *cursor_t;
 
@@ -868,17 +866,6 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
   fz_var(cur);
   fz_var(stack);
 
-  // fprintf(stderr, "pdf code: %.*s\n", (int)(lim - cur), cur);
-  // Diagnostics: log first few PDF code snippets
-  static int code_call_ctr = 30;
-  if (code_call_ctr > 0) {
-    int preview_len = lim - cur;
-    if (preview_len > 50) preview_len = 50;
-    fprintf(stderr, "DBG pdf_code[%d]: '%.*s'%s  dev=%p  gs_depth=%d\n",
-      30-code_call_ctr, preview_len, cur,
-      (lim-cur > 50) ? "..." : "", (void*)dc->dev, st->gs_stack.depth);
-    code_call_ctr--;
-  }
   fz_try(ctx)
   {
     enum PDF_OP op;
@@ -894,10 +881,8 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           fz_matrix mat;
           mat.a = fmat[0]; mat.b = fmat[1]; mat.c = fmat[2];
           mat.d = fmat[3]; mat.e = fmat[4]; mat.f = fmat[5];
-          if (g_debug_ctr > 0) { fprintf(stderr, "DBG cm: mat=[%.2f %.2f %.2f %.2f %.2f %.2f]\n", mat.a, mat.b, mat.c, mat.d, mat.e, mat.f); g_debug_ctr--; }
           fz_matrix ctm = fz_concat(mat, dvi_get_ctm(dc, st));
           dvi_set_ctm(st, ctm);
-          if (g_debug_ctr > 0) { fprintf(stderr, "DBG cm result: gs.ctm=[%.2f %.2f %.2f %.2f %.2f %.2f] gs.h=%d gs.v=%d\n", st->gs.ctm.a, st->gs.ctm.b, st->gs.ctm.c, st->gs.ctm.d, st->gs.ctm.e, st->gs.ctm.f, st->gs.h, st->gs.v); g_debug_ctr--; }
           break;
         }
         case PDF_OP_q:
@@ -1019,7 +1004,6 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
         }
 
         case PDF_OP_b:
-          if (g_debug_ctr > 0) { fprintf(stderr, "DBG b (close+fill+stroke): dev=%p\n", (void*)dc->dev); g_debug_ctr--; }
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
@@ -1052,7 +1036,6 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           break;
 
         case PDF_OP_B:
-          if (g_debug_ctr > 0) { fprintf(stderr, "DBG B (fill+stroke): dev=%p\n", (void*)dc->dev); g_debug_ctr--; }
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
@@ -1084,7 +1067,6 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
 
         case PDF_OP_f:
         case PDF_OP_F:
-          if (g_debug_ctr > 0) { fprintf(stderr, "DBG FILL: dev=%p line=[%.2f %.2f %.2f]\n", (void*)dc->dev, st->gs.colors.line[0], st->gs.colors.line[1], st->gs.colors.line[2]); g_debug_ctr--; }
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
@@ -1107,7 +1089,6 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           break;
 
         case PDF_OP_S:
-          if (g_debug_ctr > 0) { fprintf(stderr, "DBG STROKE: dev=%p fill=[%.2f %.2f %.2f] lw=%.2f\n", (void*)dc->dev, st->gs.colors.fill[0], st->gs.colors.fill[1], st->gs.colors.fill[2], st->gs.line_width); g_debug_ctr--; }
           if (dc->dev)
           {
             fz_matrix ctm = dvi_get_ctm(dc, st);
@@ -1151,7 +1132,6 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
 
         case PDF_OP_n:
         {
-          if (g_debug_ctr > 0) { fprintf(stderr, "DBG n (drop path)\n"); g_debug_ctr--; }
           drop_path(ctx, dc);
           break;
         }
@@ -1649,10 +1629,6 @@ static void render_axial_shade(fz_context *ctx, dvi_context *dc, dvi_state *st,
 static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st,
                                   const char *p, const char *end)
 {
-  fprintf(stderr, "DBG shade: called, len=%d content=%.500s\n", (int)(end-p), p);
-  fprintf(stderr, "DBG shade full[%d]: ", (int)(end-p));
-  for (const char *dp = p; dp < end; dp++) fputc(*dp, stderr);
-  fprintf(stderr, "\n");
   // Scan for /Coords [x0 y0 x1 y1] (axial, 4 vals) or
   // /Coords [x0 y0 r0 x1 y1 r1] (radial, 6 vals)
   float cx0=0, cy0=0, cx1=0, cy1=0, rad_r0=0, rad_r1=0;
@@ -1728,12 +1704,10 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
                 // The previous sub's c1 is either still default or was set by a /C1 entry.
                 nsub++;
               }
-              fprintf(stderr, "DBG shade: found C0=[%.2f %.2f %.2f] (sub %d)\n", vals[0],vals[1],vals[2], nsub-1);
             } else {
               if (nsub > 0) {
                 subs[nsub-1].c1[0]=vals[0]; subs[nsub-1].c1[1]=vals[1]; subs[nsub-1].c1[2]=vals[2];
               }
-              fprintf(stderr, "DBG shade: found C1=[%.2f %.2f %.2f] (sub %d)\n", vals[0],vals[1],vals[2], nsub-1);
             }
           }
         }
@@ -1757,7 +1731,6 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
       }
     }
   }
-  if (nsub == 0) { fprintf(stderr, "DBG shade: no sub-functions found\n"); return false; }
 
   // Normalise bounds from absolute to [0,1] range using the shading domain.
   {
@@ -1807,29 +1780,9 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
   }
 
   if (shade_type == 2) {
-    fprintf(stderr, "DBG shade: axial coords=[%.2f %.2f %.2f %.2f] nsub=%d nbounds=%d\n",
-            cx0, cy0, cx1, cy1, nsub, nbounds);
-    for (int i = 0; i < nsub; i++)
-      fprintf(stderr, "DBG shade:   sub[%d] c0=[%.2f %.2f %.2f] c1=[%.2f %.2f %.2f]\n",
-              i, subs[i].c0[0],subs[i].c0[1],subs[i].c0[2],
-              subs[i].c1[0],subs[i].c1[1],subs[i].c1[2]);
-    for (int i = 0; i < nbounds; i++)
-      fprintf(stderr, "DBG shade:   bound[%d]=%.4f\n", i, bounds[i]);
-    {
-      fz_matrix ctm = dvi_get_ctm(dc, st);
-      fprintf(stderr, "DBG shade: CTM=[%.2f %.2f %.2f %.2f %.2f %.2f]\n",
-              ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f);
-    }
-    fprintf(stderr, "DBG shade: calling render_axial_shade_full now\n");
     render_axial_shade_full(ctx, dc, st, cx0, cy0, cx1, cy1,
                             nsub, subs, nbounds > 0 ? bounds : NULL, get_path(ctx, dc));
-    fprintf(stderr, "DBG shade: render_axial_shade_full returned\n");
   } else if (shade_type == 3) {
-    fprintf(stderr, "DBG shade: radial nsub=%d\n", nsub);
-    for (int i = 0; i < nsub; i++)
-      fprintf(stderr, "DBG shade:   sub[%d] c0=[%.2f %.2f %.2f] c1=[%.2f %.2f %.2f]\n",
-              i, subs[i].c0[0],subs[i].c0[1],subs[i].c0[2],
-              subs[i].c1[0],subs[i].c1[1],subs[i].c1[2]);
     float cx=cx0, cy=cy0, r0=0, r1;
     if (ncoords >= 6) {
       r0 = rad_r0;
@@ -1837,8 +1790,6 @@ static bool try_parse_ps_shading(fz_context *ctx, dvi_context *dc, dvi_state *st
     } else {
       r1 = (float)sqrt((cx1-cx0)*(cx1-cx0)+(cy1-cy0)*(cy1-cy0));
     }
-    fprintf(stderr, "DBG shade: radial cx=%.1f cy=%.1f r0=%.1f r1=%.1f ncoords=%d\n",
-            cx, cy, r0, r1, ncoords);
     if (nsub > 0) {
       render_radial_shade(ctx, dc, st, cx, cy, r0, r1,
                           subs, nsub, bounds, nbounds > 0 ? bounds : NULL);
@@ -1869,12 +1820,6 @@ static void render_axial_shade_full(fz_context *ctx, dvi_context *dc, dvi_state 
   if (!dc->dev) return;
 
   fz_matrix ctm = dvi_get_ctm(dc, st);
-  fprintf(stderr, "DBG render_axial_full: alpha=%.2f steps=500\n", st->gs.fill_alpha);
-  for (int st = 0; st <= 4; st++) {
-    float ts = st * 0.25f;
-    float cs[3]; shade_eval_color(cs, nsub, sf, bounds, ts);
-    fprintf(stderr, "DBG render_axial_full: t=%.2f color=[%.2f %.2f %.2f]\n", ts, cs[0], cs[1], cs[2]);
-  }
   int steps = 500;
 
   float dx = x1 - x0, dy = y1 - y0;
@@ -2077,7 +2022,6 @@ static void ps_parse_defs(const char *p, const char *end)
         // we MUST allow ! specials to clear stale per-element colors
         // (pgffc/pgfsc) and redefine library functions after reset.
         ps_define_func(ns, nl, bs, bl);
-        fprintf(stderr, "DBG ps_def[!]: /%.*s = %.*s%s\n", nl, ns, bl, bs, is_bind ? " [bind]" : "");
       }
     }
   }
@@ -2117,12 +2061,6 @@ static void ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
 static bool
 ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t lim)
 {
-  static int ps_call_cnt = 0;
-  if (ps_call_cnt < 3) {
-    int pl = lim - cur; if (pl > 60) pl = 60;
-    fprintf(stderr, "PS_CODE_V2 [%d]: %.*s dev=%p\n", ps_call_cnt, pl, cur, (void*)dc->dev);
-    ps_call_cnt++;
-  }
   const char *p = cur, *end = lim;
 
   // Track whether a fill/stroke operation was performed that didn't
@@ -2164,7 +2102,6 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         if (p + 3 <= end && memcmp(p, "def", 3) == 0) {
           p += 3;
           ps_define_func(ns, nl, bs, bl);
-          fprintf(stderr, "DBG ps_def: /%.*s = %.*s%s\n", nl, ns, bl, bs, is_bind ? " [bind]" : "");
           // Immediately execute color function bodies so that colors are
           // set even if later ps_lookup_func fails (e.g. due to corruption).
           if (nl == 5 && memcmp(ns, "pgffc", 5) == 0) {
@@ -2173,9 +2110,6 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
           } else if (nl == 5 && memcmp(ns, "pgfsc", 5) == 0) {
             ps_exec_body(ctx, dc, st, bs, bl, PS_COLOR_STROKE);
             ps_clear();
-            fprintf(stderr, "DBG color_exec: /%.*s fill=[%.2f %.2f %.2f] line=[%.2f %.2f %.2f]\n",
-                    nl, ns, st->gs.colors.fill[0], st->gs.colors.fill[1], st->gs.colors.fill[2],
-                    st->gs.colors.line[0], st->gs.colors.line[1], st->gs.colors.line[2]);
           }
           continue;
         }
@@ -2240,8 +2174,6 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
       const char *b = ps_lookup_func("pgffc");
       if (b && *b) ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
       float *fc = st->gs.colors.fill;
-      fprintf(stderr, "DBG pgffill: pgffc=%s FILL=[%.2f %.2f %.2f] alpha=%.2f\n",
-              b&&*b?b:"(empty)", fc[0], fc[1], fc[2], st->gs.fill_alpha);
       if (dc->dev) {
         fz_matrix ctm = dvi_get_ctm(dc, st);
         fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
@@ -2256,8 +2188,6 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
       // When pgfsc is empty, keep current line color (set by inline
       // setgray/setrgbcolor/setcmykcolor commands)
       float *lc = st->gs.colors.line;
-      fprintf(stderr, "DBG pgfstr: pgfsc=%s LINE=[%.2f %.2f %.2f] lw=%.2f alpha=%.2f\n",
-              b&&*b?b:"(empty)", lc[0], lc[1], lc[2], st->gs.line_width, st->gs.stroke_alpha);
       if (dc->dev) {
         fz_matrix ctm = dvi_get_ctm(dc, st);
         fz_stroke_state sst;
@@ -2349,7 +2279,6 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     // Parse the following dictionary content for shading parameters
     // and render natively via try_parse_ps_shading.
     else if (strcmp(tmp, "<<") == 0) {
-      fprintf(stderr, "DBG shade << handler: dev=%p trying parse\n", (void*)dc->dev);
       if (try_parse_ps_shading(ctx, dc, st, p, end)) {
         drop_path(ctx, dc);
         ps_clear();
@@ -2374,10 +2303,6 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         // that would otherwise be lost when gs.h/gs.v are zeroed.
         fz_matrix ctm_before = dvi_get_ctm(dc, st);
         st->gs.ctm = fz_concat(mat, ctm_before);
-        fprintf(stderr, "DBG concat: mat=[%.2f %.2f %.2f %.2f %.2f %.2f] before=[%.2f %.2f %.2f %.2f %.2f %.2f] after=[%.2f %.2f %.2f %.2f %.2f %.2f]\n",
-                a,b,c,d,e,f,
-                ctm_before.a,ctm_before.b,ctm_before.c,ctm_before.d,ctm_before.e,ctm_before.f,
-                st->gs.ctm.a,st->gs.ctm.b,st->gs.ctm.c,st->gs.ctm.d,st->gs.ctm.e,st->gs.ctm.f);
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
         ps_clear();
@@ -2423,14 +2348,6 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
         float sy=ps_pop(), sx=ps_pop();
         fz_matrix before = dvi_get_ctm(dc, st);
         st->gs.ctm = fz_pre_scale(before, sx, sy);
-        static int scale_dbg = 10;
-        if (scale_dbg > 0) {
-          fprintf(stderr, "DBG PS scale: sx=%.4f sy=%.4f before=[%.2f %.2f %.2f %.2f %.2f %.2f] after=[%.2f %.2f %.2f %.2f %.2f %.2f] gs.h=%d->%d\n",
-                  sx, sy, before.a,before.b,before.c,before.d,before.e,before.f,
-                  st->gs.ctm.a,st->gs.ctm.b,st->gs.ctm.c,st->gs.ctm.d,st->gs.ctm.e,st->gs.ctm.f,
-                  st->gs.h, st->registers.h);
-          scale_dbg--;
-        }
         st->gs.h = st->registers.h;
         st->gs.v = st->registers.v;
       }
@@ -2466,8 +2383,6 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
              strcmp(tmp, "{clip}") == 0 || strcmp(tmp, "{eoclip}") == 0) {
       int eofill = (strcmp(tmp, "W*") == 0 || strcmp(tmp, "eoclip") == 0 ||
                     strcmp(tmp, "{eoclip}") == 0) ? 1 : 0;
-      fprintf(stderr, "DBG %s: dev=%p path=%p clip_depth=%d\n",
-              tmp, (void*)dc->dev, (void*)dc->path, st->gs.clip_depth);
       if (dc->dev && dc->path) {
         fz_matrix ctm = dvi_get_ctm(dc, st);
         fz_clip_path(ctx, dc->dev, dc->path, eofill, ctm,
@@ -3145,15 +3060,6 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
 {
   cursor_t mar, i, j;
 
-  // Guarded trace: only log first 100 specials to avoid flooding stderr
-  { static int trace_ctr = 100;
-    if (trace_ctr > 0) {
-      int plen = lim - cur; if (plen > 500) plen = 500;
-      fprintf(stderr, "TRACE sp(%.*s) gs.h=%d gs.v=%d\n", plen, cur, st->gs.h, st->gs.v);
-      trace_ctr--;
-    }
-  }
-
   for (;;)
   {
     /*!re2c
@@ -3212,7 +3118,6 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
     {
       dc->page_width  = pdim(i, lim);
       dc->page_height = pdim(j, lim);
-      fprintf(stderr, "DBG papersize: w=%.2f h=%.2f\n", dc->page_width, dc->page_height);
       return 1;
     }
 
