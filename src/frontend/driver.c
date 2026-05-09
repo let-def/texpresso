@@ -130,7 +130,7 @@ static void usage(void)
   fprintf(stderr,
           " -tmpdir   Set temporary directory for QOI output files\n");
   fprintf(stderr,
-          " -resolution N  Default rendering resolution multiplier (default 2.5)\n");
+          " -resolution N  Default rendering resolution multiplier (default 3)\n");
 }
 
 int main(int argc, const char **argv)
@@ -162,7 +162,7 @@ int main(int argc, const char **argv)
   bool initialize_only = 0;
   bool stream_mode = 0;
   bool webview_mode = 0;
-  float default_resolution = 2.5f;
+  float default_resolution = 3.0f;
   char tmpdir[4096] = {0};
 
   int inclusion_path_size = 1;
@@ -232,7 +232,7 @@ int main(int argc, const char **argv)
           exit(1);
         }
         default_resolution = atof(argv[i]);
-        if (default_resolution <= 0) default_resolution = 2.5f;
+        if (default_resolution <= 0) default_resolution = 3.0f;
       }
       else
       {
