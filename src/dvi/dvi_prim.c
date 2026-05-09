@@ -37,7 +37,7 @@ static void output_fill_rect(fz_context *ctx, dvi_context *dc, dvi_state *st, in
     fz_path *path = fz_new_path(ctx);
     fz_rectto(ctx, path, x0 * s, - y0 * s, x1 * s, - y1 * s);
     fz_fill_path(ctx, dc->dev, path, 0, st->gs.ctm, fz_device_rgb(ctx),
-                 st->gs.colors.fill, 1.0, color_params);
+                 st->gs.colors.fill, st->gs.fill_alpha, color_params);
     fz_drop_path(ctx, path);
   }
 }
@@ -60,8 +60,28 @@ void dvi_context_flush_text(fz_context *ctx, dvi_context *dc, dvi_state *st)
   {
     if (!dc->dev)
       abort();
-    fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
-        st->gs.colors.fill, 1.0, color_params);
+    // Respect PDF text render mode (Tr): 0=fill, 1=stroke, 2=fill+stroke, 3=invisible
+    switch (st->gs.text.render)
+    {
+    case 0:
+      fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
+          st->gs.colors.fill, st->gs.fill_alpha, color_params);
+      break;
+    case 1:
+      fz_stroke_text(ctx, dc->dev, dc->text, &fz_default_stroke_state, fz_identity,
+          fz_device_rgb(ctx), st->gs.colors.line, st->gs.stroke_alpha, color_params);
+      break;
+    case 2:
+      fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
+          st->gs.colors.fill, st->gs.fill_alpha, color_params);
+      break;
+    case 3:
+      break;
+    default:
+      fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
+          st->gs.colors.fill, st->gs.fill_alpha, color_params);
+      break;
+    }
     fz_drop_text(ctx, dc->text);
     dc->text = NULL;
   }

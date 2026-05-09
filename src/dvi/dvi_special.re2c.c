@@ -34,10 +34,10 @@
 #define device_cs fz_device_rgb
 #define color_params fz_default_color_params
 
-typedef const char *cursor_t;
 
-// Stub: called at begin_frame to prevent cross-page PS state contamination
+
 void ps_state_reset(void) {}
+typedef const char *cursor_t;
 
 /*!re2c
 
@@ -72,9 +72,10 @@ dim     = float unit;
 static bool
 unhandled(const char *kind, cursor_t cur, cursor_t lim, int ignored)
 {
-  if (0 && !ignored)
-    fprintf(stderr, "unhandled %s: \"%.*s\"\n", kind, (int)(lim - cur), cur);
-  return 0;
+  (void)kind; (void)cur; (void)lim; (void)ignored;
+  // Don't print warnings for unrecognized specials to keep output clean.
+  // Return 1 to prevent aborting page rendering.
+  return 1;
 }
 
 static int pnat(cursor_t ptr, cursor_t lim)
@@ -503,7 +504,7 @@ embed_image(fz_context *ctx, dvi_context *dc, dvi_state *st, struct xform_spec *
     else if (h != h)
       h = w / ar;
     ctm = fz_pre_scale(fz_pre_translate(ctm, 0, h), w, -h);
-    fz_fill_image(ctx, dc->dev, img, ctm, 1.0, color_params);
+    fz_fill_image(ctx, dc->dev, img, ctm, st->gs.fill_alpha, color_params);
   }
   fz_always(ctx)
   {
@@ -734,6 +735,132 @@ static void get_stroke_state(fz_context *ctx, dvi_state *st, fz_stroke_state *st
   stst->dash_phase = st->gs.dash_phase;
 }
 
+// Resolve a font by name for TikZ text rendering.
+// Uses a simple cache in dvi_context to avoid reloading fonts.
+static fz_font *resolve_special_font(fz_context *ctx, dvi_context *dc, dvi_state *st, const char *name)
+{
+  if (!name || !*name)
+    return NULL;
+
+  // Skip leading '/'
+  const char *fname = (*name == '/') ? name + 1 : name;
+
+  // Check cache
+  for (int i = 0; i < dc->font_cache_count; i++)
+  {
+    if (strcmp(dc->font_cache[i].name, fname) == 0)
+      return dc->font_cache[i].font;
+  }
+
+  // Try MuPDF built-in font
+  fz_font *font = NULL;
+  fz_try(ctx)
+  {
+    font = fz_new_font_from_file(ctx, NULL, fname, 0, 0);
+  }
+  fz_catch(ctx)
+  {
+    font = NULL;
+  }
+
+  // Fallback: try current DVI font
+  if (!font)
+  {
+    dvi_fontdef *def = dvi_fonttable_get(ctx, st->fonts, st->f);
+    if (def && def->kind == TEX_FONT && def->tex_font.font && def->tex_font.font->fz)
+      font = def->tex_font.font->fz;
+  }
+
+  // Cache it
+  if (font && dc->font_cache_count < DVI_FONT_CACHE_SIZE)
+  {
+    size_t len = strlen(fname);
+    if (len > 63) len = 63;
+    memcpy(dc->font_cache[dc->font_cache_count].name, fname, len);
+    dc->font_cache[dc->font_cache_count].name[len] = 0;
+    dc->font_cache[dc->font_cache_count].font = font;
+    dc->font_cache_count++;
+  }
+
+  return font;
+}
+
+// Decode a single UTF-8 code point from str at offset *pi.
+// Returns the Unicode code point and advances *pi past the consumed bytes.
+// Returns 0 and advances by 1 byte on invalid sequence.
+static int decode_utf8(const char *str, size_t len, size_t *pi)
+{
+  size_t i = *pi;
+  unsigned char c = (unsigned char)str[i];
+  int cp;
+  int extra;
+
+  if (c < 0x80) {
+    *pi = i + 1;
+    return c;
+  }
+  if (c < 0xC2) goto invalid;
+  if (c < 0xE0)      { cp = c & 0x1F; extra = 1; }
+  else if (c < 0xF0) { cp = c & 0x0F; extra = 2; }
+  else if (c < 0xF8) { cp = c & 0x07; extra = 3; }
+  else goto invalid;
+
+  *pi = i + 1 + extra;
+  if (i + extra >= len) return 0;
+  for (int j = 0; j < extra; j++) {
+    unsigned char nb = (unsigned char)str[i + 1 + j];
+    if ((nb & 0xC0) != 0x80) return 0;
+    cp = (cp << 6) | (nb & 0x3F);
+  }
+  return cp;
+
+invalid:
+  *pi = i + 1;
+  return 0;
+}
+
+// Show a text string for Tj operator, advancing text matrix.
+static void show_special_text(fz_context *ctx, dvi_context *dc, dvi_state *st,
+                               const char *str, size_t len, fz_font *font)
+{
+  if (!font || !str || !len || !dc->dev)
+    return;
+
+  if (!dc->text)
+    dc->text = fz_new_text(ctx);
+  fz_text *text = dc->text;
+  fz_matrix ctm = dvi_get_ctm(dc, st);
+  float fs = st->gs.text.font_size;
+  float hs = st->gs.text.scale;
+
+  size_t i = 0;
+  while (i < len)
+  {
+    int cp = decode_utf8(str, len, &i);
+    if (cp == 0)
+      continue;
+    int glyph = fz_encode_character(ctx, font, cp);
+    if (glyph == 0)
+    {
+      // For missing glyphs, advance Tm by a default space to avoid overlap
+      float tx = fs * 0.25f * hs;
+      st->gs.text.Tm = fz_pre_translate(st->gs.text.Tm, tx, 0);
+      continue;
+    }
+    float adv = fz_advance_glyph(ctx, font, glyph, 0);
+    // TRM = translate(0,rise) × CTM × Tm × Tfs
+    fz_matrix trm = fz_pre_scale(fz_identity, fs * hs, fs);  // Tfs
+    trm = fz_concat(trm, st->gs.text.Tm);                     // Tfs × Tm
+    trm = fz_concat(trm, ctm);                                // (Tfs × Tm) × CTM
+    trm = fz_pre_translate(trm, 0, st->gs.text.rise);        // apply text rise
+    fz_show_glyph(ctx, text, font, trm, glyph, cp, 0, 0, FZ_BIDI_LTR, FZ_LANG_UNSET);
+    // Advance text matrix; word_space only applies to space chars (U+0020)
+    float tx = (adv * fs + st->gs.text.char_space) * hs;
+    if (cp == 32) tx += st->gs.text.word_space;
+    st->gs.text.Tm = fz_pre_translate(st->gs.text.Tm, tx, 0);
+  }
+}
+
 static bool
 pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t lim)
 {
@@ -741,7 +868,6 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
   fz_var(cur);
   fz_var(stack);
 
-  // fprintf(stderr, "pdf code: %.*s\n", (int)(lim - cur), cur);
   fz_try(ctx)
   {
     enum PDF_OP op;
@@ -888,9 +1014,9 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_path *path = get_path(ctx, dc);
             fz_closepath(ctx, path);
             fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -904,9 +1030,9 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_path *path = get_path(ctx, dc);
             fz_closepath(ctx, path);
             fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -919,9 +1045,9 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -934,9 +1060,9 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.fill, 1.0, color_params);
+                           st->gs.colors.fill, st->gs.fill_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -948,7 +1074,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_matrix ctm = dvi_get_ctm(dc, st);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -959,7 +1085,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_matrix ctm = dvi_get_ctm(dc, st);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
-                         st->gs.colors.fill, 1.0, color_params);
+                         st->gs.colors.fill, st->gs.fill_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -972,7 +1098,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             get_stroke_state(ctx, st, &stst);
             fz_path *path = get_path(ctx, dc);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -986,7 +1112,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
             fz_path *path = get_path(ctx, dc);
             fz_closepath(ctx, path);
             fz_stroke_path(ctx, dc->dev, path, &stst, ctm, device_cs(ctx),
-                           st->gs.colors.line, 1.0, color_params);
+                           st->gs.colors.line, st->gs.stroke_alpha, color_params);
           }
           drop_path(ctx, dc);
           break;
@@ -1037,52 +1163,364 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           val v[2];
           vstack_get_arguments(ctx, stack, v, 2);
           st->gs.dash_len = val_array_length(ctx, stack, v[0]);
-          if (st->gs.dash_len > 4) st->gs.dash_len = 4;
+          if (st->gs.dash_len > 32) st->gs.dash_len = 32;
           for (int i = 0; i < st->gs.dash_len; ++i)
             st->gs.dash[i] = val_number(ctx, val_array_get(ctx, stack, v[0], i));
           st->gs.dash_phase = val_number(ctx, v[1]);
           break;
         }
 
-        case PDF_OP_ri:
-        case PDF_OP_i:
-        case PDF_OP_gs:
         case PDF_OP_v:
+        {
+          fz_path *path = get_path(ctx, dc);
+          float c[4];
+          fz_point pt = fz_currentpoint(ctx, path);
+          vstack_get_floats(ctx, stack, c, 4);
+          fz_curveto(ctx, path, pt.x, pt.y, c[0], c[1], c[2], c[3]);
+          break;
+        }
         case PDF_OP_y:
+        {
+          fz_path *path = get_path(ctx, dc);
+          float c[4];
+          vstack_get_floats(ctx, stack, c, 4);
+          fz_curveto(ctx, path, c[0], c[1], c[2], c[3], c[2], c[3]);
+          break;
+        }
+        // -- Text operators (Phase 1) --
         case PDF_OP_BT:
+        {
+          // PDF defaults for text state (Table 5.3 in PDF 1.7 spec)
+          st->gs.text.Tm = fz_identity;
+          st->gs.text.Tlm = fz_identity;
+          st->gs.text.char_space = 0;   // Tc
+          st->gs.text.word_space = 0;   // Tw
+          st->gs.text.scale = 1.0f;     // Tz (100% = no scaling)
+          st->gs.text.leading = 0;      // TL
+          st->gs.text.render = 0;       // Tr (fill)
+          st->gs.text.rise = 0;         // Ts
+          st->gs.text.in_text = 1;
+          break;
+        }
         case PDF_OP_ET:
+        {
+          st->gs.text.in_text = 0;
+          dvi_context_flush_text(ctx, dc, st);
+          break;
+        }
         case PDF_OP_Tc:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1);
+          st->gs.text.char_space = c[0];
+          break;
+        }
         case PDF_OP_Tw:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1);
+          st->gs.text.word_space = c[0];
+          break;
+        }
         case PDF_OP_Tz:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1);
+          st->gs.text.scale = c[0] / 100.0f;
+          break;
+        }
         case PDF_OP_TL:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1);
+          st->gs.text.leading = c[0];
+          break;
+        }
         case PDF_OP_Tf:
+        {
+          val v[2];
+          vstack_get_arguments(ctx, stack, v, 2);
+          const char *name = val_as_name(ctx, stack, v[0]);
+          float size = val_number(ctx, v[1]);
+          st->gs.text.font_size = size;
+          if (name)
+          {
+            size_t len = strlen(name);
+            if (len > 63) len = 63;
+            memcpy(st->gs.text.font_name, name, len);
+            st->gs.text.font_name[len] = 0;
+          }
+          break;
+        }
         case PDF_OP_Tr:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1);
+          st->gs.text.render = (int)c[0];
+          break;
+        }
         case PDF_OP_Ts:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1);
+          st->gs.text.rise = c[0];
+          break;
+        }
         case PDF_OP_Td:
+        {
+          float c[2];
+          vstack_get_floats(ctx, stack, c, 2);
+          fz_matrix delta = fz_translate(c[0], c[1]);
+          st->gs.text.Tlm = fz_concat(delta, st->gs.text.Tlm);
+          st->gs.text.Tm = st->gs.text.Tlm;
+          break;
+        }
         case PDF_OP_TD:
+        {
+          float c[2];
+          vstack_get_floats(ctx, stack, c, 2);
+          st->gs.text.leading = -c[1];
+          fz_matrix delta = fz_translate(c[0], c[1]);
+          st->gs.text.Tlm = fz_concat(delta, st->gs.text.Tlm);
+          st->gs.text.Tm = st->gs.text.Tlm;
+          break;
+        }
         case PDF_OP_Tm:
+        {
+          float fmat[6];
+          vstack_get_floats(ctx, stack, fmat, 6);
+          st->gs.text.Tlm.a = fmat[0]; st->gs.text.Tlm.b = fmat[1];
+          st->gs.text.Tlm.c = fmat[2]; st->gs.text.Tlm.d = fmat[3];
+          st->gs.text.Tlm.e = fmat[4]; st->gs.text.Tlm.f = fmat[5];
+          st->gs.text.Tm = st->gs.text.Tlm;
+          break;
+        }
         case PDF_OP_T_star:
+        {
+          fz_matrix delta = fz_translate(0, -st->gs.text.leading);
+          st->gs.text.Tlm = fz_concat(delta, st->gs.text.Tlm);
+          st->gs.text.Tm = st->gs.text.Tlm;
+          break;
+        }
         case PDF_OP_Tj:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1);
+          const char *str = val_as_string(ctx, stack, v[0]);
+          size_t slen = val_string_length(ctx, stack, v[0]);
+          fz_font *font = resolve_special_font(ctx, dc, st, st->gs.text.font_name);
+          show_special_text(ctx, dc, st, str, slen, font);
+          break;
+        }
         case PDF_OP_TJ:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1);
+          int alen = val_array_length(ctx, stack, v[0]);
+          fz_font *font = resolve_special_font(ctx, dc, st, st->gs.text.font_name);
+          for (int i = 0; i < alen; i++)
+          {
+            val elem = val_array_get(ctx, stack, v[0], i);
+            if (val_is_string(elem))
+            {
+              const char *str = val_string(ctx, stack, elem);
+              size_t slen = val_string_length(ctx, stack, elem);
+              show_special_text(ctx, dc, st, str, slen, font);
+            }
+            else if (val_is_number(elem))
+            {
+              // Kerning adjustment: move text matrix by -kern/1000 * font_size
+              float kern = val_number(ctx, elem);
+              float tx = -kern / 1000.0f * st->gs.text.font_size * st->gs.text.scale;
+              st->gs.text.Tm = fz_pre_translate(st->gs.text.Tm, tx, 0);
+            }
+          }
+          break;
+        }
         case PDF_OP_squote:
+        {
+          // ' = T* + Tj
+          fz_matrix delta = fz_translate(0, -st->gs.text.leading);
+          st->gs.text.Tlm = fz_concat(delta, st->gs.text.Tlm);
+          st->gs.text.Tm = st->gs.text.Tlm;
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1);
+          const char *str = val_as_string(ctx, stack, v[0]);
+          size_t slen = val_string_length(ctx, stack, v[0]);
+          fz_font *font = resolve_special_font(ctx, dc, st, st->gs.text.font_name);
+          show_special_text(ctx, dc, st, str, slen, font);
+          break;
+        }
         case PDF_OP_dquote:
-        case PDF_OP_d0:
-        case PDF_OP_d1:
-        case PDF_OP_CS:
-        case PDF_OP_cs:
-        case PDF_OP_SC:
-        case PDF_OP_sc:
-        case PDF_OP_SCN:
-        case PDF_OP_scn:
-        case PDF_OP_sh:
-        case PDF_OP_Do:
+        {
+          // '' = set Tw/Tc + T* + Tj
+          // Get all 3 operands at once: aw, ac, string
+          val v[3];
+          vstack_get_arguments(ctx, stack, v, 3);
+          st->gs.text.word_space = val_number(ctx, v[0]);
+          st->gs.text.char_space = val_number(ctx, v[1]);
+          fz_matrix delta = fz_translate(0, -st->gs.text.leading);
+          st->gs.text.Tlm = fz_concat(delta, st->gs.text.Tlm);
+          st->gs.text.Tm = st->gs.text.Tlm;
+          const char *str = val_as_string(ctx, stack, v[2]);
+          size_t slen = val_string_length(ctx, stack, v[2]);
+          fz_font *font = resolve_special_font(ctx, dc, st, st->gs.text.font_name);
+          show_special_text(ctx, dc, st, str, slen, font);
+          break;
+        }
+
+        // No-ops: operators without visual effect.
+        // IMPORTANT: must consume operands from the stack to prevent corruption.
         case PDF_OP_MP:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // tag name
+          break;
+        }
         case PDF_OP_DP:
+        {
+          val v[2];
+          vstack_get_arguments(ctx, stack, v, 2); // tag name + properties
+          break;
+        }
         case PDF_OP_BMC:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // tag name
+          break;
+        }
         case PDF_OP_BDC:
+        {
+          // BDC has 1 or 2 operands (tag + optional property dict)
+          // Try popping 2; if the second isn't a dict, it's fine
+          val v[2];
+          vstack_get_arguments(ctx, stack, v, 2); // tag name + properties
+          break;
+        }
         case PDF_OP_EMC:
+          // EMC: 0 operands
+          break;
+
         case PDF_OP_BX:
         case PDF_OP_EX:
+          // Compatibility operators: 0 operands
+          break;
+
+        case PDF_OP_ri:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // rendering intent name
+          break;
+        }
+        case PDF_OP_i:
+        {
+          float c[1];
+          vstack_get_floats(ctx, stack, c, 1); // flatness value
+          break;
+        }
+
+        case PDF_OP_d0:
+        {
+          float c[2];
+          vstack_get_floats(ctx, stack, c, 2); // wx wy
+          break;
+        }
+        case PDF_OP_d1:
+        {
+          float c[6];
+          vstack_get_floats(ctx, stack, c, 6); // wx wy llx lly urx ury
+          break;
+        }
+
+        // Color space operators: TikZ primarily uses direct color operators
+        // (rg/RG/g/G/k/K) which are already supported.
+        case PDF_OP_CS:
+        case PDF_OP_cs:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // color space name
+          break;
+        }
+        case PDF_OP_SC:
+        {
+          float c[3];
+          vstack_get_floats(ctx, stack, c, 3);
+          color_set_rgb(st->gs.colors.line, c[0], c[1], c[2]);
+          break;
+        }
+        case PDF_OP_sc:
+        {
+          float c[3];
+          vstack_get_floats(ctx, stack, c, 3);
+          color_set_rgb(st->gs.colors.fill, c[0], c[1], c[2]);
+          break;
+        }
+        case PDF_OP_SCN:
+        {
+          // SCN operand count depends on current color space:
+          // 1 (Gray), 3 (RGB), 4 (CMYK), N+1 (Pattern name + components)
+          val array = vstack_get_values(ctx, stack);
+          int n = val_array_length(ctx, stack, array);
+          if (n >= 1 && val_is_number(val_array_get(ctx, stack, array, 0))) {
+            if (n == 1) {
+              color_set_gray(st->gs.colors.line, val_number(ctx, val_array_get(ctx, stack, array, 0)));
+            } else if (n == 3) {
+              color_set_rgb(st->gs.colors.line,
+                val_number(ctx, val_array_get(ctx, stack, array, 0)),
+                val_number(ctx, val_array_get(ctx, stack, array, 1)),
+                val_number(ctx, val_array_get(ctx, stack, array, 2)));
+            } else if (n == 4) {
+              color_set_cmyk(st->gs.colors.line,
+                val_number(ctx, val_array_get(ctx, stack, array, 0)),
+                val_number(ctx, val_array_get(ctx, stack, array, 1)),
+                val_number(ctx, val_array_get(ctx, stack, array, 2)),
+                val_number(ctx, val_array_get(ctx, stack, array, 3)));
+            }
+          }
+          break;
+        }
+        case PDF_OP_scn:
+        {
+          val array = vstack_get_values(ctx, stack);
+          int n = val_array_length(ctx, stack, array);
+          if (n >= 1 && val_is_number(val_array_get(ctx, stack, array, 0))) {
+            if (n == 1) {
+              color_set_gray(st->gs.colors.fill, val_number(ctx, val_array_get(ctx, stack, array, 0)));
+            } else if (n == 3) {
+              color_set_rgb(st->gs.colors.fill,
+                val_number(ctx, val_array_get(ctx, stack, array, 0)),
+                val_number(ctx, val_array_get(ctx, stack, array, 1)),
+                val_number(ctx, val_array_get(ctx, stack, array, 2)));
+            } else if (n == 4) {
+              color_set_cmyk(st->gs.colors.fill,
+                val_number(ctx, val_array_get(ctx, stack, array, 0)),
+                val_number(ctx, val_array_get(ctx, stack, array, 1)),
+                val_number(ctx, val_array_get(ctx, stack, array, 2)),
+                val_number(ctx, val_array_get(ctx, stack, array, 3)));
+            }
+          }
+          break;
+        }
+
+        // Still pending implementation: consume operands to prevent stack leak
+        case PDF_OP_gs:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // ExtGState name
+          break;
+        }
+        case PDF_OP_sh:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // shading name
+          break;
+        }
+        case PDF_OP_Do:
+        {
+          val v[1];
+          vstack_get_arguments(ctx, stack, v, 1); // XObject name
+          break;
+        }
         default:
           fprintf(stderr, "pdf unhandled op %s in:\n%.*s\n", pdf_op_name(op),
                   (int)(cur - cur0), cur0);
@@ -1099,7 +1537,10 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
   }
   fz_catch(ctx)
   {
-    return 0;
+    // Don't abort page rendering on unknown PDF operators
+    fprintf(stderr, "unhandled pdf content operator near: \"%.*s\"\n",
+            (int)(lim - cur), cur);
+    return 1;
   }
   return 1;
 }
@@ -1137,7 +1578,6 @@ static cursor_t parse_pdf_string(char *buf, char *end, cursor_t cur, cursor_t li
   *buf = 0;
   return cur;
 }
-
 static bool
 dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t lim)
 {
