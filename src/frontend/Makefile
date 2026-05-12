@@ -1,4 +1,6 @@
-OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o renderer.o engine_tex.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o
+OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o engine_tex.o \
+  engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o \
+  editor.o fd_poll.o pagecollection.o prefixsum.o pagebuffer.o viewer.o
 
 BUILD=../../build
 DIR=$(BUILD)/frontend
@@ -9,11 +11,11 @@ TARGETS=texpresso texpresso-dev texpresso-debug-proxy texpresso.so
 all: $(TARGETS)
 
 texpresso: $(BUILD)/texpresso
-$(BUILD)/texpresso: $(DIR)/driver.o $(DIR)/main.o $(DIR)/logo.o $(DIR_OBJECTS) $(DIR)/libmydvi.a $(BUILD)/common/libcommon.a
+$(BUILD)/texpresso: $(DIR)/driver.o $(DIR)/pagecollection.o $(DIR)/prefixsum.o $(DIR)/main.o $(DIR)/logo.o $(DIR_OBJECTS) $(DIR)/libmydvi.a $(BUILD)/common/libcommon.a
 	$(LDCC) -o $@ $^ $(LIBS)
 
 texpresso-dev: $(BUILD)/texpresso-dev
-$(BUILD)/texpresso-dev: $(DIR)/driver.o $(DIR)/loader.o $(DIR)/logo.o | $(BUILD)/texpresso-dev.so
+$(BUILD)/texpresso-dev: $(DIR)/driver.o $(DIR)/pagecollection.o $(DIR)/prefixsum.o $(DIR)/loader.o $(DIR)/logo.o | $(BUILD)/texpresso-dev.so
 	$(LDCC) -o $@ $^ $(LIBS)
 
 texpresso-dev.so: $(BUILD)/texpresso-dev.so

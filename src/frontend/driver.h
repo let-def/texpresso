@@ -28,25 +28,29 @@
 #include <stdbool.h>
 #include <SDL2/SDL.h>
 #include <mupdf/fitz/context.h>
-#include "renderer.h"
+#include "pagecollection.h"
 
-enum custom_events {
-  SCAN_EVENT,
-  RENDER_EVENT,
-  RELOAD_EVENT,
-  STDIN_EVENT,
+enum custom_events
+{
+  CUSTOM_EVENT_UI,
+  CUSTOM_EVENT_FD,
+  CUSTOM_EVENT_COUNT
+};
 
-  EVENT_COUNT,
+enum ui_event
+{
+  UI_SCAN_EVENT,
+  UI_RENDER_EVENT,
+  UI_STEP_EVENT,
+
+  UI_EVENT_COUNT,
 };
 
 struct initial_state
 {
   int initialized;
   int page;
-  int need_synctex;
   int zoom;
-  txp_renderer_config config;
-  fz_display_list *display_list;
 };
 
 enum editor_protocol
@@ -58,10 +62,10 @@ enum editor_protocol
 struct persistent_state {
   struct initial_state initial;
   enum editor_protocol protocol;
-  Uint32 custom_event;
+  Uint32 custom_events;
 
-  void (*schedule_event)(enum custom_events ev);
-  bool (*should_reload_binary)(void);
+  void (*schedule_event)(enum ui_event ev);
+  bool (*should_hotload_binary)(void);
 
   SDL_Window *window;
   SDL_Renderer *renderer;
@@ -69,6 +73,7 @@ struct persistent_state {
 
   const char *exe_path, *doc_path, *doc_name, *inclusion_path;
 
+  PageCollection pcoll;
   bool line_output, use_tectonic, use_texlive, initialize_only, stream_mode;
 };
 

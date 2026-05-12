@@ -199,14 +199,14 @@ typedef struct {
   void *env;
   fz_stream *(*open_file)(fz_context *ctx, void *env, dvi_reskind kind, const char *name);
   void (*free_env)(fz_context *ctx, void *env);
-} dvi_reshooks;
+} dvi_resloader;
 
-dvi_reshooks dvi_tectonic_hooks(fz_context *ctx, const char *document_directory);
-dvi_reshooks dvi_texlive_hooks(fz_context *ctx, const char *document_directory);
+dvi_resloader dvi_tectonic_loader(fz_context *ctx, const char *document_directory);
+dvi_resloader dvi_texlive_loader(fz_context *ctx, const char *document_directory);
 
-void dvi_free_hooks(fz_context *ctx, const dvi_reshooks *hooks);
+void dvi_free_loader(fz_context *ctx, const dvi_resloader *loader);
 
-dvi_resmanager *dvi_resmanager_new(fz_context *ctx, dvi_reshooks hooks);
+dvi_resmanager *dvi_resmanager_new(fz_context *ctx, dvi_resloader loader);
 void dvi_resmanager_free(fz_context *ctx, dvi_resmanager *rm);
 dvi_font *dvi_resmanager_get_tex_font(fz_context *ctx, dvi_resmanager *rm, const char *name, int namelen);
 fz_font *dvi_resmanager_get_xdv_font(fz_context *ctx, dvi_resmanager *rm, const char *name, int namelen, int index);
@@ -340,7 +340,7 @@ typedef struct
 
 #define DC_ALLOC(ctx, dc, type, count) ((type*)dvi_scratch_alloc(ctx, &(dc)->scratch, sizeof(type) * (count)))
 
-dvi_context *dvi_context_new(fz_context *ctx, dvi_reshooks hooks);
+dvi_context *dvi_context_new(fz_context *ctx, dvi_resloader loader);
 void dvi_context_free(fz_context *ctx, dvi_context *dc);
 dvi_state *dvi_context_state(dvi_context *dc);
 bool dvi_state_enter_vf(dvi_context *dc, dvi_state *vfst, const dvi_state *st, dvi_fonttable *fonts, int font, fixed_t scale);

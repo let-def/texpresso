@@ -24,12 +24,12 @@
 
 #include "mydvi.h"
 
-dvi_context *dvi_context_new(fz_context *ctx, dvi_reshooks hooks)
+dvi_context *dvi_context_new(fz_context *ctx, dvi_resloader loader)
 {
   dvi_context *dc = fz_malloc_struct(ctx, dvi_context);
 
   dc->dev = NULL;
-  dc->resmanager = dvi_resmanager_new(ctx, hooks);
+  dc->resmanager = dvi_resmanager_new(ctx, loader);
   dvi_scratch_init(&dc->scratch);
 
   dvi_state *st = &dc->root;

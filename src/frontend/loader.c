@@ -30,7 +30,7 @@
 char so_path[4096];
 int so_ino, so_dev;
 
-static bool should_reload_binary(void)
+static bool should_hotload_binary(void)
 {
   struct stat st;
   if (stat(so_path, &st) != 0)
@@ -44,7 +44,7 @@ static bool should_reload_binary(void)
 
 bool texpresso_main(struct persistent_state *ps)
 {
-  ps->should_reload_binary = &should_reload_binary;
+  ps->should_hotload_binary = &should_hotload_binary;
 
   strcpy(so_path, ps->exe_path);
   strcat(so_path, ".so");

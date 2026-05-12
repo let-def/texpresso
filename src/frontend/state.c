@@ -40,17 +40,17 @@ enum log_action {
 
 struct log_s
 {
-  mark_t snap;
+  LogMark snap;
   fz_buffer *data;
 };
 
-log_t *log_new(fz_context *ctx)
+Log *log_new(fz_context *ctx)
 {
-  fz_ptr(log_t, log);
+  fz_ptr(Log, log);
   fz_ptr(fz_buffer, data);
   fz_try(ctx)
   {
-    log = fz_malloc_struct(ctx, log_t);
+    log = fz_malloc_struct(ctx, Log);
     data = fz_new_buffer(ctx, 512);
     log->data = data;
     log->snap = 1;
@@ -67,7 +67,7 @@ log_t *log_new(fz_context *ctx)
   return log;
 }
 
-void log_free(fz_context *ctx, log_t *log)
+void log_free(fz_context *ctx, Log *log)
 {
   fz_drop_buffer(ctx, log->data);
   fz_free(ctx, log);
@@ -92,7 +92,7 @@ static void push_action(fz_context *ctx, fz_buffer *buf, enum log_action action)
   PUSH_VALUE(ctx, buf, b);
 }
 
-void log_fileentry(fz_context *ctx, log_t *log, fileentry_t *entry)
+void log_fileentry(fz_context *ctx, Log *log, FileEntry *entry)
 {
   if (entry->saved.snap != log->snap)
   {
@@ -109,7 +109,7 @@ void log_fileentry(fz_context *ctx, log_t *log, fileentry_t *entry)
   }
 }
 
-void log_filecell(fz_context *ctx, log_t *log, filecell_t *cell)
+void log_filecell(fz_context *ctx, Log *log, FileCell *cell)
 {
   if (cell->snap != log->snap)
   {
@@ -126,7 +126,7 @@ struct overwrite_data {
   int start, len;
 };
 
-void log_overwrite(fz_context *ctx, log_t *log, fz_buffer *buf, int start, int len)
+void log_overwrite(fz_context *ctx, Log *log, fz_buffer *buf, int start, int len)
 {
   if (LOG) fprintf(stderr, "push LOG_OVERWRITE\n");
   fz_keep_buffer(ctx, buf);
@@ -147,13 +147,13 @@ static enum log_action pop_action(fz_buffer *buf)
   return b;
 }
 
-static void log_pop(fz_context *ctx, log_t *log)
+static void log_pop(fz_context *ctx, Log *log)
 {
   switch (pop_action(log->data))
   {
     case LOG_ENTRY:
     {
-      fileentry_t *entry;
+      FileEntry *entry;
       POP_VALUE(log->data, entry);
       if (LOG) fprintf(stderr, "pop LOG_ENTRY %s\n", entry->path);
       if (entry->saved.data)
@@ -168,7 +168,7 @@ static void log_pop(fz_context *ctx, log_t *log)
     case LOG_CELL:
     {
       if (LOG) fprintf(stderr, "pop LOG_CELL\n");
-      filecell_t *cell;
+      FileCell *cell;
       POP_VALUE(log->data, cell);
       POP_VALUE(log->data, *cell);
       break;
@@ -187,12 +187,12 @@ static void log_pop(fz_context *ctx, log_t *log)
   }
 }
 
-mark_t log_snapshot(fz_context *ctx, log_t *log)
+LogMark log_snapshot(fz_context *ctx, Log *log)
 {
   return (log->snap = log->data->len);
 }
 
-void log_rollback(fz_context *ctx, log_t *log, mark_t mark)
+void log_rollback(fz_context *ctx, Log *log, LogMark mark)
 {
   if (mark > log->snap) abort();
 
@@ -210,9 +210,9 @@ void log_rollback(fz_context *ctx, log_t *log, mark_t mark)
 
 /* State */
 
-void state_init(state_t *st)
+void state_init(TexState *st)
 {
-  memset(st, 0, sizeof(state_t));
+  memset(st, 0, sizeof(TexState));
 }
 
 static bool

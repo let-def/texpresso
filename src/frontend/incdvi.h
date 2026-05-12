@@ -29,17 +29,17 @@
 #include <stdbool.h>
 #include "../dvi/mydvi.h"
 
-typedef struct incdvi_s incdvi_t;
+typedef struct incdvi_s IncDVI;
 
-incdvi_t *incdvi_new(fz_context *ctx, dvi_reshooks hooks);
-void incdvi_free(fz_context *ctx, incdvi_t *d);
-void incdvi_reset(incdvi_t *d);
-void incdvi_update(fz_context *ctx, incdvi_t *d, fz_buffer *buf);
-bool incdvi_output_started(incdvi_t *d);
-int incdvi_page_count(incdvi_t *d);
-void incdvi_page_dim(incdvi_t *d, fz_buffer *buf, int page, float *width, float *height, bool *landscape);
-void incdvi_render_page(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page, fz_device *dev);
-void incdvi_find_page_loc(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page);
-float incdvi_tex_scale_factor(incdvi_t *d);
+IncDVI *incdvi_new(fz_context *ctx, dvi_resloader loader);
+void incdvi_free(fz_context *ctx, IncDVI *d);
+void incdvi_reset(IncDVI *d);
+void incdvi_update(fz_context *ctx, IncDVI *d, fz_buffer *buf);
+bool incdvi_output_started(IncDVI *d);
+int incdvi_page_count(IncDVI *d);
+void incdvi_page_dim(IncDVI *d, fz_buffer *buf, int page, float *width, float *height, bool *landscape);
+void incdvi_render_page(fz_context *ctx, IncDVI *d, fz_buffer *buf, int page, fz_device *dev);
+void incdvi_find_page_loc(fz_context *ctx, IncDVI *d, fz_buffer *buf, int page);
+float incdvi_tex_scale_factor(IncDVI *d);
 
 #endif /*!INCDVI_H*/

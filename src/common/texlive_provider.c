@@ -121,7 +121,7 @@ static struct cell *lookup(struct table *table, const char *key)
 static void grow(struct table *table)
 {
   if (LOG)
-    printf("growing table\n");
+    fprintf(stderr, "growing table\n");
   struct cell *ocells = table->hash.cells;
   int count = cell_count(table);
 
@@ -156,14 +156,14 @@ static const char *find(struct table *table, const char *key)
   if (c->offset == 0)
   {
     if (LOG)
-      printf("find: %s not found\n", key);
+      fprintf(stderr, "find: %s not found\n", key);
     return NULL;
   }
   const char *p = &table->entries.buffer[c->offset];
   while (p[-1] != '\0')
     p--;
   if (LOG)
-    printf("find: %s found\n", key);
+    fprintf(stderr, "find: %s found\n", key);
   return p;
 }
 
@@ -274,7 +274,7 @@ static void add(struct table *table,
   if (!has_dot)
   {
     if (0)
-      printf("add: skipping %s/%s/%s\n  (no dot: assuming it is a directory)\n",
+      fprintf(stderr, "add: skipping %s/%s/%s\n  (no dot: assuming it is a directory)\n",
              root, dir, name);
     return;
   }
@@ -286,12 +286,12 @@ static void add(struct table *table,
     while (p[-1])
       p -= 1;
     if (rank(p, root, dir))
-      printf("add: %s/%s/%s shadows previous binding\n  (already having: %s)\n",
+      fprintf(stderr, "add: %s/%s/%s shadows previous binding\n  (already having: %s)\n",
              root, dir, name, p);
     else
     {
       if (LOG)
-        printf("add: skipping %s/%s/%s\n  (already having: %s)\n", root, dir,
+        fprintf(stderr, "add: skipping %s/%s/%s\n  (already having: %s)\n", root, dir,
                name, p);
       return;
     }
@@ -300,7 +300,7 @@ static void add(struct table *table,
   {
     table->hash.count += 1;
     if (LOG)
-      printf("add: adding %s\n", name);
+      fprintf(stderr, "add: adding %s\n", name);
   }
 
   int rlen = strlen(root);
@@ -312,7 +312,7 @@ static void add(struct table *table,
   if (table->entries.cap < tlen)
   {
     if (LOG)
-      printf("add: growing buffer\n");
+      fprintf(stderr, "add: growing buffer\n");
     while (table->entries.cap < tlen)
       table->entries.cap *= 2;
     table->entries.buffer = realloc(table->entries.buffer, table->entries.cap);
@@ -351,7 +351,7 @@ static void process_line(struct table *table, char *path)
   if (!f)
   {
     perror("Cannot open file");
-    printf("File: %s\n", path);
+    fprintf(stderr, "File: %s\n", path);
     return;
   }
 
@@ -449,7 +449,7 @@ static bool list_texlive_files(void)
   {
     if (LOG)
     {
-      printf("Retrieved line of length %zd:\n", len);
+      fprintf(stderr, "Retrieved line of length %zd:\n", len);
       fwrite(line, len, 1, stdout);
     }
 
@@ -469,7 +469,7 @@ static bool list_texlive_files(void)
   if (ret == -1)
     perror("pclose");
   else if (ret > 0)
-    printf("Exit code: %d\n", ret);
+    fprintf(stderr, "Exit code: %d\n", ret);
   else
     loaded = 1;
 

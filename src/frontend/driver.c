@@ -26,6 +26,7 @@
 #include <signal.h>
 #include <mupdf/fitz.h>
 #include "logo.h"
+#include "pagecollection.h"
 #include "driver.h"
 
 #ifdef __APPLE__
@@ -36,11 +37,11 @@
 
 /* Custom SDL events  */
 
-Uint32 custom_event = 0;
+Uint32 custom_events = 0;
 
-void schedule_event(enum custom_events ev)
+void schedule_event(enum ui_event ev)
 {
-  static char scheduled[EVENT_COUNT] = {0,};
+  static char scheduled[UI_EVENT_COUNT] = {0,};
 
   char *sched = scheduled + ev;
   if (!*sched)
@@ -48,7 +49,7 @@ void schedule_event(enum custom_events ev)
     *sched = 1;
     SDL_Event event;
     SDL_zero(event);
-    event.type = custom_event;
+    event.type = custom_events + CUSTOM_EVENT_UI;
     event.user.code = ev;
     event.user.data1 = sched;
     if (SDL_PushEvent(&event) < 0)
@@ -65,7 +66,7 @@ static void signal_usr1(int sig)
   if (!barrier)
   {
     barrier = 1;
-    schedule_event(SCAN_EVENT);
+    schedule_event(UI_SCAN_EVENT);
     barrier = 0;
   }
 }
@@ -97,7 +98,7 @@ static bool get_executable_path(char path[PATH_MAX])
   return realpath(exe_path, path);
 }
 
-static bool should_reload_binary(void)
+static bool should_hotload_binary(void)
 {
   return 0;
 }
@@ -289,7 +290,7 @@ int main(int argc, const char **argv)
     abort();
   }
 
-  custom_event = SDL_RegisterEvents(1);
+  custom_events = SDL_RegisterEvents(CUSTOM_EVENT_COUNT);
   signal(SIGUSR1, signal_usr1);
 
   //Create window
@@ -331,9 +332,9 @@ int main(int argc, const char **argv)
       .doc_path = doc_path,
       .doc_name = doc_name,
       .inclusion_path = inclusion_path,
-      .custom_event = custom_event,
+      .custom_events = custom_events,
       .schedule_event = &schedule_event,
-      .should_reload_binary = &should_reload_binary,
+      .should_hotload_binary = &should_hotload_binary,
 
       .line_output = line_output,
       .use_tectonic = use_tectonic,
@@ -341,6 +342,7 @@ int main(int argc, const char **argv)
       .initialize_only = initialize_only,
       .stream_mode = stream_mode
   };
+  pagecollection_init(&pstate.pcoll);
 
   int exit_code = 0;
 
@@ -358,6 +360,8 @@ int main(int argc, const char **argv)
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
   SDL_Quit();
+
+  pagecollection_finalize(ctx, &pstate.pcoll);
   fz_drop_context(ctx);
 
   return exit_code;

@@ -68,7 +68,7 @@ struct record
   struct size size;
 };
 
-static bool synctex_input_closed(fz_context *ctx, synctex_t *stx, unsigned index);
+static bool synctex_input_closed(fz_context *ctx, TexSynctex *stx, unsigned index);
 
 static void ib_init(struct int_buffer *ob)
 {
@@ -155,9 +155,9 @@ struct synctex_s
   int candidate_page, candidate_line, candidate_x, candidate_y;
 };
 
-synctex_t *synctex_new(fz_context *ctx)
+TexSynctex *synctex_new(fz_context *ctx)
 {
-  synctex_t *stx = fz_malloc_struct(ctx, synctex_t);
+  TexSynctex *stx = fz_malloc_struct(ctx, TexSynctex);
   ib_init(&stx->input_off);
   ib_init(&stx->page_off);
   ib_init(&stx->close_off);
@@ -167,7 +167,7 @@ synctex_t *synctex_new(fz_context *ctx)
   return stx;
 }
 
-void synctex_free(fz_context *ctx, synctex_t *stx)
+void synctex_free(fz_context *ctx, TexSynctex *stx)
 {
   ib_free(ctx, &stx->input_off);
   ib_free(ctx, &stx->page_off);
@@ -176,12 +176,12 @@ void synctex_free(fz_context *ctx, synctex_t *stx)
   fz_free(ctx, stx);
 }
 
-int synctex_has_target(synctex_t *stx)
+int synctex_has_target(TexSynctex *stx)
 {
   return stx && (stx->target_path[0] != 0);
 }
 
-void synctex_rollback(fz_context *ctx, synctex_t *stx, size_t offset)
+void synctex_rollback(fz_context *ctx, TexSynctex *stx, size_t offset)
 {
   ib_rollback(ctx, &stx->page_off, offset);
   ib_rollback(ctx, &stx->input_off, offset);
@@ -255,7 +255,7 @@ static const uint8_t *string_skip_prefix(const uint8_t *string, const char *pref
   return string;
 }
 
-static void synctex_process_line(fz_context *ctx, synctex_t *stx, int offset, const uint8_t *bol, uint8_t *eol)
+static void synctex_process_line(fz_context *ctx, TexSynctex *stx, int offset, const uint8_t *bol, uint8_t *eol)
 {
   int index = 0;
   uint8_t c = *bol;
@@ -313,7 +313,7 @@ static void synctex_process_line(fz_context *ctx, synctex_t *stx, int offset, co
   }
 }
 
-void synctex_update(fz_context *ctx, synctex_t *stx, fz_buffer *buf)
+void synctex_update(fz_context *ctx, TexSynctex *stx, fz_buffer *buf)
 {
   int cur = stx->cur, len = buf->len;
 
@@ -352,17 +352,17 @@ void synctex_update(fz_context *ctx, synctex_t *stx, fz_buffer *buf)
   stx->cur = cur;
 }
 
-int synctex_page_count(synctex_t *stx)
+int synctex_page_count(TexSynctex *stx)
 {
   return stx ? stx->page_off.len / 2 : 0;
 }
 
-int synctex_input_count(synctex_t *stx)
+int synctex_input_count(TexSynctex *stx)
 {
   return stx ? stx->input_off.len : 0;
 }
 
-void synctex_page_offset(fz_context *ctx, synctex_t *stx, unsigned index, int *bop, int *eop)
+void synctex_page_offset(fz_context *ctx, TexSynctex *stx, unsigned index, int *bop, int *eop)
 {
   if (index * 2 + 1 >= stx->page_off.len)
     myabort();
@@ -371,7 +371,7 @@ void synctex_page_offset(fz_context *ctx, synctex_t *stx, unsigned index, int *b
   *eop = stx->page_off.ptr[2 * index + 1];
 }
 
-int synctex_input_offset(fz_context *ctx, synctex_t *stx, unsigned index)
+int synctex_input_offset(fz_context *ctx, TexSynctex *stx, unsigned index)
 {
   if (index >= stx->input_off.len)
     myabort();
@@ -379,7 +379,7 @@ int synctex_input_offset(fz_context *ctx, synctex_t *stx, unsigned index)
   return int_abs(stx->input_off.ptr[index]);
 }
 
-static bool synctex_input_closed(fz_context *ctx, synctex_t *stx, unsigned index)
+static bool synctex_input_closed(fz_context *ctx, TexSynctex *stx, unsigned index)
 {
   if (index >= stx->input_off.len)
     myabort();
@@ -557,7 +557,7 @@ static float rect_area(fz_irect r)
   return (float)(r.y1 - r.y0) * (float)(r.x1 - r.x0);
 }
 
-static int get_filename(synctex_t *stx, fz_buffer *buf, struct candidate *c, int tag)
+static int get_filename(TexSynctex *stx, fz_buffer *buf, struct candidate *c, int tag)
 {
   if (tag <= 0)
     return 0;
@@ -586,7 +586,7 @@ static int get_filename(synctex_t *stx, fz_buffer *buf, struct candidate *c, int
 }
 
 static void
-parse_tree(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr, int x, int y, struct candidate *c)
+parse_tree(TexSynctex *stx, fz_buffer *buf, const uint8_t *ptr, int x, int y, struct candidate *c)
 {
   int nest = 0;
   struct size saved[256];
@@ -657,7 +657,7 @@ parse_tree(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr, int x, int y, str
 }
 
 static int get_input(fz_buffer *buf,
-                      synctex_t *stx,
+                      TexSynctex *stx,
                       int index,
                       const char **name)
 {
@@ -676,16 +676,16 @@ static int get_input(fz_buffer *buf,
   return (fend - filename);
 }
 
-void synctex_scan(fz_context *ctx,
-                  synctex_t *stx,
+bool synctex_scan(fz_context *ctx,
+                  TexSynctex *stx,
                   fz_buffer *buf,
-                  const char *doc_dir,
                   unsigned page,
                   int x,
-                  int y)
+                  int y,
+                  TexSynctexHit *hit)
 {
   if (synctex_page_count(stx) <= page)
-    return;
+    return false;
 
   int bop, eop;
   synctex_page_offset(ctx, stx, page, &bop, &eop);
@@ -698,19 +698,22 @@ void synctex_scan(fz_context *ctx,
   parse_tree(stx, buf, ptr, x, y, &c);
   if (c.link.tag)
   {
-    const char *fname;
-    int len = get_input(buf, stx, c.link.tag-1, &fname);
+    hit->len = get_input(buf, stx, c.link.tag-1, &hit->fname);
     fprintf(stderr,
             "synctex best candidate: (%d,%d)-(%d,%d) "
             "file:%.*s line:%d column:%d\n",
             c.rect.x0, c.rect.y0, c.rect.x1, c.rect.y1,
-            len, fname,
+            hit->len, hit->fname,
             c.link.line, c.link.column);
-    editor_synctex(doc_dir, fname, len, c.link.line, c.link.column);
+    hit->line = c.link.line;
+    hit->column = c.link.column;
+    return true;
   }
+
+  return false;
 }
 
-void synctex_set_target(synctex_t *stx, int current_page, const char *path, int line)
+void synctex_set_target(TexSynctex *stx, int current_page, const char *path, int line)
 {
   if (!stx)
     return;
@@ -742,7 +745,7 @@ static bool is_oneliner(enum kind k)
   return (k >= STEX_CURRENT && k <= STEX_MATH);
 }
 
-static bool synctex_find_input(fz_context *ctx, synctex_t *stx, fz_buffer *buf)
+static bool synctex_find_input(fz_context *ctx, TexSynctex *stx, fz_buffer *buf)
 {
   if (stx->input_found)
     return 1;
@@ -761,8 +764,8 @@ static bool synctex_find_input(fz_context *ctx, synctex_t *stx, fz_buffer *buf)
       continue;
     }
 
-    int page = 0, 
-      pages = synctex_page_count(stx), 
+    int page = 0,
+      pages = synctex_page_count(stx),
       offset = int_abs(stx->input_off.ptr[stx->input_tag]);
     while (page < pages && stx->page_off.ptr[page * 2 + 1] < offset)
       page += 1;
@@ -775,20 +778,20 @@ static bool synctex_find_input(fz_context *ctx, synctex_t *stx, fz_buffer *buf)
   return 0;
 }
 
-static const uint8_t *synctex_page_pointer(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int page)
+static const uint8_t *synctex_page_pointer(fz_context *ctx, TexSynctex *stx, fz_buffer *buf, int page)
 {
   int bop, eop;
   synctex_page_offset(ctx, stx, page, &bop, &eop);
   return &buf->data[bop];
 }
 
-static void synctex_clear_search(synctex_t *stx)
+static void synctex_clear_search(TexSynctex *stx)
 {
   stx->target_path[0] = 0;
 }
 
 static void
-synctex_backscan_page(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int page, int *updated_candidate)
+synctex_backscan_page(fz_context *ctx, TexSynctex *stx, fz_buffer *buf, int page, int *updated_candidate)
 {
   int tag = stx->input_tag + 1;
   int line = stx->target_line;
@@ -886,7 +889,7 @@ synctex_backscan_page(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int page,
   }
 }
 
-int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int *page, int *x, int *y)
+int synctex_find_target(fz_context *ctx, TexSynctex *stx, fz_buffer *buf, int *page, int *x, int *y)
 {
   if (!stx || !stx->target_path[0])
     return 0;

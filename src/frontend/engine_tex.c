@@ -22,90 +22,232 @@
  * IN THE SOFTWARE.
  */
 
-#include <mupdf/fitz/buffer.h>
-#include <stdlib.h>
-#include <limits.h>
-#include <unistd.h>
-#include <string.h>
+/**
+ * @file engine_tex.c
+ * @brief TeX incremental compilation engine implementation
+ *
+ * This module implements a TeX compiler engine that supports incremental
+ * compilation with checkpointing and process forking. It uses a custom
+ * protocol to communicate with a TeX compiler process (either TeXLive or
+ * tectonic) and maintains a multi-branch history for efficient rollback.
+ *
+ * @par Architecture Overview
+ *
+ * The engine maintains a state machine with the following key components:
+ *
+ * - **Filesystem State**: Tracks all files touched during compilation
+ *   through a virtual filesystem with snapshot/rollback support
+ *
+ * - **Process Management**: Maintains up to MAX_PROCESS forked processes to
+ *   support incremental recompilation. Each process represents a checkpoint in
+ *   the compilation history.
+ *
+ * - **Trace Logging**: Records every file access in order, enabling precise
+ *   rollback to any previous state by replaying the trace
+ *
+ * - **Fence System**: Marks safe points where recompilation can restart,
+ *   avoiding re-reading files that haven't changed
+ *
+ * @par Rollback Mechanism
+ *
+ * When a source file changes, the engine:
+ * 1. Records the change via notify_file_changes()
+ * 2. Begins a transaction with begin_changes()
+ * 3. Detects affected files with detect_changes()
+ * 4. Computes rollback position and fence points
+ * 5. Pops processes until reaching the checkpoint
+ * 6. Replays the trace to restore filesystem state
+ * 7. Restarts compilation from the checkpoint
+ *
+ * @par Fork Strategy
+ *
+ * The engine periodically forks during compilation to create checkpoints.
+ * On macOS, forking is delayed until after font loading to avoid system
+ * restrictions. Process decimation prevents unbounded growth by merging
+ * every other process when reaching the MAX_PROCESS process limit.
+ *
+ * @par Protocol
+ *
+ * Communication with the child process uses a simple request/response
+ * protocol:
+ * - OPEN: Open a file (read or write)
+ * - READ: Read from an open file
+ * - APND: Append to an open file (write)
+ * - CLOS: Close an open file
+ * - SIZE: Get file size
+ * - MTIM: Get file modification time
+ * - SEEN: Update "seen" position for rollback
+ * - GPIC/SPIC: Get/Set picture cache
+ * - CHLD: Child process created (fork)
+ * - FLSH: Flush child state
+ *
+ * @see engine.h Common engine interface
+ * @see engine_pdf.c PDF engine implementation
+ * @see engine_dvi.c DVI engine implementation
+ */
+
 #include <fcntl.h>
-#include <sys/wait.h>
-#include <sys/stat.h>
-#include <sys/socket.h>
+#include <limits.h>
+#include <mupdf/fitz/buffer.h>
 #include <signal.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include "editor.h"
 #include "engine.h"
 #include "incdvi.h"
 #include "mydvi.h"
 #include "state.h"
 #include "synctex.h"
-#include "editor.h"
 
+/**
+ * @brief Track a file position for fence placement
+ *
+ * Fences are markers that indicate safe points for rollback. When the engine
+ * needs to rollback due to a source file change, it can restart from the
+ * position indicated by a fence rather than from the beginning.
+ */
 typedef struct
 {
-  fileentry_t *entry;
-  int position;
-} fence_t;
+  FileEntry *entry; /**< File being tracked */
+  int position;       /**< Byte offset position */
+} Fence;
 
+/**
+ * @brief Record a file access in the trace
+ *
+ * The trace is a log of all file accesses (reads, writes, opens) performed
+ * by the TeX process. It's used for rollback and for detecting which files
+ * were affected by changes.
+ */
 typedef struct
 {
-  fileentry_t *entry;
-  int seen, time;
-} trace_entry_t;
+  FileEntry *entry; /**< File that was accessed */
+  int seen;           /**< Last "seen" position (where TeX stopped reading) */
+  int time;           /**< Timestamp in milliseconds when access occurred */
+} TraceEntry;
 
+/**
+ * @brief Represents a running TeX compilation process
+ *
+ * The engine maintains up to MAX_PROCESS processes. Each process maintains its
+ * own view of the filesystem and can be rolled back to.
+ */
 typedef struct
 {
-  int pid, fd;
-  int trace_len;
-  mark_t snap;
-} process_t;
+  int pid;       /**< Process ID */
+  int fd;        /**< File descriptor for communication with process */
+  int trace_len; /**< Number of trace entries from this process */
+  LogMark snap;   /**< Log snapshot position for rollback */
+} TexProcess;
 
 enum
 {
   MAX_PROCESS = 32
 };
 
-struct tex_engine
+/**
+ * @brief TeX engine instance structure
+ *
+ * This structure contains all state needed for the incremental TeX compilation
+ * engine, including the filesystem state, process management, and output data.
+ */
+struct TexEngine
 {
-  struct txp_engine_class *_class;
+  struct EngineClass *_class; /**< Virtual method table */
 
-  char *name;
-  char *engine_path;
-  char *inclusion_path;
+  char *name;           /**< Main .tex file name */
+  char *engine_path;    /**< Path to xetex/platex executable */
+  char *inclusion_path; /**< Additional search paths for includes */
   bool use_texlive;
   bool stream_mode;
 
-  filesystem_t *fs;
-  state_t st;
-  log_t *log;
+  FileSystem *fs; /**< Filesystem state tracking */
+  TexState st;    /**< File open state (file handles) */
+  Log *log;       /**< Rollback log for state changes */
 
-  channel_t *c;
-  process_t processes[MAX_PROCESS];
-  int process_count;
+  IOChannel *c;             /**< Communication channel with child */
+  TexProcess processes[MAX_PROCESS]; /**< Active processes (forked branches) */
+  int process_count;        /**< Number of active processes */
 
-  trace_entry_t *trace;
-  int trace_cap;
-  fence_t fences[16];
-  int fence_pos;
-  mark_t restart;
+  /**
+   * @brief Trace of all file accesses during compilation
+   *
+   * This array records every file access (read, write, open) in the order
+   * they occurred. It enables precise rollback to any previous state.
+   */
+  TraceEntry *trace;
+  int trace_cap; /**< Allocated capacity of trace array */
 
-  incdvi_t *dvi;
-  synctex_t *stex;
+  /**
+   * @brief Fences for incremental recompilation
+   *
+   * Fences mark positions in the trace where it's safe to restart
+   * compilation after a file change. They enable incremental recompilation
+   * by avoiding re-reading files that haven't changed.
+   */
+  Fence fences[16];
+  int fence_pos; /**< Current fence index (-1 = no fences) */
 
-  struct {
-    int trace_len, offset, flush;
+  /**
+   * @brief Starting point for new processes
+   *
+   * When a new process is spawned (through forking), it starts from this
+   * checkpoint. The process is initialized to match the state at this mark.
+   */
+  LogMark restart;
+
+  IncDVI *dvi;      /**< DVI rendering state */
+  TexSynctex *stex; /**< Synctex data parser */
+
+  /**
+   * @brief Current rollback transaction
+   *
+   * During begin_changes/end_changes, this tracks the rollback position.
+   * Uses NOT_IN_TRANSACTION when no transaction is active.
+   */
+  struct
+  {
+    int trace_len; /**< Trace position to rollback to */
+    int offset;    /**< Byte offset of file change */
+    int flush;     /**< If set, flush child without rolling back */
   } rollback;
 };
 
 // Backtrackable process state & VFS representation
 
-static process_t *get_process(struct tex_engine *t)
+/**
+ * @brief Get the currently active process
+ * @param t Engine instance
+ * @return Pointer to current process structure
+ *
+ * This function always returns the most recently added process.
+ * It's a convenience accessor that abstracts the process array indexing.
+ * @pre process_count > 0
+ */
+static TexProcess *get_process(struct TexEngine *t)
 {
   if (t->process_count == 0)
     mabort();
-  return &t->processes[t->process_count-1];
+  return &t->processes[t->process_count - 1];
 }
 
 // Useful routines
 
+/**
+ * @brief Extract directory path from a full path
+ * @param path Null-terminated path string
+ * @param needle Character to search for (typically '/')
+ * @return Pointer to first character after the last occurrence of needle
+ *
+ * This is a simple implementation of basename functionality.
+ * It scans from the beginning, updating the result pointer each time
+ * the needle character is found, so the final result points to the
+ * last component of the path.
+ */
 static char *last_index(char *path, char needle)
 {
   char *result = path;
@@ -118,15 +260,38 @@ static char *last_index(char *path, char needle)
   return result;
 }
 
-// tex_engine implementation
+// TexEngine implementation
 
 TXP_ENGINE_DEF_CLASS;
-#define SELF struct tex_engine *self = (struct tex_engine*)_self
+#define SELF struct TexEngine *self = (struct TexEngine *)_self
 
-static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q);
+/**
+ * @brief Process a query from the TeX child process
+ * @param ctx MuPDF context
+ * @param self Engine instance
+ * @param q parsed query structure
+ *
+ * This is the main query handler for the TeX protocol. It processes
+ * various query types (OPEN, READ, WRITE, SEEN, etc.) and sends back
+ * appropriate answers. It also manages the filesystem state and
+ * tracks file accesses in the trace.
+ */
+static void answer_query(fz_context *ctx, struct TexEngine *self, ProtocolQuery *q);
 
 // Launching processes
 
+/**
+ * @brief Fork and exec a TeX engine process
+ * @param args Array of command-line arguments (must be NULL-terminated)
+ * @param fd Pointer to store the communication file descriptor
+ * @return Child process PID
+ *
+ * This function creates a Unix domain socket pair for communication with
+ * the child process. It handles the differences between fork() on macOS
+ * (which needs special initialization) and vfork() on other platforms.
+ * @note The child process sets TEXPRESSO_FD environment variable to the
+ *       socket file descriptor before exec'ing the TeX engine.
+ */
 static pid_t exec_xelatex_generic(char **args, int *fd)
 {
   int sockets[2];
@@ -177,29 +342,48 @@ static pid_t exec_xelatex_generic(char **args, int *fd)
   return pid;
 }
 
-static pid_t exec_xelatex(char *engine_path, bool use_texlive, const char *filename, int *fd)
+/**
+ * @brief Launch a TeX engine with appropriate arguments
+ * @param engine_path Path to xetex or platex executable
+ * @param use_texlive If true, use teTeX command-line interface
+ * @param filename Input TeX file to compile
+ * @param fd Pointer to store communication file descriptor
+ * @return Child process PID
+ *
+ * This constructs the appropriate argument list based on whether we're
+ * using TeXLive or tectonic, then calls exec_xelatex_generic().
+ */
+static pid_t exec_xelatex(char *engine_path,
+                          bool use_texlive,
+                          const char *filename,
+                          int *fd)
 {
-  char *args[] = {
-    engine_path,
-    (use_texlive ? "-texlive" : "-tectonic"),
-    "-texpresso",
-    (char*)filename,
-    NULL
-  };
+  char *args[] = {engine_path, (use_texlive ? "-texlive" : "-tectonic"),
+                  "-texpresso", (char *)filename, NULL};
 
   pid_t pid = exec_xelatex_generic(args, fd);
   fprintf(stderr, "[process] launched pid %d (using %s)\n", pid, engine_path);
   return pid;
 }
 
-static void prepare_process(fz_context *ctx, struct tex_engine *self)
+/**
+ * @brief Ensure a TeX process is running
+ * @param ctx MuPDF context
+ * @param self Engine instance
+ *
+ * This function is called at the start of each step() iteration when
+ * restart_if_needed is true. If no processes are running, it launches
+ * a new xetex process and performs the protocol handshake.
+ */
+static void prepare_process(fz_context *ctx, struct TexEngine *self)
 {
   if (self->process_count == 0)
   {
     log_rollback(ctx, self->log, self->restart);
     self->process_count = 1;
-    process_t *p = get_process(self);
-    p->pid = exec_xelatex(self->engine_path, self->use_texlive, self->name, &p->fd);
+    TexProcess *p = get_process(self);
+    p->pid =
+        exec_xelatex(self->engine_path, self->use_texlive, self->name, &p->fd);
     p->trace_len = 0;
     if (!channel_handshake(self->c, p->fd))
       mabort();
@@ -208,7 +392,14 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
 
 // Terminating processes
 
-static void close_process(process_t *p)
+/**
+ * @brief Terminate a process and close its file descriptor
+ * @param p Process to terminate
+ *
+ * This kills the process with SIGTERM and closes the communication
+ * file descriptor. It's called during rollback and engine shutdown.
+ */
+static void close_process(TexProcess *p)
 {
   if (p->fd != -1)
   {
@@ -218,20 +409,39 @@ static void close_process(process_t *p)
   }
 }
 
-static void pop_process(fz_context *ctx, struct tex_engine *self)
+/**
+ * @brief Remove the most recent process from the list
+ * @param ctx MuPDF context
+ * @param self Engine instance
+ *
+ * This rolls back the log to a previous checkpoint and decrements
+ * process_count. The next step() will restart a process from that
+ * checkpoint.
+ */
+static void pop_process(fz_context *ctx, struct TexEngine *self)
 {
-  process_t *p = get_process(self);
+  TexProcess *p = get_process(self);
   close_process(p);
   channel_reset(self->c);
   self->process_count -= 1;
-  mark_t mark =
-    self->process_count > 0 ? get_process(self)->snap : self->restart;
+  LogMark mark =
+      self->process_count > 0 ? get_process(self)->snap : self->restart;
   log_rollback(ctx, self->log, mark);
 }
 
-static bool read_query(struct tex_engine *self, channel_t *t, query_t *q)
+/**
+ * @brief Read a query from the child process
+ * @param self Engine instance
+ * @param t Communication channel
+ * @param q Output query structure
+ * @return true if query was read successfully, false on EOF
+ *
+ * This wraps channel_read_query() with error handling. On EOF, it
+ * closes the process and returns false.
+ */
+static bool read_query(struct TexEngine *self, IOChannel *t, ProtocolQuery *q)
 {
-  process_t *p = get_process(self);
+  TexProcess *p = get_process(self);
   bool result = channel_read_query(t, p->fd, q);
   if (!result)
   {
@@ -241,15 +451,26 @@ static bool read_query(struct tex_engine *self, channel_t *t, query_t *q)
   return result;
 }
 
-static void decimate_processes(struct tex_engine *self)
+/**
+ * @brief Reduce the number of processes to a manageable count
+ *
+ * To prevent memory exhaustion from fork proliferation, this function
+ * halves the number of processes (keeping every other one) when there
+ * are more than 16. It closes the file descriptors of terminated processes
+ * but keeps their trace entries for potential future rollback.
+ *
+ * @note This is called implicitly when adding a new process would exceed
+ *       the MAX_PROCESS limit in answer_query() for Q_CHLD.
+ */
+static void decimate_processes(struct TexEngine *self)
 {
   bool keep[MAX_PROCESS] = {0,};
 
   int target = 32;
   fprintf(stderr, "before process decimation:\n");
-  for  (int i = 0; i < self->process_count; ++i)
+  for (int i = 0; i < self->process_count; ++i)
   {
-    process_t *p = &self->processes[i];
+    TexProcess *p = &self->processes[i];
     fprintf(stderr, "- position %d, time %dms [pid %d]\n",
             p->trace_len,
             p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time,
@@ -265,7 +486,7 @@ static void decimate_processes(struct tex_engine *self)
   int delta = 32;
   for (int i = self->process_count - 1; i >= 0; --i)
   {
-    process_t *p = &self->processes[i];
+    TexProcess *p = &self->processes[i];
     if (p->trace_len <= target)
     {
       keep[i] = true;
@@ -294,9 +515,9 @@ static void decimate_processes(struct tex_engine *self)
   self->process_count = i;
 
   fprintf(stderr, "after process decimation:\n");
-  for  (int i = 0; i < self->process_count; ++i)
+  for (int i = 0; i < self->process_count; ++i)
   {
-    process_t *p = &self->processes[i];
+    TexProcess *p = &self->processes[i];
     fprintf(stderr, "- position %d, time %dms [pid %d]\n",
             p->trace_len,
             p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time,
@@ -306,7 +527,16 @@ static void decimate_processes(struct tex_engine *self)
 
 // Engine class implementation
 
-static void engine_destroy(txp_engine *_self, fz_context *ctx)
+/**
+ * @brief Destroy the TeX engine and free all resources
+ *
+ * Closes all child processes, frees DVI and Synctex data, and deallocates
+ * all memory associated with the TeX engine.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param ctx   MuPDF context for resource deallocation
+ */
+static void engine_destroy(Engine *_self, fz_context *ctx)
 {
   SELF;
   while (self->process_count > 0)
@@ -319,7 +549,20 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
   fz_free(ctx, self);
 }
 
-static const char *expand_path(const char **inclusion_path, const char *name, char buffer[1024])
+/**
+ * @brief Expand a file path using inclusion directories
+ * @param inclusion_path Path list (colon-separated on Unix)
+ * @param name File name to resolve
+ * @param buffer Working buffer (must be at least 1024 bytes)
+ * @return Expanded path, or NULL if not found
+ *
+ * This implements TeX's input file search algorithm. It prepends each
+ * directory from inclusion_path to the file name (if not absolute or
+ * relative) and checks if the file exists.
+ */
+static const char *expand_path(const char **inclusion_path,
+                               const char *name,
+                               char buffer[1024])
 {
   if (!*inclusion_path || !(*inclusion_path)[0])
     return NULL;
@@ -339,78 +582,117 @@ static const char *expand_path(const char **inclusion_path, const char *name, ch
 
   while (*i)
   {
-    if (p > buffer + 1024) mabort();
+    if (p > buffer + 1024)
+      mabort();
     *p = *i;
     p += 1;
     i += 1;
   }
-  *inclusion_path = i+1;
+  *inclusion_path = i + 1;
 
   if (p[-1] != '/')
   {
-    if (p > buffer + 1024) mabort();
+    if (p > buffer + 1024)
+      mabort();
     p[0] = '/';
     p += 1;
   }
 
   while (*name)
   {
-    if (p > buffer + 1024) mabort();
+    if (p > buffer + 1024)
+      mabort();
     *p = *name;
     p += 1;
     name += 1;
   }
 
-  if (p > buffer + 1024) mabort();
+  if (p > buffer + 1024)
+    mabort();
   *p = '\0';
 
   return buffer;
 }
 
+/**
+ * @brief Validate a file ID
+ * @param fid File ID to validate
+ *
+ * File IDs are indices into the state.table array. This ensures they
+ * are within the valid range (0 to MAX_FILES-1).
+ */
 static void check_fid(file_id fid)
 {
   if (fid < 0 || fid >= MAX_FILES)
     mabort();
 }
 
-static void record_seen(struct tex_engine *self, fileentry_t *entry, int seen, int time)
+/**
+ * @brief Record a file access in the trace
+ * @param self Engine instance
+ * @param entry File entry that was accessed
+ * @param seen New "seen" position (where TeX stopped reading)
+ * @param time Timestamp when access occurred
+ *
+ * This adds a trace entry if the file access is new, or updates the
+ * timestamp if the same file is accessed multiple times without
+ * intermediate accesses to other files.
+ */
+static void record_seen(struct TexEngine *self,
+                        FileEntry *entry,
+                        int seen,
+                        int time)
 {
-  process_t *p = get_process(self);
+  TexProcess *p = get_process(self);
 
-  if (p->trace_len > 0 && self->trace[p->trace_len-1].entry == entry &&
+  // If same file and no forks between accesses, just update timestamp
+  if (p->trace_len > 0 && self->trace[p->trace_len - 1].entry == entry &&
       (self->process_count <= 1 ||
-      self->processes[self->process_count - 2].trace_len != p->trace_len))
+       self->processes[self->process_count - 2].trace_len != p->trace_len))
   {
-    self->trace[p->trace_len-1].time = time;
+    self->trace[p->trace_len - 1].time = time;
     entry->seen = seen;
     return;
   }
 
+  // Grow trace array if needed
   if (p->trace_len == self->trace_cap)
   {
     int new_cap = self->trace_cap == 0 ? 8 : self->trace_cap * 2;
-    fprintf(stderr, "[info] trace has %d entries, growing to %d\n", self->trace_cap, new_cap);
-    trace_entry_t *newtr = calloc(sizeof(trace_entry_t), new_cap);
-    if (newtr == NULL) abort();
+    fprintf(stderr, "[info] trace has %d entries, growing to %d\n",
+            self->trace_cap, new_cap);
+    TraceEntry *newtr = calloc(sizeof(TraceEntry), new_cap);
+    if (newtr == NULL)
+      abort();
     if (self->trace)
     {
-      memcpy(newtr, self->trace, self->trace_cap * sizeof(trace_entry_t));
+      memcpy(newtr, self->trace, self->trace_cap * sizeof(TraceEntry));
       free(self->trace);
     }
     self->trace = newtr;
     self->trace_cap = new_cap;
   }
 
-  self->trace[p->trace_len] = (trace_entry_t){
-    .entry = entry,
-    .seen = entry->seen,
-    .time = time,
+  self->trace[p->trace_len] = (TraceEntry){
+      .entry = entry,
+      .seen = entry->seen,
+      .time = time,
   };
   entry->seen = seen;
   p->trace_len += 1;
 }
 
-static fz_buffer *entry_data(fileentry_t *e)
+/**
+ * @brief Get file data from the appropriate source
+ * @param e File entry
+ * @return Buffer containing file data
+ *
+ * File data can come from three sources in priority order:
+ * 1. saved.data - If file was written by TeX (output file)
+ * 2. edit_data  - If file is being edited and has unsaved changes
+ * 3. fs_data    - Data read from the filesystem
+ */
+static fz_buffer *entry_data(FileEntry *e)
 {
   if (e->saved.data)
     return e->saved.data;
@@ -419,15 +701,36 @@ static fz_buffer *entry_data(fileentry_t *e)
   return e->fs_data;
 }
 
-static fz_buffer *output_data(fileentry_t *e)
+/**
+ * @brief Get saved output data for a file
+ * @param e File entry
+ * @return Buffer containing saved data, or NULL if none
+ *
+ * This specifically returns only the "saved" output data, not the
+ * current edit buffer or filesystem data. Used for output files.
+ */
+static fz_buffer *output_data(FileEntry *e)
 {
   if (!e)
     return NULL;
   return e->saved.data;
 }
 
-static const char *
-lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct stat *st)
+/**
+ * @brief Find a file's path in the filesystem
+ * @param self Engine instance
+ * @param path File path as referenced in TeX source
+ * @param buf Temporary buffer for expanded paths
+ * @param st Output stat buffer (can be NULL)
+ * @return Actual filesystem path, or NULL if not found
+ *
+ * This searches for the file using both the inclusion_path and
+ * direct path lookup. It populates the stat buffer if provided.
+ */
+static const char *lookup_path(struct TexEngine *self,
+                               const char *path,
+                               char buf[1024],
+                               struct stat *st)
 {
   struct stat st1;
   if (st == NULL)
@@ -436,16 +739,31 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
   const char *fs_path = path;
   const char *inclusion_path = self->inclusion_path;
 
-  do {
+  do
+  {
     if (stat(fs_path, st) != -1)
       break;
-  }
-  while ((fs_path = expand_path(&inclusion_path, path, buf)));
+  } while ((fs_path = expand_path(&inclusion_path, path, buf)));
 
   return fs_path;
 }
 
-static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
+/**
+ * @brief Get the time since last event for snapshot decision
+ * @param ctx MuPDF context
+ * @param self Engine instance
+ * @param time Current timestamp from TeX process
+ * @return true if a snapshot should be taken now
+ *
+ * This function decides whether to fork and create a checkpoint based on:
+ * - No pending fences (we're at a safe point)
+ * - Time elapsed since last snapshot (>500ms)
+ * - New events have occurred in the current process
+ *
+ * On macOS, it delays initial forking until after output has started
+ * (to work around font loading restrictions after fork).
+ */
+static bool need_snapshot(fz_context *ctx, struct TexEngine *self, int time)
 {
   // Fences are pending: don't snapshot now
   if (self->fence_pos != -1)
@@ -493,20 +811,20 @@ static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
   return time > 500 + last_time;
 }
 
-static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+static void answer_query(fz_context *ctx, struct TexEngine *self, ProtocolQuery *q)
 {
-  process_t *p = get_process(self);
-  answer_t a;
+  TexProcess *p = get_process(self);
+  ProtocolAnswer a;
   switch (q->tag)
   {
     case Q_OPRD:
     case Q_OPWR:
     {
       check_fid(q->open.fid);
-      filecell_t *cell = &self->st.table[q->open.fid];
+      FileCell *cell = &self->st.table[q->open.fid];
       if (cell->entry != NULL) mabort();
 
-      fileentry_t *e = NULL;
+      FileEntry *e = NULL;
 
       char fs_path_buffer[1024];
       const char *fs_path = NULL;
@@ -658,7 +976,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
     case Q_READ:
     {
       check_fid(q->read.fid);
-      fileentry_t *e = self->st.table[q->read.fid].entry;
+      FileEntry *e = self->st.table[q->read.fid].entry;
       if (e == NULL) mabort();
       if (e->saved.level < FILE_READ) mabort();
       fz_buffer *data = entry_data(e);
@@ -717,7 +1035,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
     }
     case Q_APND:
     {
-      fileentry_t *e = NULL;
+      FileEntry *e = NULL;
 
       if (q->apnd.fid == -1)
       {
@@ -777,8 +1095,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
     {
       check_fid(q->clos.fid);
 
-      filecell_t *cell = &self->st.table[q->clos.fid];
-      fileentry_t *e = cell->entry;
+      FileCell *cell = &self->st.table[q->clos.fid];
+      FileEntry *e = cell->entry;
       if (e == NULL) mabort();
       log_filecell(ctx, self->log, cell);
       cell->entry = NULL;
@@ -812,7 +1130,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
     case Q_SIZE:
     {
       check_fid(q->clos.fid);
-      fileentry_t *e = self->st.table[q->clos.fid].entry;
+      FileEntry *e = self->st.table[q->clos.fid].entry;
       if (e == NULL || e->saved.level < FILE_READ) mabort();
       a.tag = A_SIZE;
       a.size.size = entry_data(e)->len;
@@ -824,7 +1142,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
     case Q_MTIM:
     {
       check_fid(q->clos.fid);
-      fileentry_t *e = self->st.table[q->clos.fid].entry;
+      FileEntry *e = self->st.table[q->clos.fid].entry;
       if (e == NULL || e->saved.level < FILE_READ) mabort();
       a.tag = A_MTIM;
       a.mtim.mtime = e->fs_stat.st_mtime;
@@ -836,7 +1154,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
     case Q_SEEN:
     {
       check_fid(q->seen.fid);
-      fileentry_t *e = self->st.table[q->seen.fid].entry;
+      FileEntry *e = self->st.table[q->seen.fid].entry;
       if (e == NULL) mabort();
       if (LOG)
         fprintf(stderr, "[info] file %s seen: %d -> %d\n", e->path, e->seen, q->seen.pos);
@@ -872,7 +1190,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
     }
     case Q_GPIC:
     {
-      fileentry_t *e = filesystem_lookup(self->fs, q->gpic.path);
+      FileEntry *e = filesystem_lookup(self->fs, q->gpic.path);
       if (e && e->saved.level == FILE_READ &&
           e->pic_cache.type == q->gpic.type &&
           e->pic_cache.page == q->gpic.page)
@@ -890,7 +1208,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
     }
     case Q_SPIC:
     {
-      fileentry_t *e = filesystem_lookup(self->fs, q->spic.path);
+      FileEntry *e = filesystem_lookup(self->fs, q->spic.path);
       if (e && e->saved.level == FILE_READ)
           e->pic_cache = q->spic.cache;
       a.tag = A_DONE;
@@ -907,7 +1225,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       }
       channel_reset(self->c);
       self->process_count += 1;
-      process_t *p2 = get_process(self);
+      TexProcess *p2 = get_process(self);
       p->snap = log_snapshot(ctx, self->log);
       p2->fd = q->chld.fd;
       p2->pid = q->chld.pid;
@@ -919,7 +1237,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
   }
 }
 
-static int output_length(fileentry_t *entry)
+static int output_length(FileEntry *entry)
 {
   if (!entry || !entry->saved.data)
     return 0;
@@ -927,12 +1245,12 @@ static int output_length(fileentry_t *entry)
     return entry->saved.data->len;
 }
 
-static void revert_trace(trace_entry_t *te)
+static void revert_trace(TraceEntry *te)
 {
   te->entry->seen = te->seen;
 }
 
-static void rollback_processes(fz_context *ctx, struct tex_engine *self, int reverted, int trace)
+static void rollback_processes(fz_context *ctx, struct TexEngine *self, int reverted, int trace)
 {
   fprintf(
     stderr,
@@ -959,7 +1277,7 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
   fprintf(stderr, "Snapshots:\n");
   for  (int i = 0; i < self->process_count; ++i)
   {
-    process_t *p = &self->processes[i];
+    TexProcess *p = &self->processes[i];
     fprintf(stderr, "- position %d, time %dms\n", p->trace_len,
             p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time);
   }
@@ -998,9 +1316,13 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
     synctex_rollback(ctx, self->stex, 0);
   editor_truncate(BUF_OUT, output_data(self->st.stdout.entry));
   editor_truncate(BUF_LOG, output_data(self->st.log.entry));
+
+  // Restart if there are no more snapshots
+  if (self->process_count == 0)
+    prepare_process(ctx, self);
 }
 
-static bool possible_fence(trace_entry_t *te)
+static bool possible_fence(TraceEntry *te)
 {
   if (te->seen == INT_MAX || te->seen == -1)
     return 0;
@@ -1009,7 +1331,7 @@ static bool possible_fence(trace_entry_t *te)
   return 1;
 }
 
-static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, int offset)
+static int compute_fences(fz_context *ctx, struct TexEngine *self, int trace, int offset)
 {
   self->fence_pos = -1;
 
@@ -1065,13 +1387,32 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
   return trace;
 }
 
-static int engine_page_count(txp_engine *_self)
+/**
+ * @brief Get the number of pages in the DVI output
+ *
+ * Returns the page count from the internal DVI parser.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @return Number of pages in the DVI document
+ */
+static int engine_page_count(Engine *_self)
 {
   SELF;
   return incdvi_page_count(self->dvi);
 }
 
-static fz_display_list *engine_render_page(txp_engine *_self, fz_context *ctx, int page)
+/**
+ * @brief Render a page from the DVI output
+ *
+ * Extracts page dimensions and renders the specified page using
+ * the internal DVI parser into a display list.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param ctx   MuPDF context for rendering
+ * @param page  Page number (0-indexed)
+ * @return Display list containing the page content, or NULL on error
+ */
+static fz_display_list *engine_render_page(Engine *_self, fz_context *ctx, int page)
 {
   SELF;
 
@@ -1089,7 +1430,20 @@ static fz_display_list *engine_render_page(txp_engine *_self, fz_context *ctx, i
   return dl;
 }
 
-static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_needed)
+/**
+ * @brief Step the TeX engine and process messages
+ *
+ * Processes one message from the TeX child process. If restart_if_needed
+ * is true and no process is running, it starts a new xetex process.
+ *
+ * @param _self              Engine instance (cast to TexEngine)
+ * @param ctx               MuPDF context
+ * @param restart_if_needed If true, start a new process if needed
+ * @return true if a message was processed
+ *
+ * @see answer_query Handle child process queries
+ */
+static bool engine_step(Engine *_self, fz_context *ctx, bool restart_if_needed)
 {
   SELF;
   if (restart_if_needed)
@@ -1097,7 +1451,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
 
   if (engine_get_status(_self) == DOC_RUNNING)
   {
-    query_t q;
+    ProtocolQuery q;
     int fd = get_process(self)->fd;
     if (fd == -1)
       return 0;
@@ -1117,7 +1471,22 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
   return 0;
 }
 
-static int scan_entry(fz_context *ctx, struct tex_engine *self, fileentry_t *e)
+/**
+ * @brief Scan a file for changes
+ *
+ * Reads the current file from disk and compares it to the stored data.
+ * Returns the byte offset where the first difference occurs, or -1 if
+ * no change was detected.
+ *
+ * @param ctx   MuPDF context
+ * @param self  Engine instance (cast to TexEngine)
+ * @param e     File entry to scan
+ * @return Byte offset of first change, or -1 if no change
+ *
+ * @note Uses the file system stat to check for changes first, then
+ *       does byte-by-byte comparison if timestamps differ.
+ */
+static int scan_entry(fz_context *ctx, struct TexEngine *self, FileEntry *e)
 {
   if (e->saved.level < FILE_READ || e->fs_stat.st_ino == 0 || e->edit_data)
     return -1;
@@ -1184,7 +1553,7 @@ static int scan_entry(fz_context *ctx, struct tex_engine *self, fileentry_t *e)
 
 #define NOT_IN_TRANSACTION (-2)
 
-static void rollback_begin(fz_context *ctx, struct tex_engine *self)
+static void rollback_begin(fz_context *ctx, struct TexEngine *self)
 {
   // Check if already in a transaction
   if (self->rollback.trace_len != NOT_IN_TRANSACTION)
@@ -1195,7 +1564,7 @@ static void rollback_begin(fz_context *ctx, struct tex_engine *self)
   self->rollback.flush = 0;
 }
 
-static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, int *offsetp)
+static bool rollback_end(fz_context *ctx, struct TexEngine *self, int *tracep, int *offsetp)
 {
   int trace_len = self->rollback.trace_len;
   self->rollback.trace_len = NOT_IN_TRANSACTION;
@@ -1204,7 +1573,7 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
   if (trace_len == NOT_IN_TRANSACTION)
     abort();
 
-  process_t *p = get_process(self);
+  TexProcess *p = get_process(self);
 
   // Check if nothing changed
   if (trace_len == p->trace_len)
@@ -1213,7 +1582,7 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
       return false;
     if (p->fd > -1)
     {
-      ask_t a;
+      ProtocolAsk a;
       a.tag = C_FLSH;
       channel_write_ask(self->c, p->fd, &a);
       channel_flush(self->c, p->fd);
@@ -1242,14 +1611,14 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
 // Return false if some contents had not been observed: caller should recheck
 // for changed contents.
 // Return true otherwise (process is ready to be flushed).
-static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
+static bool process_pending_messages(fz_context *ctx, struct TexEngine *self)
 {
   // If the process is marked ready to flush, seen messages have already been
   // consumed
   if (self->rollback.flush)
     return 1;
 
-  process_t *p = get_process(self);
+  TexProcess *p = get_process(self);
 
   // If process is dead, nothing has been missed
   if (p->fd == -1)
@@ -1273,7 +1642,7 @@ static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
     {
       case Q_SEEN:
         {
-          query_t q;
+          ProtocolQuery q;
           if (!read_query(self, self->c, &q))
           {
             close(p->fd);
@@ -1293,7 +1662,7 @@ static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
   return nothing_seen;
 }
 
-static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileentry_t *e, int changed)
+static void rollback_add_change(fz_context *ctx, struct TexEngine *self, FileEntry *e, int changed)
 {
   int trace_len = self->rollback.trace_len;
   // if (changed > 0) changed--;
@@ -1335,26 +1704,61 @@ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileen
   self->rollback.offset = changed;
 }
 
-static void engine_notify_file_changes(txp_engine *_self,
+/**
+ * @brief Record a file change that requires rollback
+ *
+ * Adds the modified file and change position to the rollback transaction.
+ * The engine will roll back to before this change when end_changes() is called.
+ *
+ * @param _self  Engine instance (cast to TexEngine)
+ * @param ctx    MuPDF context
+ * @param entry  File entry that was modified
+ * @param offset Byte offset where change occurred
+ */
+static void engine_notify_file_changes(Engine *_self,
                                        fz_context *ctx,
-                                       fileentry_t *entry,
+                                       FileEntry *entry,
                                        int offset)
 {
   SELF;
   rollback_add_change(ctx, self, entry, offset);
 }
 
-static void engine_begin_changes(txp_engine *_self, fz_context *ctx)
+/**
+ * @brief Begin a file change transaction
+ *
+ * Starts tracking changes for a rollback transaction.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param ctx   MuPDF context
+ *
+ * @see detect_changes Scan for file modifications
+ * @see end_changes  Commit or rollback changes
+ */
+static void engine_begin_changes(Engine *_self, fz_context *ctx)
 {
   SELF;
   rollback_begin(ctx, self);
 }
 
-static void engine_detect_changes(txp_engine *_self, fz_context *ctx)
+/**
+ * @brief Detect file changes by scanning the filesystem
+ *
+ * Iterates over all tracked files and compares their current state
+ * (size, modification time) against the recorded state. When a change
+ * is detected, it's added to the rollback transaction.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param ctx   MuPDF context
+ *
+ * @see begin_changes Start a change transaction
+ * @see end_changes  Commit or rollback changes
+ */
+static void engine_detect_changes(Engine *_self, fz_context *ctx)
 {
   SELF;
 
-  fileentry_t *e;
+  FileEntry *e;
   for (int index = 0; (e = filesystem_scan(self->fs, &index));)
   {
     int changed = scan_entry(ctx, self, e);
@@ -1363,7 +1767,21 @@ static void engine_detect_changes(txp_engine *_self, fz_context *ctx)
   }
 }
 
-static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
+/**
+ * @brief End a file change transaction
+ *
+ * Finalizes the rollback transaction. If changes were detected, the engine
+ * rolls back to before the changes, computes fence points, and restarts
+ * compilation. Returns true if changes were applied and recompilation is needed.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param ctx   MuPDF context
+ * @return true if changes were applied (requiring recompilation)
+ *
+ * @see begin_changes  Start a change transaction
+ * @see detect_changes Scan for file modifications
+ */
+static bool engine_end_changes(Engine *_self, fz_context *ctx)
 {
   SELF;
   int reverted, trace, offset;
@@ -1377,7 +1795,16 @@ static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
   return true;
 }
 
-static txp_engine_status engine_get_status(txp_engine *_self)
+/**
+ * @brief Get the engine status (running or terminated)
+ *
+ * For TeX engines, returns DOC_RUNNING while the child process
+ * is alive and processing, DOC_TERMINATED when it has finished.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @return Current engine status
+ */
+static EngineStatus engine_get_status(Engine *_self)
 {
   SELF;
   if (self->process_count == 0)
@@ -1385,13 +1812,31 @@ static txp_engine_status engine_get_status(txp_engine *_self)
   return get_process(self)->fd > -1 ? DOC_RUNNING : DOC_TERMINATED;
 }
 
-static float engine_scale_factor(txp_engine *_self)
+/**
+ * @brief Get the scaling factor for TeX rendering
+ *
+ * Returns the TeX point scaling factor from the internal DVI parser.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @return Scaling factor for TeX document units
+ */
+static float engine_scale_factor(Engine *_self)
 {
   SELF;
   return incdvi_tex_scale_factor(self->dvi);
 }
 
-static synctex_t *engine_synctex(txp_engine *_self, fz_buffer **buf)
+/**
+ * @brief Get Synctex data for source synchronization
+ *
+ * TeX engines generate Synctex data that enables forward and backward
+ * search between source files and the rendered output.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param buf   If non-NULL, set to buffer containing raw Synctex data
+ * @return Synctex parser instance, or NULL if not available
+ */
+static TexSynctex *engine_synctex(Engine *_self, fz_buffer **buf)
 {
   SELF;
   if (buf)
@@ -1399,21 +1844,51 @@ static synctex_t *engine_synctex(txp_engine *_self, fz_buffer **buf)
   return self->stex;
 }
 
-static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const char *path)
+/**
+ * @brief Find or create a file entry for tracking
+ *
+ * TeX engines track all files touched during compilation. This function
+ * ensures a file entry exists in the filesystem tracking structure.
+ *
+ * @param _self Engine instance (cast to TexEngine)
+ * @param ctx   MuPDF context for memory allocation
+ * @param path  File path to look up
+ * @return File entry for the specified path
+ */
+static FileEntry *engine_find_file(Engine *_self, fz_context *ctx, const char *path)
 {
   SELF;
   return filesystem_lookup_or_create(ctx, self->fs, path);
 }
 
-txp_engine *txp_create_tex_engine(fz_context *ctx,
-                                  const char *engine_path,
-                                  bool use_texlive,
-                                  bool stream_mode,
-                                  const char *inclusion_path,
-                                  const char *tex_name,
-                                  dvi_reshooks hooks)
+/**
+ * @brief Create a new TeX engine from configuration
+ *
+ * Allocates and initializes a new TeX engine with the specified
+ * configuration. The engine is ready to start compilation when
+ * step() is called with restart_if_needed=true.
+ *
+ * @param ctx            MuPDF context for memory allocation
+ * @param engine_path    Path to xetex executable
+ * @param use_texlive    If true, use TexLive provider, otherwise tectonic
+ * @param stream_mode    If true, enable stream mode for VFS handling
+ * @param inclusion_path Additional directories for finding included files
+ * @param tex_name       Name of the main .tex input file
+ * @param loader         DVI resource loader for custom resource loading
+ * @return Engine instance, or NULL if memory allocation fails
+ *
+ * @see create_pdf_engine Create a PDF engine
+ * @see create_dvi_engine Create a DVI engine
+ */
+Engine *create_tex_engine(fz_context *ctx,
+                          const char *engine_path,
+                          bool use_texlive,
+                          bool stream_mode,
+                          const char *inclusion_path,
+                          const char *tex_name,
+                          dvi_resloader loader)
 {
-  struct tex_engine *self = fz_malloc_struct(ctx, struct tex_engine);
+  struct TexEngine *self = fz_malloc_struct(ctx, struct TexEngine);
   self->_class = &_class;
 
   self->name = fz_strdup(ctx, tex_name);
@@ -1429,12 +1904,12 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
   self->c = channel_new();
   self->process_count = 0;
 
-  self->dvi = incdvi_new(ctx, hooks);
+  self->dvi = incdvi_new(ctx, loader);
   self->use_texlive = use_texlive;
   self->stream_mode = stream_mode;
 
   self->stex = synctex_new(ctx);
   self->rollback.trace_len = NOT_IN_TRANSACTION;
 
-  return (txp_engine*)self;
+  return (Engine*)self;
 }

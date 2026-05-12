@@ -94,7 +94,7 @@ static char extract_bits(int *c, int count)
 
 static void push_codepoint(fz_context *ctx, vstack *stack, int cp)
 {
-  char bytes[4], count = 0; 
+  char bytes[4], count = 0;
   if (cp < 0x80)
   {
     count = 1;
