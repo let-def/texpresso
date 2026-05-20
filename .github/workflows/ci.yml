@@ -100,6 +100,15 @@ jobs:
       - name: Run tests – Stream pipe
         run: make test-stream-pipe || echo "fail" > stream-pipe.status
 
+      - name: Run tests – Register (deferred query)
+        run: make test-register || echo "fail" > register.status
+
+      - name: Run tests – Lookup-file (failed + restart)
+        run: make test-lookup-file || echo "fail" > lookup-file.status
+
+      - name: Run tests – Pause/resume
+        run: make test-pause-resume || echo "fail" > pause-resume.status
+
       - name: Report summary
         if: always()
         run: |
@@ -112,6 +121,9 @@ jobs:
           [ ! -f texpresso-tectonic.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f stream.status ]      && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f stream-pipe.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f register.status ]    && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f lookup-file.status ] && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f pause-resume.status ] && pass=$((pass+1)) || fail=$((fail+1))
           echo "Passed: $pass" >> "$GITHUB_STEP_SUMMARY"
           echo "Failed: $fail"  >> "$GITHUB_STEP_SUMMARY"
           [ $fail -eq 0 ]
