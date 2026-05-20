@@ -135,6 +135,18 @@ Asking the window manager to keep TeXpresso window above the others, or not. Thi
 Pre-register a filename that the editor will provide later via `open`. When the engine tries to read this file and it is not yet available, the driver pauses the engine and emits `request-file`. Once the editor sends `open` for the path, the engine resumes without restarting.
 
 ```scheme
+(pause)
+(resume)
+```
+
+Suspend (or resume) engine stepping. While paused, TeXpresso keeps reading
+stdin and applying editor commands (`open`, `register`, etc.) but does not
+advance the TeX engine. Useful at startup with `-stream`: the editor can send
+`(pause)`, push all needed files via `(register)` and `(open)`, then send
+`(resume)` to begin compilation with the VFS fully primed — avoiding restarts
+from missing files.
+
+```scheme
 (synctex-forward "path" line)
 ```
 

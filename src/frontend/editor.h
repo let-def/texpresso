@@ -33,6 +33,8 @@ enum EDITOR_COMMAND
   EDIT_CROP,
   EDIT_INVERT,
   EDIT_REGISTER,
+  EDIT_PAUSE,
+  EDIT_RESUME,
 };
 
 struct editor_change
@@ -119,6 +121,12 @@ struct editor_command
     struct {
       const char *path;
     } reg;
+
+    struct {
+    } pause;
+
+    struct {
+    } resume;
   };
 };
 

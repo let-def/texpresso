@@ -293,6 +293,18 @@ bool editor_parse(fz_context *ctx,
         .reg = { .path = val_string(ctx, stack, path) },
     };
   }
+  else if (strcmp(verb, "pause") == 0)
+  {
+    if (len != 1)
+      goto arity;
+    *out = (struct editor_command){.tag = EDIT_PAUSE, .pause = {}};
+  }
+  else if (strcmp(verb, "resume") == 0)
+  {
+    if (len != 1)
+      goto arity;
+    *out = (struct editor_command){.tag = EDIT_RESUME, .resume = {}};
+  }
   else
   {
     fprintf(stderr, "[command] unknown verb: %s\n", verb);
