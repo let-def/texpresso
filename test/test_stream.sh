@@ -1,5 +1,8 @@
 #!/bin/sh
-# Test stream mode by piping an open command via stdin.
+# Deterministic stream-mode test: pause the engine, prime the VFS with the
+# root file via register + open, then resume. The engine has every file it
+# needs before it ever steps — no busy-waiting, no race, no watchdog needed.
+# Exit status is the test result.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -14,25 +17,24 @@ FIFO=$(mktemp -u /tmp/texpresso-fifo-XXXXXX)
 mkfifo "$FIFO"
 trap 'rm -f "$FIFO"; kill "$PID" 2>/dev/null || true' EXIT
 
-# Escape content for sexp string: \ → \\, " → \", newline → \n, tab → \t
+# Escape content for sexp string
 CONTENT=$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' "$TEX_FILE" | \
   awk '{ if (NR > 1) printf "\\n"; printf "%s", $0 }')
-
-SEXP="(open \"$TEX_FILE\" \"$CONTENT\")"
 
 SDL_VIDEODRIVER=dummy build/texpresso -stream -test-initialize test/simple.tex \
   < "$FIFO" 2>/dev/null &
 PID=$!
 
-# Keep FIFO open until texpresso processes the command
 exec 3>"$FIFO"
-printf '%s\n' "$SEXP" >&3
+printf '(pause)\n' >&3
+printf '(register "%s")\n' "$TEX_FILE" >&3
+printf '(open "%s" "%s")\n' "$TEX_FILE" "$CONTENT" >&3
+printf '(resume)\n' >&3
+exec 3>&-
 
-# Wait for texpresso to finish, then close
 if wait "$PID"; then
   echo "PASS: stream-pipe test"
 else
   echo "FAIL: texpresso exited with error"
   exit 1
 fi
-exec 3>&-
