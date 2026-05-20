@@ -109,13 +109,13 @@ test-stream:
 test-stream-pipe:
 	timeout $(TEST_TIMEOUT) test/test_stream.sh
 
-test-request-file:
-	timeout $(TEST_TIMEOUT) bash test/test-request-file.sh
-
 test-register:
 	timeout $(TEST_TIMEOUT) bash test/test-register.sh
+
+test-lookup-file:
+	timeout $(TEST_TIMEOUT) bash test/test-lookup-file.sh
 
 test-pause-resume:
 	timeout $(TEST_TIMEOUT) bash test/test-pause-resume.sh
 
-.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-stream-pipe test-open-base64 test-request-file test-register test-pause-resume
+.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-stream-pipe test-open-base64 test-register test-lookup-file test-pause-resume
