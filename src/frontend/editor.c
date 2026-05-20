@@ -611,10 +611,13 @@ void editor_notify_lookup(const char *path,
   {
     case LOOKUP_FAILED:
       status_msg = "failed";
+      break;
     case LOOKUP_PROMISED:
       status_msg = "promised";
+      break;
     case LOOKUP_SUCCESSFUL:
       status_msg = "successful";
+      break;
     default:
       abort();
   }
