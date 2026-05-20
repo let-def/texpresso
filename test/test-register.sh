@@ -19,18 +19,18 @@ exec 3>"$FIFO"
 # Pre-register the file before the engine asks for it
 printf '(register "%s")\n' "$TARGET" >&3
 
-# Wait for request-file (engine deferred Q_OPRD for the promised file)
-while ! grep -q "request-file \"$TARGET\"" "$OUTFILE" 2>/dev/null; do
+# Wait for (lookup-file read promised "...") — engine deferred Q_OPRD for the promised file
+while ! grep -q "lookup-file read promised \"$TARGET\"" "$OUTFILE" 2>/dev/null; do
   sleep 0.5
   if ! kill -0 "$PID" 2>/dev/null; then
-    echo "FAIL: texpresso exited before emitting request-file for $TARGET"
+    echo "FAIL: texpresso exited before emitting lookup-file promised for $TARGET"
     echo "stdout contents:"
     cat "$OUTFILE"
     exit 1
   fi
 done
 
-echo "Got request-file for: $TARGET"
+echo "Got lookup-file promised for: $TARGET"
 
 # Provide the missing file content (resolves deferred query)
 printf '(open "%s" "Included content.\\n")\n' "$TARGET" >&3
