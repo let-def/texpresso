@@ -788,12 +788,15 @@ static void interpret_open(struct persistent_state *ps,
                            const void *data,
                            int size)
 {
-  int go_up = 0;
-  path = relative_path(path, ps->doc_path, &go_up);
-  if (go_up > 0)
+  if (path[0] == '/')
   {
-    fprintf(stderr, "[command] open %s: file has a different root, skipping\n", path);
-    return;
+    int go_up = 0;
+    path = relative_path(path, ps->doc_path, &go_up);
+    if (go_up > 0)
+    {
+      fprintf(stderr, "[command] open %s: file has a different root, skipping\n", path);
+      return;
+    }
   }
 
   fileentry_t *e = send(find_file, ui->eng, ps->ctx, path);
