@@ -70,6 +70,7 @@ struct persistent_state {
   const char *exe_path, *doc_path, *doc_name, *inclusion_path;
 
   bool line_output, use_tectonic, use_texlive, initialize_only, stream_mode;
+  bool paused;
 };
 
 bool texpresso_main(struct persistent_state *ps);

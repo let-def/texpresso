@@ -1081,6 +1081,17 @@ static void interpret_command(struct persistent_state *ps,
     case EDIT_REGISTER:
       interpret_register(ps, ui, cmd.reg.path);
       break;
+
+    case EDIT_PAUSE:
+      ps->paused = true;
+      fprintf(stderr, "[command] pause: engine stepping suspended\n");
+      break;
+
+    case EDIT_RESUME:
+      ps->paused = false;
+      fprintf(stderr, "[command] resume: engine stepping enabled\n");
+      schedule_event(SCAN_EVENT);
+      break;
   }
 }
 
@@ -1181,7 +1192,8 @@ bool texpresso_main(struct persistent_state *ps)
   ui->last_click_ticks = SDL_GetTicks() - 200000000;
 
   bool quit = 0, reload = 0;
-  send(step, ui->eng, ps->ctx, true);
+  if (!ps->paused)
+    send(step, ui->eng, ps->ctx, true);
   render(ps->ctx, ui);
   schedule_event(RELOAD_EVENT);
 
@@ -1251,14 +1263,15 @@ bool texpresso_main(struct persistent_state *ps)
 
     if (send(end_changes, ui->eng, ps->ctx))
     {
-      send(step, ui->eng, ps->ctx, true);
+      if (!ps->paused)
+        send(step, ui->eng, ps->ctx, true);
       schedule_event(RELOAD_EVENT);
     }
 
     // Process document
     {
       int before_page_count = send(page_count, ui->eng);
-      bool advance = advance_engine(ps->ctx, ui);
+      bool advance = !ps->paused && advance_engine(ps->ctx, ui);
       int after_page_count = send(page_count, ui->eng);
       fflush(stdout);
 
@@ -1465,7 +1478,8 @@ bool texpresso_main(struct persistent_state *ps)
           send(detect_changes, ui->eng, ps->ctx);
           if (send(end_changes, ui->eng, ps->ctx))
           {
-            send(step, ui->eng, ps->ctx, true);
+            if (!ps->paused)
+              send(step, ui->eng, ps->ctx, true);
             schedule_event(RELOAD_EVENT);
           }
           break;
@@ -1476,7 +1490,8 @@ bool texpresso_main(struct persistent_state *ps)
           flush_changes(ps, ui);
           if (send(end_changes, ui->eng, ps->ctx))
           {
-            send(step, ui->eng, ps->ctx, true);
+            if (!ps->paused)
+              send(step, ui->eng, ps->ctx, true);
             schedule_event(RELOAD_EVENT);
           }
           break;
