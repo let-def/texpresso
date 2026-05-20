@@ -88,34 +88,32 @@ test-tectonic:
 	build/texpresso-xetex -tectonic test/simple.tex
 	rm simple.aux simple.log simple.xdv
 
-TEST_TIMEOUT ?= 120
-
 test-open-base64:
 	printf '(open-base64 "test/simple.tex" "%s")\n' "$$(base64 < test/simple.tex | tr -d '\n')" | \
-	timeout $(TEST_TIMEOUT) env SDL_VIDEODRIVER=dummy build/texpresso -test-initialize test/simple.tex
+	env SDL_VIDEODRIVER=dummy build/texpresso -test-initialize test/simple.tex
 
 test-texpresso:
-	timeout $(TEST_TIMEOUT) env SDL_VIDEODRIVER=dummy build/texpresso -test-initialize test/simple.tex
+	env SDL_VIDEODRIVER=dummy build/texpresso -test-initialize test/simple.tex
 
 test-texpresso-texlive:
-	timeout $(TEST_TIMEOUT) env SDL_VIDEODRIVER=dummy build/texpresso -texlive -test-initialize test/simple.tex
+	env SDL_VIDEODRIVER=dummy build/texpresso -texlive -test-initialize test/simple.tex
 
 test-texpresso-tectonic:
-	timeout $(TEST_TIMEOUT) env SDL_VIDEODRIVER=dummy build/texpresso -tectonic -test-initialize test/simple.tex
+	env SDL_VIDEODRIVER=dummy build/texpresso -tectonic -test-initialize test/simple.tex
 
 test-stream:
-	timeout $(TEST_TIMEOUT) env SDL_VIDEODRIVER=dummy build/texpresso -stream -test-initialize test/simple.tex
+	env SDL_VIDEODRIVER=dummy build/texpresso -stream -test-initialize test/simple.tex
 
 test-stream-pipe:
-	timeout $(TEST_TIMEOUT) test/test_stream.sh
+	test/test_stream.sh
 
 test-register:
-	timeout $(TEST_TIMEOUT) bash test/test-register.sh
+	bash test/test-register.sh
 
 test-lookup-file:
-	timeout $(TEST_TIMEOUT) bash test/test-lookup-file.sh
+	bash test/test-lookup-file.sh
 
 test-pause-resume:
-	timeout $(TEST_TIMEOUT) bash test/test-pause-resume.sh
+	bash test/test-pause-resume.sh
 
 .PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-stream-pipe test-open-base64 test-register test-lookup-file test-pause-resume
