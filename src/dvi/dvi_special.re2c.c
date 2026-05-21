@@ -918,6 +918,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           float c[1];
           vstack_get_floats(ctx, stack, c, 1);
           color_set_gray(st->gs.colors.fill, c[0]);
+          active_pattern.active = 0;
           break;
         }
         case PDF_OP_RG:
@@ -932,6 +933,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           float c[3];
           vstack_get_floats(ctx, stack, c, 3);
           color_set_rgb(st->gs.colors.fill, c[0], c[1], c[2]);
+          active_pattern.active = 0;
           break;
         }
         case PDF_OP_K:
@@ -946,6 +948,7 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           float c[4];
           vstack_get_floats(ctx, stack, c, 4);
           color_set_cmyk(st->gs.colors.fill, c[0], c[1], c[2], c[3]);
+          active_pattern.active = 0;
           break;
         }
 
@@ -1067,8 +1070,9 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
 
         case PDF_OP_f:
         case PDF_OP_F:
-          if (dc->dev)
-          {
+          if (active_pattern.active && !in_pattern_tile) {
+            render_pdf_pattern_fill(ctx, dc, st, 0);
+          } else if (dc->dev) {
             fz_matrix ctm = dvi_get_ctm(dc, st);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 0, ctm, device_cs(ctx),
@@ -1078,8 +1082,9 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
           break;
 
         case PDF_OP_f_star:
-          if (dc->dev)
-          {
+          if (active_pattern.active && !in_pattern_tile) {
+            render_pdf_pattern_fill(ctx, dc, st, 1);
+          } else if (dc->dev) {
             fz_matrix ctm = dvi_get_ctm(dc, st);
             fz_path *path = get_path(ctx, dc);
             fz_fill_path(ctx, dc->dev, path, 1, ctm, device_cs(ctx),
@@ -1481,7 +1486,30 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
         {
           val array = vstack_get_values(ctx, stack);
           int n = val_array_length(ctx, stack, array);
-          if (n >= 1 && val_is_number(val_array_get(ctx, stack, array, 0))) {
+          // Check if last operand is a pattern name (e.g., /pgfpatN)
+          if (n >= 1 && val_is_name(val_array_get(ctx, stack, array, n - 1))) {
+            const char *name = val_as_name(ctx, stack, val_array_get(ctx, stack, array, n - 1));
+            if (name && memcmp(name, "pgfpat", 6) == 0) {
+              // Pattern fill: R G B /pgfpatN scn (uncolored) or /pgfpatN scn (colored)
+              int pi = pdf_pat_lookup(name);
+              if (pi >= 0) {
+                active_pattern.active = 1;
+                active_pattern.pat_index = pi;
+                // Extract RGB color for uncolored patterns
+                if (n >= 4) {
+                  active_pattern.color[0] = val_number(ctx, val_array_get(ctx, stack, array, 0));
+                  active_pattern.color[1] = val_number(ctx, val_array_get(ctx, stack, array, 1));
+                  active_pattern.color[2] = val_number(ctx, val_array_get(ctx, stack, array, 2));
+                } else {
+                  active_pattern.color[0] = 0;
+                  active_pattern.color[1] = 0;
+                  active_pattern.color[2] = 0;
+                }
+              }
+            }
+          } else if (n >= 1 && val_is_number(val_array_get(ctx, stack, array, 0))) {
+            // Normal color — clear pattern
+            active_pattern.active = 0;
             if (n == 1) {
               color_set_gray(st->gs.colors.fill, val_number(ctx, val_array_get(ctx, stack, array, 0)));
             } else if (n == 3) {
@@ -1975,6 +2003,140 @@ static int   ps_depth()         { return ps_sp; }
 static void  ps_clear()         { ps_sp = 0; }
 void ps_state_reset()           { ps_sp = 0; /* preserve ps_func_count across pages */ }
 
+// ---- PDF Pattern Table ----
+// Stores pattern definitions received via dvipdfmx/xetex specials:
+//   pdf:stream @pgfpatternobjectN (content) << /Type /Pattern ... >>
+// Content is a PDF content stream (using m/l/c/S/f etc.)
+#define PDF_PAT_MAX   16
+#define PDF_PAT_BODY  1024
+
+typedef struct {
+  char obj_name[48];      // e.g., "@pgfpatternobject1"
+  char pat_name[32];      // e.g., "pgfpat1" (mapped via pdf:put)
+  char content[PDF_PAT_BODY]; // PDF content stream
+  int content_len;
+  float bbox[4];          // [llx lly urx ury]
+  float xstep, ystep;
+  float matrix[6];        // pattern matrix [a b c d e f]
+  int paint_type;         // 1=colored, 2=uncolored
+} pdf_pat_def;
+
+static pdf_pat_def pdf_pats[PDF_PAT_MAX];
+static int pdf_pat_count = 0;
+static int in_pattern_tile = 0; // recursion guard
+
+// Active pattern state: set by scn, consumed by fill operators
+static struct {
+  int active;              // 1 if pattern fill mode is on
+  int pat_index;           // index into pdf_pats[]
+  float color[3];          // pattern color (for uncolored patterns)
+} active_pattern = {0, -1, {0,0,0}};
+
+// Parse a float value from a string, advancing the pointer
+static float parse_pat_float(const char **pp, const char *end)
+{
+  while (*pp < end && (**pp == ' ' || **pp == '\n' || **pp == '\r')) (*pp)++;
+  char tmp[64]; int ti = 0;
+  while (*pp < end && **pp != ' ' && **pp != '\n' && **pp != '\r' &&
+         **pp != '/' && **pp != ']' && **pp != '>' && ti < 63)
+    tmp[ti++] = *(*pp)++;
+  tmp[ti] = 0;
+  return (ti > 0) ? strtof(tmp, NULL) : 0.0f;
+}
+
+// Parse the dictionary part of a pdf:stream special for pattern attributes
+static void
+parse_pat_dict(pdf_pat_def *pat, const char *dict, int dict_len)
+{
+  const char *p = dict, *end = dict + dict_len;
+  pat->bbox[0] = 0; pat->bbox[1] = 0; pat->bbox[2] = 1; pat->bbox[3] = 1;
+  pat->xstep = 1; pat->ystep = 1;
+  pat->matrix[0] = 1; pat->matrix[1] = 0; pat->matrix[2] = 0;
+  pat->matrix[3] = 1; pat->matrix[4] = 0; pat->matrix[5] = 0;
+  pat->paint_type = 2;
+
+  while (p < end) {
+    while (p < end && (*p == ' ' || *p == '\n' || *p == '\r')) p++;
+    if (p >= end) break;
+    if (p + 10 <= end && memcmp(p, "/PaintType", 10) == 0) {
+      p += 10; pat->paint_type = (int)parse_pat_float(&p, end);
+    } else if (p + 5 <= end && memcmp(p, "/BBox", 5) == 0) {
+      p += 5; while (p < end && *p != '[') p++;
+      if (p < end) { p++;
+        for (int i = 0; i < 4; i++) pat->bbox[i] = parse_pat_float(&p, end);
+        while (p < end && *p != ']') p++; if (p < end) p++;
+      }
+    } else if (p + 6 <= end && memcmp(p, "/XStep", 6) == 0) {
+      p += 6; pat->xstep = parse_pat_float(&p, end);
+    } else if (p + 6 <= end && memcmp(p, "/YStep", 6) == 0) {
+      p += 6; pat->ystep = parse_pat_float(&p, end);
+    } else if (p + 7 <= end && memcmp(p, "/Matrix", 7) == 0) {
+      p += 7; while (p < end && *p != '[') p++;
+      if (p < end) { p++;
+        for (int i = 0; i < 6; i++) pat->matrix[i] = parse_pat_float(&p, end);
+        while (p < end && *p != ']') p++; if (p < end) p++;
+      }
+    } else { p++; }
+  }
+}
+
+// Store a pattern from a pdf:stream special.
+static void
+pdf_pat_define(const char *obj_name, int onl,
+               const char *content, int cl,
+               const char *dict, int dl)
+{
+  if (!obj_name || onl < 18) return;
+  const char *check = obj_name;
+  if (*check == '@') check++;
+  if (memcmp(check, "pgfpatternobject", 16) != 0) return;
+
+  pdf_pat_def *pat = NULL;
+  for (int i = 0; i < pdf_pat_count; i++) {
+    if ((int)strlen(pdf_pats[i].obj_name) == onl &&
+        memcmp(pdf_pats[i].obj_name, obj_name, onl) == 0) {
+      pat = &pdf_pats[i]; break;
+    }
+  }
+  if (!pat) {
+    if (pdf_pat_count >= PDF_PAT_MAX) return;
+    pat = &pdf_pats[pdf_pat_count++];
+  }
+  int nl = (onl > 47) ? 47 : onl;
+  memcpy(pat->obj_name, obj_name, nl); pat->obj_name[nl] = 0;
+  pat->pat_name[0] = 0;
+  int sl = (cl > PDF_PAT_BODY - 1) ? PDF_PAT_BODY - 1 : cl;
+  memcpy(pat->content, content, sl); pat->content[sl] = 0;
+  pat->content_len = sl;
+  parse_pat_dict(pat, dict, dl);
+}
+
+// Map /pgfpatN to @pgfpatternobjectN (from pdf:put @pgfpatterns << ... >>)
+static void
+pdf_pat_map_name(const char *pat_name, int pnl,
+                 const char *obj_name, int onl)
+{
+  for (int i = 0; i < pdf_pat_count; i++) {
+    if ((int)strlen(pdf_pats[i].obj_name) == onl &&
+        memcmp(pdf_pats[i].obj_name, obj_name, onl) == 0) {
+      int ml = (pnl > 31) ? 31 : pnl;
+      memcpy(pdf_pats[i].pat_name, pat_name, ml);
+      pdf_pats[i].pat_name[ml] = 0;
+      return;
+    }
+  }
+}
+
+// Look up a pattern by its /pgfpatN name. Returns index or -1.
+static int pdf_pat_lookup(const char *pat_name)
+{
+  for (int i = 0; i < pdf_pat_count; i++)
+    if (strcmp(pdf_pats[i].pat_name, pat_name) == 0) return i;
+  return -1;
+}
+
+
+
 // Forward declaration
 static void ps_define_func(const char *name, int nl, const char *body, int bl);
 static const char *ps_lookup_func(const char *name);
@@ -2057,6 +2219,128 @@ static const char *ps_lookup_func(const char *name)
 enum { PS_COLOR_FILL=0, PS_COLOR_STROKE=1, PS_COLOR_BOTH=2 };
 static void ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
                           const char *body, int body_len, int color_target);
+
+// Render a PDF tiling pattern fill.
+// Called from pdf_code fill operators (f/F/b/B) when active_pattern is set.
+// Clips to the fill path, then tiles the pattern content stream.
+static void
+render_pdf_pattern_fill(fz_context *ctx, dvi_context *dc, dvi_state *st, int even_odd)
+{
+  if (!dc->dev || !dc->path || active_pattern.pat_index < 0) return;
+
+  pdf_pat_def *pat = &pdf_pats[active_pattern.pat_index];
+  if (pat->content_len <= 0 || pat->xstep <= 0 || pat->ystep <= 0) return;
+
+  in_pattern_tile = 1;
+
+  // Save graphics state
+  float saved_fill[3], saved_line[3];
+  float saved_fa, saved_sa, saved_lw;
+  fz_matrix saved_ctm = st->gs.ctm;
+  int saved_h = st->gs.h, saved_v = st->gs.v;
+  memcpy(saved_fill, st->gs.colors.fill, sizeof(saved_fill));
+  memcpy(saved_line, st->gs.colors.line, sizeof(saved_line));
+  saved_fa = st->gs.fill_alpha;
+  saved_sa = st->gs.stroke_alpha;
+  saved_lw = st->gs.line_width;
+
+  // Set pattern color for drawing (uncolored patterns use the color from scn)
+  if (pat->paint_type == 2) {
+    color_set_rgb(st->gs.colors.fill,
+                  active_pattern.color[0], active_pattern.color[1], active_pattern.color[2]);
+    color_set_rgb(st->gs.colors.line,
+                  active_pattern.color[0], active_pattern.color[1], active_pattern.color[2]);
+  }
+
+  // Clip to the fill path
+  fz_path *clip_path = dc->path;
+  dc->path = NULL;
+  fz_matrix ctm = dvi_get_ctm(dc, st);
+  fz_clip_path(ctx, dc->dev, clip_path, even_odd, ctm, fz_infinite_rect);
+  st->gs.clip_depth += 1;
+
+  // Build pattern matrix: pat->matrix transforms pattern space to user space
+  fz_matrix pat_mat;
+  pat_mat.a = pat->matrix[0]; pat_mat.b = pat->matrix[1];
+  pat_mat.c = pat->matrix[2]; pat_mat.d = pat->matrix[3];
+  pat_mat.e = pat->matrix[4]; pat_mat.f = pat->matrix[5];
+
+  // Combined transform: pattern space → user space → device space
+  fz_matrix tile_ctm = fz_concat(pat_mat, ctm);
+
+  // Calculate fill bounds in device space
+  fz_rect fill_bounds = fz_bound_path(ctx, clip_path, NULL, ctm);
+
+  // Transform fill bounds to pattern space for tile iteration
+  fz_matrix inv_tile = fz_invert_matrix(tile_ctm);
+  fz_point p0 = fz_transform_point_xy(fill_bounds.x0, fill_bounds.y0, inv_tile);
+  fz_point p1 = fz_transform_point_xy(fill_bounds.x1, fill_bounds.y0, inv_tile);
+  fz_point p2 = fz_transform_point_xy(fill_bounds.x0, fill_bounds.y1, inv_tile);
+  fz_point p3 = fz_transform_point_xy(fill_bounds.x1, fill_bounds.y1, inv_tile);
+
+  // Find bounding box in pattern space
+  float ps_x0 = fz_min(fz_min(p0.x, p1.x), fz_min(p2.x, p3.x));
+  float ps_y0 = fz_min(fz_min(p0.y, p1.y), fz_min(p2.y, p3.y));
+  float ps_x1 = fz_max(fz_max(p0.x, p1.x), fz_max(p2.x, p3.x));
+  float ps_y1 = fz_max(fz_max(p0.y, p1.y), fz_max(p2.y, p3.y));
+
+  // Calculate tile range
+  float tw = pat->xstep, th = pat->ystep;
+  int ix0 = (int)floorf(ps_x0 / tw) - 1;
+  int iy0 = (int)floorf(ps_y0 / th) - 1;
+  int ix1 = (int)ceilf(ps_x1 / tw) + 1;
+  int iy1 = (int)ceilf(ps_y1 / th) + 1;
+
+  // Cap tile count
+  if (ix1 - ix0 > 500) ix1 = ix0 + 500;
+  if (iy1 - iy0 > 500) iy1 = iy0 + 500;
+
+  for (int iy = iy0; iy <= iy1; iy++) {
+    for (int ix = ix0; ix <= ix1; ix++) {
+      float tx = ix * tw;
+      float ty = iy * th;
+
+      // Set CTM for this tile: translate in pattern space, then apply pat→device transform
+      fz_matrix tile_translate = fz_make_matrix(1, 0, 0, 1, tx, ty);
+      st->gs.ctm = fz_concat(tile_translate, tile_ctm);
+      st->gs.h = st->registers.h;
+      st->gs.v = st->registers.v;
+
+      // Save and clear path for tile content execution
+      fz_path *saved_path = dc->path;
+      dc->path = NULL;
+
+      // Execute the PDF content stream for this tile
+      pdf_code(ctx, dc, st, pat->content, pat->content + pat->content_len);
+
+      // Clean up any path left by content
+      if (dc->path) { drop_path(ctx, dc); dc->path = NULL; }
+      dc->path = saved_path;
+    }
+  }
+
+  // Pop clip
+  if (st->gs.clip_depth > 0 && dc->dev) {
+    fz_pop_clip(ctx, dc->dev);
+    st->gs.clip_depth -= 1;
+  }
+
+  // Restore the fill path
+  dc->path = clip_path;
+
+  // Restore graphics state
+  st->gs.ctm = saved_ctm;
+  st->gs.h = saved_h;
+  st->gs.v = saved_v;
+  memcpy(st->gs.colors.fill, saved_fill, sizeof(saved_fill));
+  memcpy(st->gs.colors.line, saved_line, sizeof(saved_line));
+  st->gs.fill_alpha = saved_fa;
+  st->gs.stroke_alpha = saved_sa;
+  st->gs.line_width = saved_lw;
+
+  in_pattern_tile = 0;
+}
+
 
 static bool
 ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t lim)
@@ -2188,17 +2472,10 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
     else if (strcmp(tmp, "pgffill") == 0) {
       const char *b = ps_lookup_func("pgffc");
       if (b && *b) {
-        if (strstr(b, "pgfpat")) {
-          float pr = 1, pg = 1, pb = 1;
-          sscanf(b, "%f %f %f", &pr, &pg, &pb);
-          color_set_rgb(st->gs.colors.fill, pr, pg, pb);
-          color_set_rgb(st->gs.colors.line, pr, pg, pb);
-        } else {
-          ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
-        }
+        ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
       }
-      float *fc = st->gs.colors.fill;
       if (dc->dev) {
+        float *fc = st->gs.colors.fill;
         fz_matrix ctm = dvi_get_ctm(dc, st);
         fz_fill_path(ctx, dc->dev, get_path(ctx,dc), 0, ctm,
                      device_cs(ctx), fc, st->gs.fill_alpha, color_params);
@@ -2442,14 +2719,7 @@ ps_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t 
       // pgfr = PGF fill (dvips alias for pgffill)
       const char *b = ps_lookup_func("pgffc");
       if (b && *b) {
-        if (strstr(b, "pgfpat")) {
-          float pr = 1, pg = 1, pb = 1;
-          sscanf(b, "%f %f %f", &pr, &pg, &pb);
-          color_set_rgb(st->gs.colors.fill, pr, pg, pb);
-          color_set_rgb(st->gs.colors.line, pr, pg, pb);
-        } else {
-          ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
-        }
+        ps_exec_body(ctx, dc, st, b, strlen(b), PS_COLOR_FILL);
       }
       if (dc->dev) {
         fz_matrix ctm = dvi_get_ctm(dc, st);
@@ -2808,6 +3078,37 @@ ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
       rendered = true;
       // Do NOT drop path — pgfstr may follow within the same body
     }
+    // Raw PS stroke/fill (used in PaintProc bodies)
+    else if (strcmp(tmp, "stroke") == 0) {
+      if (dc->dev && dc->path) {
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        fz_stroke_state sst;
+        get_stroke_state(ctx, st, &sst);
+        fz_stroke_path(ctx, dc->dev, dc->path, &sst, ctm,
+                       device_cs(ctx), st->gs.colors.line, st->gs.stroke_alpha, color_params);
+      }
+      drop_path(ctx, dc);
+      rendered = true;
+    }
+    else if (strcmp(tmp, "fill") == 0 || strcmp(tmp, "eofill") == 0) {
+      if (dc->dev && dc->path) {
+        int eofill = (tmp[0] == 'e') ? 1 : 0;
+        fz_matrix ctm = dvi_get_ctm(dc, st);
+        fz_fill_path(ctx, dc->dev, dc->path, eofill, ctm,
+                     device_cs(ctx), st->gs.colors.fill, st->gs.fill_alpha, color_params);
+      }
+      drop_path(ctx, dc);
+      rendered = true;
+    }
+    // Pattern/dict-related no-ops (appear in pattern body wrappers)
+    else if (strcmp(tmp, "begin") == 0 || strcmp(tmp, "end") == 0 ||
+             strcmp(tmp, "dict") == 0 || strcmp(tmp, "bind") == 0 ||
+             strcmp(tmp, "def") == 0 || strcmp(tmp, "initgraphics") == 0 ||
+             strcmp(tmp, "setcolorspace") == 0 || strcmp(tmp, "setcolor") == 0 ||
+             strcmp(tmp, "makepattern") == 0 || strcmp(tmp, "setpattern") == 0 ||
+             strcmp(tmp, "matrix") == 0) {
+      // no-op: these are pattern machinery commands we don't need
+    }
     // ignore other commands in body
   }
 
@@ -3083,6 +3384,103 @@ dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, curs
   "literal" ws+ ("direct" ws+)?
   { return pdf_code(ctx, dc, st, cur, lim); }
 
+  "stream" ws+
+  {
+    // Parse: stream @name (content) << dict >>
+    // Skip whitespace
+    while (cur < lim && (*cur == ' ' || *cur == '\t')) cur++;
+    // Read object name
+    const char *obj_start = cur;
+    while (cur < lim && *cur != ' ' && *cur != '\t' && *cur != '(') cur++;
+    int obj_len = (int)(cur - obj_start);
+    while (cur < lim && (*cur == ' ' || *cur == '\t')) cur++;
+    // Read content in parentheses: (...)
+    const char *content = NULL;
+    int content_len = 0;
+    if (cur < lim && *cur == '(') {
+      cur++; // skip (
+      content = cur;
+      int depth = 1;
+      while (cur < lim && depth > 0) {
+        if (*cur == '(' && (cur == content || *(cur-1) != '\\')) depth++;
+        else if (*cur == ')' && (cur == content || *(cur-1) != '\\')) depth--;
+        if (depth > 0) cur++;
+      }
+      content_len = (int)(cur - content);
+      if (cur < lim) cur++; // skip closing )
+    }
+    while (cur < lim && (*cur == ' ' || *cur == '\t')) cur++;
+    // Read dictionary in << ... >>
+    const char *dict = NULL;
+    int dict_len = 0;
+    if (cur + 1 < lim && cur[0] == '<' && cur[1] == '<') {
+      cur += 2; // skip <<
+      dict = cur;
+      int dd = 1;
+      while (cur + 1 < lim && dd > 0) {
+        if (cur[0] == '<' && cur[1] == '<') { dd++; cur += 2; }
+        else if (cur[0] == '>' && cur[1] == '>') { dd--; if (dd > 0) cur += 2; }
+        else cur++;
+      }
+      dict_len = (int)(cur - dict);
+    }
+    // Store pattern definition if it's a pattern object
+    if (content && obj_len > 0) {
+      pdf_pat_define(obj_start, obj_len, content, content_len,
+                     dict ? dict : "", dict_len);
+    }
+    return 1;
+  }
+
+  "obj" ws+
+  {
+    // pdf:obj @name << dict >> — create named dictionary object (no-op for us)
+    return 1;
+  }
+
+  "put" ws+
+  {
+    // Parse: put @objname << /key1 @val1 /key2 @val2 ... >>
+    // We specifically look for: put @pgfpatterns << /pgfpatN @pgfpatternobjectN >>
+    while (cur < lim && (*cur == ' ' || *cur == '\t')) cur++;
+    const char *obj_start = cur;
+    while (cur < lim && *cur != ' ' && *cur != '\t' && *cur != '<') cur++;
+    int obj_len = (int)(cur - obj_start);
+    // Check if this is @pgfpatterns
+    if (obj_len >= 13 && memcmp(obj_start[0] == '@' ? obj_start+1 : obj_start,
+                                 "pgfpatterns", 11) == 0) {
+      while (cur < lim && (*cur == ' ' || *cur == '\t')) cur++;
+      if (cur + 1 < lim && cur[0] == '<' && cur[1] == '<') {
+        cur += 2; // skip <<
+        // Parse key-value pairs: /pgfpatN @pgfpatternobjectN
+        while (cur < lim) {
+          while (cur < lim && (*cur == ' ' || *cur == '\t' || *cur == '\n')) cur++;
+          if (cur + 1 < lim && cur[0] == '>' && cur[1] == '>') break;
+          if (cur < lim && *cur == '/') {
+            cur++; // skip /
+            const char *pn = cur;
+            while (cur < lim && *cur != ' ' && *cur != '\t' && *cur != '>' && *cur != '/') cur++;
+            int pnl = (int)(cur - pn);
+            while (cur < lim && (*cur == ' ' || *cur == '\t')) cur++;
+            const char *on = cur;
+            while (cur < lim && *cur != ' ' && *cur != '\t' && *cur != '>' && *cur != '/') cur++;
+            int onl = (int)(cur - on);
+            if (pnl > 0 && onl > 0) {
+              pdf_pat_map_name(pn, pnl, on, onl);
+            }
+          } else {
+            cur++;
+          }
+        }
+      }
+    }
+    return 1;
+  }
+
+  "bxobj" ws+  { return 1; }
+  "exobj" [^\x00]*  { return 1; }
+  "uxobj" ws+  { return 1; }
+
   ''
   { return unhandled("pdf special", cur, lim, 0); }
 
@@ -3164,6 +3562,17 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
       ps_parse_defs(content_start, lim);
       if (dc->dev)
         return dvi_exec_pgf_shading(ctx, dc, st, cur, lim);
+      return 1;
+    }
+
+    "!" ws*
+    {
+      // General "!" specials: scan for any function definitions.
+      // Pattern declarations come as: save true setglobal globaldict begin
+      //   /pgfpatN { ... } bind def end restore
+      // These don't start with /pgf so the specific handler above misses them.
+      // Scan for /pgfpat in the content to route to pattern table.
+      ps_parse_defs(cur, lim);
       return 1;
     }
 
