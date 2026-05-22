@@ -859,6 +859,22 @@ static void show_special_text(fz_context *ctx, dvi_context *dc, dvi_state *st,
   }
 }
 
+
+// Forward declarations and globals for pattern support (defined later in this file)
+static int pdf_pat_lookup(const char *pat_name);
+static void render_pdf_pattern_fill(fz_context *ctx, dvi_context *dc, dvi_state *st, int even_odd);
+
+// Pattern state: must be declared before pdf_code which uses them.
+// The full pattern table (pdf_pats[]) is defined later; these are only the
+// run-time state variables needed by the fill operators in pdf_code.
+static int in_pattern_tile = 0; // recursion guard
+
+static struct {
+  int active;              // 1 if pattern fill mode is on
+  int pat_index;           // index into pdf_pats[]
+  float color[3];          // pattern color (for uncolored patterns)
+} active_pattern = {0, -1, {0,0,0}};
+
 static bool
 pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t lim)
 {
@@ -1495,12 +1511,16 @@ pdf_code(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t
               if (pi >= 0) {
                 active_pattern.active = 1;
                 active_pattern.pat_index = pi;
-                // Extract RGB color for uncolored patterns
-                if (n >= 4) {
+                // Extract RGB color for uncolored patterns - validate types
+                if (n >= 4 &&
+                    val_is_number(val_array_get(ctx, stack, array, 0)) &&
+                    val_is_number(val_array_get(ctx, stack, array, 1)) &&
+                    val_is_number(val_array_get(ctx, stack, array, 2))) {
                   active_pattern.color[0] = val_number(ctx, val_array_get(ctx, stack, array, 0));
                   active_pattern.color[1] = val_number(ctx, val_array_get(ctx, stack, array, 1));
                   active_pattern.color[2] = val_number(ctx, val_array_get(ctx, stack, array, 2));
                 } else {
+                  // Default to black for colored patterns or invalid color operands
                   active_pattern.color[0] = 0;
                   active_pattern.color[1] = 0;
                   active_pattern.color[2] = 0;
@@ -2023,14 +2043,7 @@ typedef struct {
 
 static pdf_pat_def pdf_pats[PDF_PAT_MAX];
 static int pdf_pat_count = 0;
-static int in_pattern_tile = 0; // recursion guard
-
-// Active pattern state: set by scn, consumed by fill operators
-static struct {
-  int active;              // 1 if pattern fill mode is on
-  int pat_index;           // index into pdf_pats[]
-  float color[3];          // pattern color (for uncolored patterns)
-} active_pattern = {0, -1, {0,0,0}};
+// in_pattern_tile and active_pattern are defined earlier (before pdf_code)
 
 // Parse a float value from a string, advancing the pointer
 static float parse_pat_float(const char **pp, const char *end)
@@ -2099,7 +2112,11 @@ pdf_pat_define(const char *obj_name, int onl,
     }
   }
   if (!pat) {
-    if (pdf_pat_count >= PDF_PAT_MAX) return;
+    if (pdf_pat_count >= PDF_PAT_MAX) {
+      fprintf(stderr, "Warning: PDF pattern table overflow (max %d patterns). Pattern '%.*s' ignored.\n",
+              PDF_PAT_MAX, onl, obj_name);
+      return;
+    }
     pat = &pdf_pats[pdf_pat_count++];
   }
   int nl = (onl > 47) ? 47 : onl;
@@ -2220,16 +2237,22 @@ enum { PS_COLOR_FILL=0, PS_COLOR_STROKE=1, PS_COLOR_BOTH=2 };
 static void ps_exec_body(fz_context *ctx, dvi_context *dc, dvi_state *st,
                           const char *body, int body_len, int color_target);
 
-// Render a PDF tiling pattern fill.
+// Render a PDF tiling pattern fill using MuPDF's native tiling API.
 // Called from pdf_code fill operators (f/F/b/B) when active_pattern is set.
-// Clips to the fill path, then tiles the pattern content stream.
+// Clips to the fill path, then uses fz_begin_tile/fz_end_tile to let MuPDF
+// handle tile repetition automatically — we only draw tile content once.
 static void
 render_pdf_pattern_fill(fz_context *ctx, dvi_context *dc, dvi_state *st, int even_odd)
 {
   if (!dc->dev || !dc->path || active_pattern.pat_index < 0) return;
 
   pdf_pat_def *pat = &pdf_pats[active_pattern.pat_index];
-  if (pat->content_len <= 0 || pat->xstep <= 0 || pat->ystep <= 0) return;
+  if (pat->content_len <= 0) return;
+
+  // Validate xstep/ystep — use bbox dimensions as fallback
+  float xstep = pat->xstep > 0 ? pat->xstep : (pat->bbox[2] - pat->bbox[0]);
+  float ystep = pat->ystep > 0 ? pat->ystep : (pat->bbox[3] - pat->bbox[1]);
+  if (xstep <= 0 || ystep <= 0) return;
 
   in_pattern_tile = 1;
 
@@ -2238,6 +2261,7 @@ render_pdf_pattern_fill(fz_context *ctx, dvi_context *dc, dvi_state *st, int eve
   float saved_fa, saved_sa, saved_lw;
   fz_matrix saved_ctm = st->gs.ctm;
   int saved_h = st->gs.h, saved_v = st->gs.v;
+  int saved_clip_depth = st->gs.clip_depth;
   memcpy(saved_fill, st->gs.colors.fill, sizeof(saved_fill));
   memcpy(saved_line, st->gs.colors.line, sizeof(saved_line));
   saved_fa = st->gs.fill_alpha;
@@ -2252,93 +2276,75 @@ render_pdf_pattern_fill(fz_context *ctx, dvi_context *dc, dvi_state *st, int eve
                   active_pattern.color[0], active_pattern.color[1], active_pattern.color[2]);
   }
 
-  // Clip to the fill path
+  // Detach the fill path — we use it for clipping, not for tile content
   fz_path *clip_path = dc->path;
   dc->path = NULL;
   fz_matrix ctm = dvi_get_ctm(dc, st);
-  fz_clip_path(ctx, dc->dev, clip_path, even_odd, ctm, fz_infinite_rect);
-  st->gs.clip_depth += 1;
 
-  // Build pattern matrix: pat->matrix transforms pattern space to user space
+  // Clip to the fill path shape
+  fz_clip_path(ctx, dc->dev, clip_path, even_odd, ctm, fz_infinite_rect);
+
+  // Build pattern matrix: pattern space → user space → device space
   fz_matrix pat_mat;
   pat_mat.a = pat->matrix[0]; pat_mat.b = pat->matrix[1];
   pat_mat.c = pat->matrix[2]; pat_mat.d = pat->matrix[3];
   pat_mat.e = pat->matrix[4]; pat_mat.f = pat->matrix[5];
-
-  // Combined transform: pattern space → user space → device space
   fz_matrix tile_ctm = fz_concat(pat_mat, ctm);
 
-  // Calculate fill bounds in device space
-  fz_rect fill_bounds = fz_bound_path(ctx, clip_path, NULL, ctm);
+  // Area to be tiled (fill path bounds in device coordinates)
+  fz_rect area = fz_bound_path(ctx, clip_path, NULL, ctm);
 
-  // Transform fill bounds to pattern space for tile iteration
-  fz_matrix inv_tile = fz_invert_matrix(tile_ctm);
-  fz_point p0 = fz_transform_point_xy(fill_bounds.x0, fill_bounds.y0, inv_tile);
-  fz_point p1 = fz_transform_point_xy(fill_bounds.x1, fill_bounds.y0, inv_tile);
-  fz_point p2 = fz_transform_point_xy(fill_bounds.x0, fill_bounds.y1, inv_tile);
-  fz_point p3 = fz_transform_point_xy(fill_bounds.x1, fill_bounds.y1, inv_tile);
+  // Tile view rectangle (pattern BBox in pattern space)
+  fz_rect view;
+  view.x0 = pat->bbox[0]; view.y0 = pat->bbox[1];
+  view.x1 = pat->bbox[2]; view.y1 = pat->bbox[3];
 
-  // Find bounding box in pattern space
-  float ps_x0 = fz_min(fz_min(p0.x, p1.x), fz_min(p2.x, p3.x));
-  float ps_y0 = fz_min(fz_min(p0.y, p1.y), fz_min(p2.y, p3.y));
-  float ps_x1 = fz_max(fz_max(p0.x, p1.x), fz_max(p2.x, p3.x));
-  float ps_y1 = fz_max(fz_max(p0.y, p1.y), fz_max(p2.y, p3.y));
+  fz_try(ctx) {
+    // Use MuPDF's native tiling: draw tile content once, MuPDF repeats it.
+    // - area:  region to cover (device space, after ctm)
+    // - view:  one tile's BBox (pattern space)
+    // - xstep/ystep: tile spacing (pattern space)
+    // - tile_ctm: transform from pattern space to device space
+    fz_begin_tile(ctx, dc->dev, area, view, xstep, ystep, tile_ctm);
 
-  // Calculate tile range
-  float tw = pat->xstep, th = pat->ystep;
-  int ix0 = (int)floorf(ps_x0 / tw) - 1;
-  int iy0 = (int)floorf(ps_y0 / th) - 1;
-  int ix1 = (int)ceilf(ps_x1 / tw) + 1;
-  int iy1 = (int)ceilf(ps_y1 / th) + 1;
+    // Set CTM for tile content — pdf_code uses dvi_get_ctm(dc, st)
+    st->gs.ctm = tile_ctm;
+    st->gs.h = st->registers.h;
+    st->gs.v = st->registers.v;
 
-  // Cap tile count
-  if (ix1 - ix0 > 500) ix1 = ix0 + 500;
-  if (iy1 - iy0 > 500) iy1 = iy0 + 500;
+    // Execute tile content stream ONCE — MuPDF tiles it automatically
+    fz_path *saved_path = dc->path;
+    dc->path = NULL;
+    pdf_code(ctx, dc, st, pat->content, pat->content + pat->content_len);
+    if (dc->path) { drop_path(ctx, dc); }
+    dc->path = saved_path;
 
-  for (int iy = iy0; iy <= iy1; iy++) {
-    for (int ix = ix0; ix <= ix1; ix++) {
-      float tx = ix * tw;
-      float ty = iy * th;
-
-      // Set CTM for this tile: translate in pattern space, then apply pat→device transform
-      fz_matrix tile_translate = fz_make_matrix(1, 0, 0, 1, tx, ty);
-      st->gs.ctm = fz_concat(tile_translate, tile_ctm);
-      st->gs.h = st->registers.h;
-      st->gs.v = st->registers.v;
-
-      // Save and clear path for tile content execution
-      fz_path *saved_path = dc->path;
-      dc->path = NULL;
-
-      // Execute the PDF content stream for this tile
-      pdf_code(ctx, dc, st, pat->content, pat->content + pat->content_len);
-
-      // Clean up any path left by content
-      if (dc->path) { drop_path(ctx, dc); dc->path = NULL; }
-      dc->path = saved_path;
-    }
+    fz_end_tile(ctx, dc->dev);
   }
-
-  // Pop clip
-  if (st->gs.clip_depth > 0 && dc->dev) {
+  fz_always(ctx) {
+    // Pop the clip we pushed above
     fz_pop_clip(ctx, dc->dev);
-    st->gs.clip_depth -= 1;
+
+    // Restore the fill path for caller
+    dc->path = clip_path;
+
+    // Restore graphics state
+    st->gs.ctm = saved_ctm;
+    st->gs.h = saved_h;
+    st->gs.v = saved_v;
+    st->gs.clip_depth = saved_clip_depth;
+    memcpy(st->gs.colors.fill, saved_fill, sizeof(saved_fill));
+    memcpy(st->gs.colors.line, saved_line, sizeof(saved_line));
+    st->gs.fill_alpha = saved_fa;
+    st->gs.stroke_alpha = saved_sa;
+    st->gs.line_width = saved_lw;
+
+    in_pattern_tile = 0;
   }
-
-  // Restore the fill path
-  dc->path = clip_path;
-
-  // Restore graphics state
-  st->gs.ctm = saved_ctm;
-  st->gs.h = saved_h;
-  st->gs.v = saved_v;
-  memcpy(st->gs.colors.fill, saved_fill, sizeof(saved_fill));
-  memcpy(st->gs.colors.line, saved_line, sizeof(saved_line));
-  st->gs.fill_alpha = saved_fa;
-  st->gs.stroke_alpha = saved_sa;
-  st->gs.line_width = saved_lw;
-
-  in_pattern_tile = 0;
+  fz_catch(ctx) {
+    // Don't rethrow — pattern rendering failure should not abort the page
+    fprintf(stderr, "render_pdf_pattern_fill: error rendering pattern tile\n");
+  }
 }
 
 
