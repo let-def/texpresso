@@ -2021,7 +2021,14 @@ static void ps_push(float v)   { if (ps_sp < PS_STACK_MAX) ps_stack[ps_sp++] = v
 static float ps_pop()           { return ps_sp > 0 ? ps_stack[--ps_sp] : 0.0f; }
 static int   ps_depth()         { return ps_sp; }
 static void  ps_clear()         { ps_sp = 0; }
-void ps_state_reset()           { ps_sp = 0; /* preserve ps_func_count across pages */ }
+void ps_state_reset()           {
+  ps_sp = 0;
+  /* preserve ps_func_count and pdf_pats across pages */
+  /* reset runtime pattern state */
+  active_pattern.active = 0;
+  active_pattern.pat_index = -1;
+  in_pattern_tile = 0;
+}
 
 // ---- PDF Pattern Table ----
 // Stores pattern definitions received via dvipdfmx/xetex specials:
@@ -2126,6 +2133,10 @@ pdf_pat_define(const char *obj_name, int onl,
   memcpy(pat->content, content, sl); pat->content[sl] = 0;
   pat->content_len = sl;
   parse_pat_dict(pat, dict, dl);
+  fprintf(stderr, "[pattern] pdf_pat_define: obj='%s' bbox=[%.1f %.1f %.1f %.1f] "
+          "step=(%.1f,%.1f) paint_type=%d content_len=%d\n",
+          pat->obj_name, pat->bbox[0], pat->bbox[1], pat->bbox[2], pat->bbox[3],
+          pat->xstep, pat->ystep, pat->paint_type, pat->content_len);
 }
 
 // Map /pgfpatN to @pgfpatternobjectN (from pdf:put @pgfpatterns << ... >>)
@@ -2139,6 +2150,8 @@ pdf_pat_map_name(const char *pat_name, int pnl,
       int ml = (pnl > 31) ? 31 : pnl;
       memcpy(pdf_pats[i].pat_name, pat_name, ml);
       pdf_pats[i].pat_name[ml] = 0;
+      fprintf(stderr, "[pattern] pdf_pat_map_name: '%s' -> '%s'\n",
+              pdf_pats[i].pat_name, pdf_pats[i].obj_name);
       return;
     }
   }
@@ -2253,6 +2266,13 @@ render_pdf_pattern_fill(fz_context *ctx, dvi_context *dc, dvi_state *st, int eve
   float xstep = pat->xstep > 0 ? pat->xstep : (pat->bbox[2] - pat->bbox[0]);
   float ystep = pat->ystep > 0 ? pat->ystep : (pat->bbox[3] - pat->bbox[1]);
   if (xstep <= 0 || ystep <= 0) return;
+
+  fprintf(stderr, "[pattern] render_pdf_pattern_fill: pat='%s' bbox=[%.1f %.1f %.1f %.1f] "
+          "step=(%.1f,%.1f) matrix=[%.2f %.2f %.2f %.2f %.2f %.2f] content_len=%d paint_type=%d\n",
+          pat->pat_name, pat->bbox[0], pat->bbox[1], pat->bbox[2], pat->bbox[3],
+          xstep, ystep,
+          pat->matrix[0], pat->matrix[1], pat->matrix[2], pat->matrix[3],
+          pat->matrix[4], pat->matrix[5], pat->content_len, pat->paint_type);
 
   in_pattern_tile = 1;
 
