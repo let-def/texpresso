@@ -141,10 +141,10 @@ Pre-register a filename that the editor will provide later via `open`. When the 
 
 Suspend (or resume) engine stepping. While paused, TeXpresso keeps reading
 stdin and applying editor commands (`open`, `register`, etc.) but does not
-advance the TeX engine. Useful at startup with `-stream`: the editor can send
-`(pause)`, push all needed files via `(register)` and `(open)`, then send
-`(resume)` to begin compilation with the VFS fully primed — avoiding restarts
-from missing files.
+advance the TeX engine. Useful at startup with `-stream`: the editor can
+prime the VFS via `(register)` and `(open)`, then send `(resume)` to begin
+compilation — avoiding restarts from missing files. In `-stream` mode the
+engine starts paused, so `(resume)` is required to begin compilation.
 
 ```scheme
 (synctex-forward "path" line)

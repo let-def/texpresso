@@ -342,7 +342,9 @@ int main(int argc, const char **argv)
       .use_tectonic = use_tectonic,
       .use_texlive = use_texlive,
       .initialize_only = initialize_only,
-      .stream_mode = stream_mode
+      .stream_mode = stream_mode,
+      // In stream mode, start paused: editor primes the VFS before (resume).
+      .paused = stream_mode,
   };
 
   int exit_code = 0;

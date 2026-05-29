@@ -1235,6 +1235,10 @@ static void rollback_begin(fz_context *ctx, struct tex_engine *self)
   if (self->rollback.trace_len != NOT_IN_TRANSACTION)
     abort();
 
+  // Skip if no worker yet (-stream paused at startup)
+  if (self->process_count == 0)
+    return;
+
   self->rollback.trace_len = get_process(self)->trace_len;
   self->rollback.offset = -1;
   self->rollback.flush = 0;
@@ -1245,9 +1249,10 @@ static bool rollback_end(fz_context *ctx, struct tex_engine *self, int *tracep, 
   int trace_len = self->rollback.trace_len;
   self->rollback.trace_len = NOT_IN_TRANSACTION;
 
-  // Assert we are in a transaction
+  // No transaction opened: legitimate when begin was a no-op (no worker
+  // at begin, possibly spawned mid-iteration by an EDIT_RESUME bootstrap).
   if (trace_len == NOT_IN_TRANSACTION)
-    abort();
+    return false;
 
   process_t *p = get_process(self);
 
@@ -1343,9 +1348,9 @@ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileen
   int trace_len = self->rollback.trace_len;
   // if (changed > 0) changed--;
 
-  // Assert we are in a transaction
+  // No transaction opened: legitimate when begin was a no-op (no worker).
   if (trace_len == NOT_IN_TRANSACTION)
-    mabort();
+    return;
 
   if (e->seen < changed && trace_len == get_process(self)->trace_len)
   {

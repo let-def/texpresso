@@ -1093,6 +1093,8 @@ static void interpret_command(struct persistent_state *ps,
     case EDIT_RESUME:
       ps->paused = false;
       fprintf(stderr, "[command] resume: engine stepping enabled\n");
+      // Spawn the worker if -stream started paused (no-op otherwise)
+      send(step, ui->eng, ps->ctx, true);
       schedule_event(SCAN_EVENT);
       break;
   }
