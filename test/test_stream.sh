@@ -1,8 +1,8 @@
 #!/bin/sh
-# Deterministic stream-mode test: pause the engine, prime the VFS with the
-# root file via register + open, then resume. The engine has every file it
-# needs before it ever steps — no busy-waiting, no race, no watchdog needed.
-# Exit status is the test result.
+# Deterministic stream-mode test. -stream starts the engine paused, so the
+# editor primes the VFS via (register) + (open) and then sends (resume) to
+# begin compilation. Every file is in place before the engine steps —
+# no busy-waiting, no race, no watchdog needed. Exit status is the result.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -26,14 +26,13 @@ SDL_VIDEODRIVER=dummy build/texpresso -stream -test-initialize test/simple.tex \
 PID=$!
 
 exec 3>"$FIFO"
-printf '(pause)\n' >&3
 printf '(register "%s")\n' "$TEX_FILE" >&3
 printf '(open "%s" "%s")\n' "$TEX_FILE" "$CONTENT" >&3
 printf '(resume)\n' >&3
 exec 3>&-
 
 if wait "$PID"; then
-  echo "PASS: stream-pipe test"
+  echo "PASS: stream test"
 else
   echo "FAIL: texpresso exited with error"
   exit 1

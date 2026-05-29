@@ -102,10 +102,7 @@ test-texpresso-tectonic:
 	env SDL_VIDEODRIVER=dummy build/texpresso -tectonic -test-initialize test/simple.tex
 
 test-stream:
-	env SDL_VIDEODRIVER=dummy build/texpresso -stream -test-initialize test/simple.tex
-
-test-stream-pipe:
-	test/test_stream.sh
+	bash test/test_stream.sh
 
 test-register:
 	bash test/test-register.sh
@@ -113,7 +110,4 @@ test-register:
 test-lookup-file:
 	bash test/test-lookup-file.sh
 
-test-pause-resume:
-	bash test/test-pause-resume.sh
-
-.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-stream-pipe test-open-base64 test-register test-lookup-file test-pause-resume
+.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file

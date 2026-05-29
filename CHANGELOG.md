@@ -7,6 +7,9 @@
 - add `-stream` flag for filesystem-independent editing (@merv1n34k)
 - fix provider auto-detection short-circuit logic (@alvv-z)
 - add `(lookup-file)` message to notify editor of file lookups
+- add `(register)`, `(pause)`, `(resume)` commands; `-stream` now starts the
+  engine paused so the editor can prime the VFS before compilation begins
+  (@merv1n34k)
 
 # v0.2 Fri  6 Mar 19:09:31 JST 2026
 
