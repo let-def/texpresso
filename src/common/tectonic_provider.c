@@ -9,24 +9,10 @@
 int *entries;
 int entries_pow = 1;
 
-char *names = NULL;
-size_t names_len = 0, names_cap = 1;
-
-static void append_buffer(char *buffer, int len)
-{
-  size_t new_len = names_len + len;
-  if (new_len > names_cap)
-  {
-    while (new_len > names_cap)
-      names_cap *= 2;
-    names = realloc(names, names_cap);
-    if (names == NULL)
-      do_abortf("Cannot allocate buffer to read Tectonic bundle");
-  }
-
-  memmove(names + names_len, buffer, len);
-  names_len += len;
-}
+char *tt_index = NULL;
+size_t tt_index_len = 0, tt_index_cap = 1;
+bool tt_index_skip = 0;
+bool tt_is_v15 = 0;
 
 static unsigned long sdbm_hash(const void *p)
 {
@@ -50,13 +36,286 @@ int lookup_entry_index(const char *name)
     int offset = entries[index];
     if (offset == -1)
       return index;
-    if (strcmp(name, names + offset) == 0)
+    if (strcmp(name, tt_index + offset) == 0)
       return index;
     index = (index + 1) & mask;
   }
 }
 
-static bool check_cache_validity(void)
+static const char *tectonic_user_cache_path(const char *suffixes[])
+{
+  static char dir[4096] = {0,}, *ptr = NULL;
+  static bool init = 0;
+
+  if (!init)
+  {
+    init = 1;
+
+    FILE *p = popen("tectonic -X show user-cache-dir", "r");
+
+    // Tectonic not found
+    if (!p)
+    {
+      fprintf(stderr, "tectonic: not found\n");
+      return 0;
+    }
+
+    size_t n = fread(dir, 1, sizeof(dir) - 1, p);
+
+    if (n > 0 && dir[n-1] == '\n')
+    {
+      n--;
+      dir[n] = 0;
+      ptr = dir + n;
+      fprintf(stderr, "tectonic: cache directory is %s\n", dir);
+    }
+    else
+      fprintf(stderr, "tectonic provider: malformed cache path: \"%s\"\n", dir);
+  }
+
+  if (!ptr)
+    return NULL;
+
+  if (suffixes)
+  {
+    char *p = ptr;
+    while (*suffixes)
+    {
+      p = stpcpy(p, *suffixes);
+      suffixes++;
+    }
+  }
+  return dir;
+}
+#define tectonic_user_cache_path(...) tectonic_user_cache_path((const char *[]){__VA_ARGS__ __VA_OPT__(,) NULL})
+
+/* Tectonic 0.16 support */
+
+char *tt_dirs = NULL;
+size_t tt_dirs_len = 0, tt_dirs_cap = 1;
+
+static void tt16_add_dir(char *name)
+{
+  size_t name_len = strlen(name) + 1;
+  size_t new_len = tt_dirs_len + name_len;
+  if (new_len >= tt_dirs_cap)
+  {
+    while (new_len >= tt_dirs_cap)
+      tt_dirs_cap *= 2;
+    tt_dirs = realloc(tt_dirs, tt_dirs_cap);
+    if (tt_dirs == NULL)
+      do_abortf("tectonic provider: cannot allocate buffer to store bundle directory");
+  }
+
+  memmove(tt_dirs + tt_dirs_len, name, name_len);
+  tt_dirs_len = new_len;
+}
+
+static void tt16_add_to_index(char *buffer, int len)
+{
+  size_t new_cap = tt_index_len + len;
+  if (new_cap >= tt_index_cap)
+  {
+    while (new_cap >= tt_index_cap)
+      tt_index_cap *= 2;
+    tt_index = realloc(tt_index, tt_index_cap);
+    if (tt_index == NULL)
+      do_abortf("tectonic provider: cannot allocate buffer to read bundle index");
+  }
+
+  for (int i = 0; i < len; i++)
+  {
+    if (tt_index_skip)
+    {
+      if (buffer[i] == '\n')
+        tt_index_skip = 0;
+    }
+    else
+    {
+      if (buffer[i] == ' ' || buffer[i] == '\n')
+      {
+        tt_index_skip = 1;
+        tt_index[tt_index_len++] = '\0';
+      }
+      else
+        tt_index[tt_index_len++] = buffer[i];
+    }
+  }
+}
+
+static void tt16_load_index_file(const char *path)
+{
+  FILE *f = fopen(path, "r");
+  if (!f)
+  {
+    fprintf(stderr, "tectonic provider: cannot read index file %s\n", path);
+    return;
+  }
+
+  bool skip = false;
+  char buffer[4096];
+  ssize_t read;
+
+  while ((read = fread(buffer, 1, 4096, f)) > 0)
+    tt16_add_to_index(buffer, read);
+
+  if (ferror(f))
+    perror("fread");
+
+  fclose(f);
+}
+
+static void tt16_load_indexes(void)
+{
+  const char *data_dir = tectonic_user_cache_path("/data/");
+  DIR *dirp = NULL;
+
+  if (!data_dir || !(dirp = opendir(data_dir)))
+    return;
+
+  // We found the data directory, load all .index files
+  struct dirent *entry;
+  const char *suffix = ".index";
+  size_t suffix_len = strlen(suffix);
+
+  while ((entry = readdir(dirp)) != NULL)
+  {
+    if (entry->d_type == DT_DIR)
+      tt16_add_dir(entry->d_name);
+    else if (entry->d_type == DT_REG)
+    {
+      size_t name_len = strlen(entry->d_name);
+      if (name_len >= suffix_len &&
+          strcmp(entry->d_name + (name_len - suffix_len), suffix) == 0)
+        tt16_load_index_file(tectonic_user_cache_path("/data/", entry->d_name));
+    }
+  }
+
+  closedir(dirp);
+}
+
+static bool tt16_list_tectonic_files(void)
+{
+  tt16_load_indexes();
+
+  if (tt_index_len == 0)
+  {
+    fprintf(stderr,
+            "Cannot find Tectonic bundle(s) manifests. Trying to initialize "
+            "tectonic now.\n");
+    system("tectonic -X bundle cat SHA256SUM");
+    tt16_load_indexes();
+  }
+  if (tt_index_len == 0)
+    return false;
+
+  // Count number of entries
+  int count = 0;
+  for (int i = 0; i < tt_index_len; i++)
+    if (tt_index[i] == '\0')
+      count += 1;
+
+  // Allocate hashtable for indexing lines
+  int min_cap = count * 4 / 3;
+  while ((1 << entries_pow) <= min_cap)
+    entries_pow++;
+  entries = malloc((1 << entries_pow) * sizeof(*entries));
+  if (entries == NULL)
+    do_abortf("Cannot allocate table for indexing Tectonic bundle.");
+  for (int i = 0; i < (1 << entries_pow); i++)
+    entries[i] = -1;
+
+  // Populate table
+  for (int i = 0, j = 0; j < tt_index_len; j++)
+  {
+    if (tt_index[j] != '\0')
+      continue;
+
+    if (i != j)
+    {
+      int index = lookup_entry_index(tt_index + i);
+      if (entries[index] == -1)
+        entries[index] = i;
+      else
+        fprintf(stderr, "tectonic bundle: duplicate entry (%s)\n",
+                tt_index + i);
+    }
+    i = j + 1;
+  }
+
+  fprintf(stderr, "tectonic bundle: indexing succeeded (%d entries)\n", count);
+  return true;
+}
+
+static const char *tt16_get_file_path(const char *name)
+{
+  for (const char *dir = tt_dirs; dir < tt_dirs + tt_dirs_len; dir = dir + strlen(dir) + 1)
+  {
+    const char *path = tectonic_user_cache_path("/data/", dir, "/", name);
+    if (access(path, R_OK) == 0)
+      return path;
+  }
+
+  fprintf(stderr, "tectonic provider: %s missing, trying to fetch with tectonic\n", name);
+
+  {
+    char command[1024] = ">/dev/null tectonic -X bundle cat ";
+    char *p = command;
+    const char *pname = name;
+
+    while (*p)
+      p++;
+
+    *p++ = '\'';
+    while (*pname)
+    {
+      if ((*p++ = *pname++) != '\'')
+        continue;
+      *p++ = '\\';
+      *p++ = '\'';
+      *p++ = '\'';
+    }
+    *p++ = '\'';
+    *p = '\0';
+
+    int retcode = system(command);
+    if (retcode != 0)
+      fprintf(stderr, "tectonic provider: \"%s\" returned code %d\n", command,
+              retcode);
+  }
+
+  for (const char *dir = tt_dirs; dir < tt_dirs + tt_dirs_len; dir = dir + strlen(dir) + 1)
+  {
+    const char *path = tectonic_user_cache_path("/data/", dir, "/", name);
+    if (access(path, R_OK) == 0)
+    {
+      fprintf(stderr, "tectonic provider: found %s\n", path);
+      return path;
+    }
+  }
+
+  do_abortf("tectonic provider: cannot load %s, skipping\n", name);
+  return NULL;
+}
+
+/* Tectonic old versions support */
+
+static void tt15_append_buffer(char *buffer, int len)
+{
+  size_t new_len = tt_index_len + len;
+  if (new_len > tt_index_cap)
+  {
+    while (new_len > tt_index_cap)
+      tt_index_cap *= 2;
+    tt_index = realloc(tt_index, tt_index_cap);
+    if (tt_index == NULL)
+      do_abortf("Cannot allocate buffer to read Tectonic bundle");
+  }
+  memmove(tt_index + tt_index_len, buffer, len);
+  tt_index_len += len;
+}
+
+static bool tt15_check_cache_validity(void)
 {
   const char *dir = cache_path("tectonic", "SHA256SUM");
 
@@ -90,9 +349,9 @@ static bool check_cache_validity(void)
   return (r1 == r2) && (memcmp(b1, b2, r1) == 0);
 }
 
-static void prepare_cache(void)
+static void tt15_prepare_cache(void)
 {
-  if (check_cache_validity())
+  if (tt15_check_cache_validity())
     return;
 
   // Base cache directory
@@ -123,13 +382,8 @@ static void prepare_cache(void)
   if (f) fclose(f);
 }
 
-static void list_tectonic_files(void)
+static bool tt15_list_tectonic_files(void)
 {
-  static int loaded = 0;
-  if (loaded)
-    return;
-  loaded = 1;
-
   // Read the list of all files
   FILE *f = popen("tectonic -X bundle search", "r");
   if (f == NULL)
@@ -138,21 +392,17 @@ static void list_tectonic_files(void)
   char buffer[4096];
   ssize_t read;
   while ((read = fread(buffer, 1, 4096, f)) > 0)
-  {
-    append_buffer(buffer, read);
-  }
+    tt15_append_buffer(buffer, read);
 
   if (ferror(f))
-  {
     perror("fread/popen");
-  }
 
   pclose(f);
 
   // Count number of lines
   int count = 0;
-  for (int i = 0; i < names_len; i++)
-    if (names[i] == '\n')
+  for (int i = 0; i < tt_index_len; i++)
+    if (tt_index[i] == '\n')
       count += 1;
 
   // Allocate hashtable for indexing lines
@@ -166,25 +416,27 @@ static void list_tectonic_files(void)
     entries[i] = -1;
 
   // Populate table
-  for (int i = 0, j = 0; j < names_len; j++)
+  for (int i = 0, j = 0; j < tt_index_len; j++)
   {
-    if (names[j] == '\n')
+    if (tt_index[j] == '\n')
     {
-      names[j] = '\0';
-      int index = lookup_entry_index(names + i);
+      tt_index[j] = '\0';
+      int index = lookup_entry_index(tt_index + i);
       if (entries[index] == -1)
         entries[index] = i;
       else
-        fprintf(stderr, "tectonic bundle: duplicate entry (%s)\n", names + i);
+        fprintf(stderr, "tectonic bundle: duplicate entry (%s)\n", tt_index + i);
       i = j + 1;
     }
   }
 
   fprintf(stderr, "tectonic bundle: indexing succeeded (%d entries)\n", count);
-  prepare_cache();
+  tt15_prepare_cache();
+
+  return tt_index_len > 0;
 }
 
-FILE *tectonic_cat(const char *name)
+static FILE *tt15_cat(const char *name)
 {
   if (!tectonic_has_file(name))
     return NULL;
@@ -207,14 +459,7 @@ FILE *tectonic_cat(const char *name)
   return popen(buffer, "r");
 }
 
-bool tectonic_has_file(const char *name)
-{
-  list_tectonic_files();
-  int index = lookup_entry_index(name);
-  return (entries[index] != -1);
-}
-
-const char *tectonic_get_file_path(const char *name)
+static const char *tt15_get_file_path(const char *name)
 {
   if (!tectonic_has_file(name))
     return NULL;
@@ -227,7 +472,7 @@ const char *tectonic_get_file_path(const char *name)
   if (!f)
     return NULL;
 
-  FILE *p = tectonic_cat(name);
+  FILE *p = tt15_cat(name);
   if (!p)
     return NULL;
 
@@ -238,18 +483,52 @@ const char *tectonic_get_file_path(const char *name)
     if (fwrite(buffer, 1, read, f) != read)
       break;
   }
-  if (read != 0 || ferror(p) || ferror(f))
+
+  bool error = read != 0 || ferror(p) || ferror(f);
+  pclose(p);
+  fclose(f);
+  if (error)
   {
-    pclose(p);
-    fclose(f);
     unlink(cached);
     return NULL;
   }
-  pclose(p);
-  fclose(f);
 
   return cached;
 }
+
+/* Version dispatch functions */
+
+const char *tectonic_get_file_path(const char *name)
+{
+  if (!tectonic_has_file(name))
+    return NULL;
+
+  return tt_is_v15 ? tt15_get_file_path(name) : tt16_get_file_path(name);
+}
+
+static void list_tectonic_files(void)
+{
+  static int loaded = 0;
+  if (loaded)
+    return;
+  loaded = 1;
+
+  if (tt16_list_tectonic_files())
+    return;
+
+  tt_is_v15 = 1;
+  if (tt15_list_tectonic_files())
+    return;
+
+  // No manifest... Tectonic was not initialized?
+  fprintf(stderr,
+          "Cannot find Tectonic bundle(s) manifests.\n"
+          "Please compile a document with tectonic before launching "
+          "TeXpresso.\n");
+  exit(1);
+}
+
+/* Generic functions */
 
 FILE *tectonic_get_file(const char *name)
 {
@@ -300,6 +579,14 @@ bool tectonic_check_version(FILE *fr)
   valid = valid && (feof(fh) && !ferror(fh));
   fclose(fh);
   return valid;
+}
+
+bool tectonic_has_file(const char *name)
+{
+  list_tectonic_files();
+  int index = lookup_entry_index(name);
+  int offset = entries[index];
+  return offset != -1;
 }
 
 bool tectonic_available(void)
