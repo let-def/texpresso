@@ -1,4 +1,4 @@
-all:
+all: | Makefile.config
 	$(MAKE) common texpresso texpresso-xetex
 	@echo "# Build succeeded."
 	@echo "# TeXpresso detects package providers (TeXlive or Tectonic) by looking in PATH:"
@@ -17,16 +17,16 @@ all:
 	@echo "#   build/texpresso -texlive test/simple.tex"
 	@echo "#   build/texpresso -tectonic test/simple.tex"
 
-common:
+common: | Makefile.config
 	$(MAKE) -C src/common
 
-texpresso:
+texpresso: | Makefile.config
 	$(MAKE) -C src/frontend texpresso
 
-dev:
+dev: | Makefile.config
 	$(MAKE) -C src texpresso-dev
 
-debug:
+debug: | Makefile.config
 	$(MAKE) -C src texpresso-debug texpresso-debug-proxy
 
 clean:
