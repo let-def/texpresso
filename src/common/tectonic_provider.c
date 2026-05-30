@@ -330,7 +330,14 @@ static void tt15_append_buffer(const char *buffer, size_t len)
 {
   size_t new_len = tt_index.len + len;
   dynbuf_ensure_capacity(&tt_index, new_len);
-  memcpy(tt_index.data + tt_index.len, buffer, len);
+  char *data = tt_index.data + tt_index.len;
+  for (size_t i = 0; i < len; i++)
+  {
+    if (buffer[i] == '\n')
+      data[i] = '\0';
+    else
+      data[i] = buffer[i];
+  }
   tt_index.len += len;
 }
 
@@ -406,11 +413,6 @@ static bool tt15_list_tectonic_files(void)
   if (ferror(f))
     perror("fread/popen");
   pclose(f);
-
-  int count = 0;
-  for (size_t i = 0; i < tt_index.len; i++)
-    if (tt_index.data[i] == '\n')
-      count++;
 
   build_hash_table();
   tt15_prepare_cache();
