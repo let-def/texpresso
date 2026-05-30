@@ -106,7 +106,7 @@ static void usage(void)
 {
   fprintf(stderr,
           "Usage: texpresso [-I path]* [-json] [-lines] [-texlive] [-tectonic] "
-          "[-test-initialize] [-stream] root_file.tex\n");
+          "[-test-initialize] [-stream] [-rerun] root_file.tex\n");
   fprintf(stderr,
           " -I path    Add a path to included directories. \n"
           "    Files are looked up relative to document directory and all "
@@ -125,10 +125,15 @@ static void usage(void)
           " -test-initialize  Run a single cycle for test purposes\n");
   fprintf(stderr,
           " -stream   Skip filesystem lookups; files are pushed via editor commands\n");
+  fprintf(stderr,
+          " -rerun    On idle, respawn engine with prior-pass aux to converge TOC/refs\n");
 }
 
 int main(int argc, const char **argv)
 {
+  // Unbuffered stderr so debug/[fatal] lines hit disk before a crash.
+  setvbuf(stderr, NULL, _IONBF, 0);
+
   char work_dir[PATH_MAX];
 
   if (!getcwd(work_dir, PATH_MAX))
@@ -155,6 +160,7 @@ int main(int argc, const char **argv)
   bool use_texlive = 0;
   bool initialize_only = 0;
   bool stream_mode = 0;
+  bool rerun = 0;
 
   int inclusion_path_size = 1;
   for (int i = 1; i < argc; i++)
@@ -197,6 +203,10 @@ int main(int argc, const char **argv)
       else if (strcmp(arg, "-stream") == 0)
       {
         stream_mode = 1;
+      }
+      else if (strcmp(arg, "-rerun") == 0)
+      {
+        rerun = 1;
       }
       else
       {
@@ -345,6 +355,7 @@ int main(int argc, const char **argv)
       .stream_mode = stream_mode,
       // In stream mode, start paused: editor primes the VFS before (resume).
       .paused = stream_mode,
+      .rerun = rerun,
   };
 
   int exit_code = 0;

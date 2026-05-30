@@ -69,7 +69,7 @@ struct persistent_state {
 
   const char *exe_path, *doc_path, *doc_name, *inclusion_path;
 
-  bool line_output, use_tectonic, use_texlive, initialize_only, stream_mode;
+  bool line_output, use_tectonic, use_texlive, initialize_only, stream_mode, rerun;
   bool paused;
 };
 

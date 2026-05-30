@@ -128,6 +128,24 @@ static void engine_notify_file_changes(txp_engine *_self,
 {
 }
 
+static bool engine_aux_dirty(txp_engine *_self)
+{
+  return false;
+}
+
+static bool engine_is_finishing(txp_engine *_self)
+{
+  return false;
+}
+
+static void engine_start_finishing(txp_engine *_self)
+{
+}
+
+static void engine_finish_convergence(txp_engine *_self, fz_context *ctx)
+{
+}
+
 txp_engine *txp_create_pdf_engine(fz_context *ctx, const char *pdf_path)
 {
   fz_document *doc = fz_open_document(ctx, pdf_path);
