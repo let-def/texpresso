@@ -1364,11 +1364,11 @@ bool texpresso_main(struct persistent_state *ps)
             ph = (int)(bounds.y1 - bounds.y0);
             fz_drop_display_list(ps->ctx, dl);
           }
-          if (pw == 0) pw = 612;
-          if (ph == 0) ph = 792;
           w = (int)(pw * ps->default_resolution);
           h = (int)(ph * ps->default_resolution);
         }
+        if (pw == 0) pw = 612;
+        if (ph == 0) ph = 792;
         webview_output_page(ps->ctx, ui->eng, ui->page, after_page_count,
                             w, h, pw, ph,
                             ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode, ps->trim_factor, pw, ph);
@@ -1658,11 +1658,11 @@ bool texpresso_main(struct persistent_state *ps)
                   ph = (int)(bounds.y1 - bounds.y0);
                   fz_drop_display_list(ps->ctx, dl);
                 }
-                if (pw == 0) pw = 612;
-                if (ph == 0) ph = 792;
                 w = (int)(pw * ps->default_resolution);
                 h = (int)(ph * ps->default_resolution);
               }
+              if (pw == 0) pw = 612;
+              if (ph == 0) ph = 792;
               fprintf(stderr, "[main] RELOAD_EVENT render page %d/%d w=%d h=%d\n",
                       ui->page, page_count, w, h);
               webview_output_page(ps->ctx, ui->eng, ui->page, page_count,
