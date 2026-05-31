@@ -1144,6 +1144,10 @@ static void interpret_command(struct persistent_state *ps,
       ps->trim_factor = cmd.set_trim_factor.factor;
       if (ps->trim_factor < 0.0f) ps->trim_factor = 0.0f;
       if (ps->trim_factor >= 0.5f) ps->trim_factor = 0.49f;
+      if (!ps->webview_mode && ui->doc_renderer) {
+        txp_renderer_config *cfg = txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+        cfg->trim_factor = ps->trim_factor;
+      }
       schedule_event(RELOAD_EVENT);
       break;
   }

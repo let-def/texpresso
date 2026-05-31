@@ -103,6 +103,7 @@ txp_renderer *txp_renderer_new(fz_context *ctx, SDL_Renderer *sdl)
     self->config.foreground_color = 0x000000;
     self->config.themed_color = 1;
     self->config.invert_color = 0;
+    self->config.trim_factor = 0.0f;
   }
   fz_catch(ctx)
   {
@@ -221,15 +222,21 @@ bool txp_renderer_page_bounds(fz_context *ctx, txp_renderer *self, txp_renderer_
   float doc_ar = (bounds.x1 - bounds.x0) / (bounds.y1 - bounds.y0);
 
   float doc_w, doc_h;
+  float zoom = self->config.zoom;
+
+  // Trim: zoom into page to crop margins
+  if (self->config.trim_factor > 0.0f && self->config.trim_factor < 0.5f) {
+    zoom *= 1.0f / (1.0f - 2.0f * self->config.trim_factor);
+  }
 
   if (out_ar <= doc_ar || self->config.fit == FIT_WIDTH)
   {
-    doc_w = self->output_w * self->config.zoom;
+    doc_w = self->output_w * zoom;
     doc_h = doc_w / doc_ar;
   }
   else
   {
-    doc_h = self->output_h * self->config.zoom;
+    doc_h = self->output_h * zoom;
     doc_w = doc_h * doc_ar;
   }
 
