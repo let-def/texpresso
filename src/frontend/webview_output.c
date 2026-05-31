@@ -180,7 +180,8 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
                          int page, int total_pages,
                          int img_width, int img_height,
                          int page_width, int page_height,
-                         const char *tmpdir, bool dark_mode)
+                         const char *tmpdir, bool dark_mode,
+                         float trim_factor)
 {
   if (!tmpdir) tmpdir = g_webview_tmpdir ? g_webview_tmpdir : "/tmp";
 
@@ -196,7 +197,7 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
   } else {
     bg = 0x00000000; fg = 0x00FFFFFF;
   }
-  fz_pixmap *pix = txp_renderer_render_to_pixmap(ctx, dl, img_width, img_height, bg, fg);
+  fz_pixmap *pix = txp_renderer_render_to_pixmap(ctx, dl, img_width, img_height, bg, fg, trim_factor);
   fz_drop_display_list(ctx, dl);
   if (!pix) {
     fprintf(stderr, "[webview] ERROR: render_to_pixmap returned NULL\n");

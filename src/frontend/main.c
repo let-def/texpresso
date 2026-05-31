@@ -1139,6 +1139,13 @@ static void interpret_command(struct persistent_state *ps,
       fprintf(stdout, "[\"fit-mode-changed\",\"%s\"]\n", cmd.set_fit_mode.mode);
       fflush(stdout);
       break;
+
+    case EDIT_SET_TRIM_FACTOR:
+      ps->trim_factor = cmd.set_trim_factor.factor;
+      if (ps->trim_factor < 0.0f) ps->trim_factor = 0.0f;
+      if (ps->trim_factor >= 0.5f) ps->trim_factor = 0.49f;
+      schedule_event(RELOAD_EVENT);
+      break;
   }
 }
 
@@ -1364,7 +1371,7 @@ bool texpresso_main(struct persistent_state *ps)
         }
         webview_output_page(ps->ctx, ui->eng, ui->page, after_page_count,
                             w, h, pw, ph,
-                            ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode);
+                            ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode, ps->trim_factor);
         webview_rendered_this_iteration = true;
       }
 
@@ -1660,7 +1667,7 @@ bool texpresso_main(struct persistent_state *ps)
                       ui->page, page_count, w, h);
               webview_output_page(ps->ctx, ui->eng, ui->page, page_count,
                                   w, h, pw, ph,
-                                  ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode);
+                                  ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode, ps->trim_factor);
             }
             else
             {

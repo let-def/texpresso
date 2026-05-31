@@ -1,0 +1,88 @@
+\documentclass[12pt]{article}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\begin{document}
+
+\section{Ghost Trace Test}
+
+This document tests whether incremental dirty rect rendering leaves ghost traces
+after editing. Open the built-in preview, then perform the edits below.
+
+\subsection{Test 1: Delete a middle list item}
+
+\begin{enumerate}
+      \item First item with enough text to wrap across multiple lines so the paragraph is
+            wide and fills a substantial portion of the page width for testing dirty rect
+            coverage when content is deleted and surrounding text reflows upward.
+      \item \textbf{DELETE THIS ENTIRE LINE} -- second item that also contains substantial
+            text wrapping across multiple lines at a different horizontal position than the
+            items above and below it in the list for triggering the dirty rect edge-case bug.
+      \item Third item with more content filling several lines to ensure we have enough
+            vertical space for the dirty rect algorithm to encounter rows with varying
+            horizontal pixel positions after the middle item is removed from the document.
+\end{enumerate}
+
+\subsection{Test 2: Delete a blockquote}
+
+Normal paragraph at full page width that is positioned above the blockquote.
+When the quote below is deleted, this text stays in place but the text below
+it will shift upward, creating a dirty region that spans different horizontal
+positions.
+
+\begin{quote}
+      This blockquote is indented from both sides. When this entire block is deleted,
+      the paragraph below will move up into this position. The dirty rect must cover
+      the full width of the quote text AND the moved paragraph text, which start at
+      different horizontal offsets -- triggering the edge-case bug if the rect width
+      is computed incorrectly in the single-pass loop.
+\end{quote}
+
+Another normal paragraph at full page width. When the blockquote above is
+deleted, this text shifts upward. The area where the blockquote was (indented)
+is now filled with this full-width text. The dirty rect algorithm must handle
+the varying min\_x values across rows correctly.
+
+\subsection{Test 3: Rapid undo/redo}
+
+Type some random characters here, then undo them. Watch for any visual artifacts
+or ghost traces that remain after the undo operation completes.
+
+Another normal paragraph at full page width. When the blockquote above is
+deleted, this text shifts upward. The area where the blockquote was (indented)
+is now filled with this full-width text. The dirty rect algorithm must handle
+the varying min\_x values across rows correctly.
+
+Another normal paragraph at full page width. When the blockquote above is
+deleted, this text shifts upward. The area where the blockquote was (indented)
+is now filled with this full-width text. The dirty rect algorithm must handle
+the varying min\_x values across rows correctly.
+
+Another normal paragraph at full page width. When the blockquote above is
+deleted, this text shifts upward. The area where the blockquote was (indented)
+is now filled with this full-width text. The dirty rect algorithm must handle
+the varying min\_x values across rows correctly.
+
+Another normal paragraph at full page width. When the blockquote above is
+deleted, this text shifts upward. The area where the blockquote was (indented)
+is now filled with this full-width text. The dirty rect algorithm must handle
+the varying min\_x values across rows correctly.
+
+Another normal paragraph at full page width. When the blockquote above is
+deleted, this text shifts upward. The area where the blockquote was (indented)
+is now filled with this full-width text. The dirty rect algorithm must handle
+the varying min\_x values across rows correctly.
+
+\begin{subequations}
+      \begin{align}
+            a & = b + c      \\
+            d & = e - f      \\
+            g & = h \times i \\
+            j & = k \div l   \\
+            p & = \sqrt{q}   \\
+            r & = \log(s)    \\
+            t & = \sin(u)    \\
+            v & = \cos(w)    \\
+      \end{align}
+\end{subequations}
+
+\end{document}
