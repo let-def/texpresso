@@ -92,8 +92,6 @@ static int compute_dirty_rects(unsigned char *old_rgb, unsigned char *new_rgb,
   int dirty_pixels = 0;
   int rect_count = 0;
 
-  // For tall pages (>4096px), fall back to full-page update rather
-  // than missing changes below the fixed array limit.
   if (h > 4096) {
     *dirty_ratio = 1.0f;
     return -1;
@@ -129,9 +127,7 @@ static int compute_dirty_rects(unsigned char *old_rgb, unsigned char *new_rgb,
     if (dirty_start >= 0 && (max_x < 0 || y == h - 1)) {
       int end_y = (max_x >= 0) ? y : y - 1;
 
-      // Two-pass bounding box: first compute global min rx, then rw.
-      // Single-pass would leave right-edge pixels uncovered when later
-      // rows have smaller min_x (ghost traces on incremental render).
+      // Two-pass: first min rx, then rw with final rx
       int rx = w, ry = dirty_start, rw = 0, rh = end_y - dirty_start + 1;
       for (int ry2 = dirty_start; ry2 <= end_y; ry2++) {
         if (row_min_x[ry2] < rx) rx = row_min_x[ry2];
@@ -181,7 +177,8 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
                          int img_width, int img_height,
                          int page_width, int page_height,
                          const char *tmpdir, bool dark_mode,
-                         float trim_factor)
+                         float trim_factor,
+                         int page_w, int page_h)
 {
   if (!tmpdir) tmpdir = g_webview_tmpdir ? g_webview_tmpdir : "/tmp";
 
@@ -197,7 +194,9 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
   } else {
     bg = 0x00000000; fg = 0x00FFFFFF;
   }
-  fz_pixmap *pix = txp_renderer_render_to_pixmap(ctx, dl, img_width, img_height, bg, fg, trim_factor);
+  fz_pixmap *pix = txp_renderer_render_to_pixmap(ctx, dl, img_width, img_height,
+                                                   bg, fg, trim_factor,
+                                                   page_w, page_h);
   fz_drop_display_list(ctx, dl);
   if (!pix) {
     fprintf(stderr, "[webview] ERROR: render_to_pixmap returned NULL\n");
@@ -245,7 +244,6 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
     } else if (n_rects > 0 && dirty_ratio < DIRTY_RATIO_THRESHOLD) {
       is_diff = true;
 
-      // Build a list of successfully prepared rects before emitting JSON
       struct { int x, y, w, h; char path[PATH_MAX]; } emitted[MAX_DIRTY_RECTS];
       int emitted_count = 0;
       for (int i = 0; i < n_rects; i++) {
@@ -299,7 +297,6 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
         fflush(stdout);
         page_sent = true;
       }
-      // If all rects failed, fall through to full page below
     }
   }
 

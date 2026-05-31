@@ -39,6 +39,7 @@ enum EDITOR_COMMAND
   EDIT_GO_END,
   EDIT_RESET_ZOOM,
   EDIT_SET_FIT_MODE,
+  EDIT_SET_TRIM_FACTOR,
 };
 
 struct editor_change
@@ -147,6 +148,10 @@ struct editor_command
     struct {
       char mode[8];
     } set_fit_mode;
+
+    struct {
+      float factor;
+    } set_trim_factor;
   };
 };
 

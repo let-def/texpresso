@@ -394,6 +394,7 @@ int main(int argc, const char **argv)
       .stream_mode = stream_mode,
       .webview_mode = webview_mode,
       .default_resolution = default_resolution,
+      .trim_factor = 0.0f,
       .render_width = 0,
       .render_height = 0,
   };
