@@ -127,10 +127,17 @@ static int compute_dirty_rects(unsigned char *old_rgb, unsigned char *new_rgb,
       int end_y = (max_x >= 0) ? y : y - 1;
 
       // Find bounding box of dirty region from dirty_start to end_y
+      // Two-pass: first compute global min rx, then compute rw with final rx.
+      // Using a single pass produces wrong rw when rx shrinks mid-loop
+      // because earlier rows' rw was computed against a larger rx value,
+      // leaving right-edge pixels uncovered (ghost traces).
       int rx = w, ry = dirty_start, rw = 0, rh = end_y - dirty_start + 1;
       for (int ry2 = dirty_start; ry2 <= end_y; ry2++) {
         if (row_min_x[ry2] < rx) rx = row_min_x[ry2];
-        if (row_max_x[ry2] + 1 - rx > rw) rw = row_max_x[ry2] + 1 - rx;
+      }
+      for (int ry2 = dirty_start; ry2 <= end_y; ry2++) {
+        int candidate_w = row_max_x[ry2] + 1 - rx;
+        if (candidate_w > rw) rw = candidate_w;
       }
 
       if (rw > 0 && rh > 0 && rect_count < max_rects) {
