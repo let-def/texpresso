@@ -1012,19 +1012,6 @@ fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
   fz_rect bounds = fz_bound_display_list(ctx, dl);
   float doc_w = bounds.x1 - bounds.x0;
   float doc_h = bounds.y1 - bounds.y0;
-
-  // Apply trim factor: inset bounds to crop margins
-  if (trim_factor > 0.0f) {
-    float inset_x = doc_w * trim_factor;
-    float inset_y = doc_h * trim_factor;
-    bounds.x0 += inset_x;
-    bounds.y0 += inset_y;
-    bounds.x1 -= inset_x;
-    bounds.y1 -= inset_y;
-    doc_w = bounds.x1 - bounds.x0;
-    doc_h = bounds.y1 - bounds.y0;
-  }
-
   if (doc_w <= 0) doc_w = width;
   if (doc_h <= 0) doc_h = height;
 
@@ -1032,17 +1019,15 @@ fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
   float scale_y = (float)height / doc_h;
   float scale = fz_min(scale_x, scale_y);
 
-  // When trimming, map the inset bounds directly to fill the output
-  // (no centering, so margins are cropped from all four sides).
-  // Without trim, center the content as usual.
-  float tx, ty;
-  if (trim_factor > 0.0f) {
-    tx = 0.0f;
-    ty = 0.0f;
-  } else {
-    tx = (width - doc_w * scale) / 2.0f;
-    ty = (height - doc_h * scale) / 2.0f;
+  // Trim: zoom in so trim_factor of each edge is clipped outside output
+  if (trim_factor > 0.0f && trim_factor < 0.5f) {
+    float zoom = 1.0f / (1.0f - 2.0f * trim_factor);
+    scale *= zoom;
   }
+
+  // Center the content
+  float tx = (width - doc_w * scale) / 2.0f;
+  float ty = (height - doc_h * scale) / 2.0f;
 
   fz_matrix ctm = fz_translate(tx, ty);
   ctm = fz_concat(ctm, fz_scale(scale, scale));
