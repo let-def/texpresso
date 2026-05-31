@@ -194,9 +194,43 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
   } else {
     bg = 0x00000000; fg = 0x00FFFFFF;
   }
-  fz_pixmap *pix = txp_renderer_render_to_pixmap(ctx, dl, img_width, img_height,
-                                                   bg, fg, trim_factor,
-                                                   page_w, page_h);
+
+  // Trim: render at zoomed resolution, then crop center to output size.
+  // This clips all four sides equally without touching the renderer.
+  fz_pixmap *pix = NULL;
+  int trim_w = img_width, trim_h = img_height;
+  if (trim_factor > 0.0f && trim_factor < 0.5f) {
+    float zoom = 1.0f / (1.0f - 2.0f * trim_factor);
+    trim_w = (int)(img_width * zoom);
+    trim_h = (int)(img_height * zoom);
+  }
+  pix = txp_renderer_render_to_pixmap(ctx, dl, trim_w, trim_h, bg, fg);
+  if (pix && (trim_w != img_width || trim_h != img_height)) {
+    // Crop center of zoomed pixmap back to output size
+    int crop_x = (trim_w - img_width) / 2;
+    int crop_y = (trim_h - img_height) / 2;
+    fz_irect crop_rect = fz_make_irect(crop_x, crop_y,
+                                        crop_x + img_width, crop_y + img_height);
+    fz_pixmap *cropped = fz_new_pixmap_with_bbox(ctx, fz_device_rgb(ctx),
+                                                   fz_make_irect(0, 0, img_width, img_height),
+                                                   NULL, 0);
+    if (cropped) {
+      fz_clear_pixmap_with_value(ctx, cropped, 0xFF);
+      // Copy center portion
+      unsigned char *src_samples = fz_pixmap_samples(ctx, pix);
+      unsigned char *dst_samples = fz_pixmap_samples(ctx, cropped);
+      int src_stride = fz_pixmap_stride(ctx, pix);
+      int dst_stride = fz_pixmap_stride(ctx, cropped);
+      int n = fz_pixmap_components(ctx, pix);
+      for (int y = 0; y < img_height; y++) {
+        memcpy(dst_samples + y * dst_stride,
+               src_samples + (crop_y + y) * src_stride + crop_x * n,
+               img_width * n);
+      }
+      fz_drop_pixmap(ctx, pix);
+      pix = cropped;
+    }
+  }
   fz_drop_display_list(ctx, dl);
   if (!pix) {
     fprintf(stderr, "[webview] ERROR: render_to_pixmap returned NULL\n");

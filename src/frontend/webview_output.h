@@ -8,8 +8,7 @@ void webview_output_page(fz_context *ctx, txp_engine *eng,
                          int img_width, int img_height,
                          int page_width, int page_height,
                          const char *tmpdir, bool dark_mode,
-                         float trim_factor,
-                         int page_w, int page_h);
+                         float trim_factor);
 
 void webview_set_tmpdir(const char *dir);
 

@@ -998,9 +998,7 @@ void txp_renderer_screen_size(fz_context *ctx, txp_renderer *self, int *w, int *
 
 fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
                                           int width, int height,
-                                          uint32_t bg_color, uint32_t fg_color,
-                                          float trim_factor,
-                                          int page_w, int page_h)
+                                          uint32_t bg_color, uint32_t fg_color)
 {
   fz_irect bbox = fz_make_irect(0, 0, width, height);
   fz_pixmap *pix = fz_new_pixmap_with_bbox(ctx, fz_device_rgb(ctx), bbox, NULL, 0);
@@ -1009,22 +1007,10 @@ fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
   // Fill with background color (white by default)
   fz_clear_pixmap_with_value(ctx, pix, 0xFF);
 
-  fz_rect bounds;
-  float doc_w, doc_h;
-
-  if (trim_factor > 0.0f && trim_factor < 0.5f && page_w > 0 && page_h > 0) {
-    // Trim: render the page (0,0,page_w,page_h) with margins cropped.
-    // The trimmed visible area fills the output symmetrically on all 4 sides.
-    bounds.x0 = page_w * trim_factor;
-    bounds.y0 = page_h * trim_factor;
-    bounds.x1 = page_w * (1.0f - trim_factor);
-    bounds.y1 = page_h * (1.0f - trim_factor);
-  } else {
-    // Normal: fit content bounds into output
-    bounds = fz_bound_display_list(ctx, dl);
-  }
-  doc_w = bounds.x1 - bounds.x0;
-  doc_h = bounds.y1 - bounds.y0;
+  // Compute scale to fit the content into the pixmap
+  fz_rect bounds = fz_bound_display_list(ctx, dl);
+  float doc_w = bounds.x1 - bounds.x0;
+  float doc_h = bounds.y1 - bounds.y0;
   if (doc_w <= 0) doc_w = width;
   if (doc_h <= 0) doc_h = height;
 

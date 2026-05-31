@@ -1371,7 +1371,7 @@ bool texpresso_main(struct persistent_state *ps)
         if (ph == 0) ph = 792;
         webview_output_page(ps->ctx, ui->eng, ui->page, after_page_count,
                             w, h, pw, ph,
-                            ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode, ps->trim_factor, pw, ph);
+                            ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode, ps->trim_factor);
         webview_rendered_this_iteration = true;
       }
 
@@ -1667,7 +1667,7 @@ bool texpresso_main(struct persistent_state *ps)
                       ui->page, page_count, w, h);
               webview_output_page(ps->ctx, ui->eng, ui->page, page_count,
                                   w, h, pw, ph,
-                                  ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode, ps->trim_factor, pw, ph);
+                                  ps->tmpdir[0] ? ps->tmpdir : NULL, ps->dark_mode, ps->trim_factor);
             }
             else
             {
