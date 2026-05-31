@@ -335,16 +335,6 @@ bool editor_parse(fz_context *ctx,
     const char *s = val_string(ctx, stack, mode);
     snprintf(out->set_fit_mode.mode, sizeof(out->set_fit_mode.mode), "%s", s);
   }
-  else if (strcmp(verb, "set-trim-factor") == 0)
-  {
-    if (len != 2) goto arity;
-    val factor = val_array_get(ctx, stack, command, 1);
-    if (!val_is_number(factor)) goto arguments;
-    *out = (struct editor_command){
-        .tag = EDIT_SET_TRIM_FACTOR,
-        .set_trim_factor = { .factor = (float)val_number(ctx, factor) },
-    };
-  }
   else
   {
     fprintf(stderr, "[command] unknown verb: %s\n", verb);

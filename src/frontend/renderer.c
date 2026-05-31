@@ -998,8 +998,7 @@ void txp_renderer_screen_size(fz_context *ctx, txp_renderer *self, int *w, int *
 
 fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
                                           int width, int height,
-                                          uint32_t bg_color, uint32_t fg_color,
-                                          float trim_factor)
+                                          uint32_t bg_color, uint32_t fg_color)
 {
   fz_irect bbox = fz_make_irect(0, 0, width, height);
   fz_pixmap *pix = fz_new_pixmap_with_bbox(ctx, fz_device_rgb(ctx), bbox, NULL, 0);
@@ -1018,12 +1017,6 @@ fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
   float scale_x = (float)width / doc_w;
   float scale_y = (float)height / doc_h;
   float scale = fz_min(scale_x, scale_y);
-
-  // Trim: zoom in so trim_factor of each edge is clipped outside output
-  if (trim_factor > 0.0f && trim_factor < 0.5f) {
-    float zoom = 1.0f / (1.0f - 2.0f * trim_factor);
-    scale *= zoom;
-  }
 
   // Center the content
   float tx = (width - doc_w * scale) / 2.0f;

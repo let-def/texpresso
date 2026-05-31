@@ -74,7 +74,6 @@ struct persistent_state {
   bool webview_mode;
   bool dark_mode;
   float default_resolution;
-  float trim_factor;
   int render_width;
   int render_height;
   char tmpdir[4096];
