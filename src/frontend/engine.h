@@ -74,6 +74,10 @@ struct txp_engine_class
   synctex_t *(*synctex)(txp_engine *self, fz_buffer **buf);
   fileentry_t *(*find_file)(txp_engine *self, fz_context *ctx, const char *path);
   void (*notify_file_changes)(txp_engine *self, fz_context *ctx, fileentry_t *entry, int offset);
+  bool (*aux_dirty)(txp_engine *self);
+  bool (*is_finishing)(txp_engine *self);
+  void (*start_finishing)(txp_engine *self);
+  void (*finish_convergence)(txp_engine *self, fz_context *ctx);
 };
 
 #define TXP_ENGINE_DEF_CLASS                                                \
@@ -93,6 +97,11 @@ struct txp_engine_class
                                        const char *path);                   \
   static void engine_notify_file_changes(txp_engine *self, fz_context *ctx, \
                                          fileentry_t *entry, int offset);   \
+  static bool engine_aux_dirty(txp_engine *_self);                          \
+  static bool engine_is_finishing(txp_engine *_self);                       \
+  static void engine_start_finishing(txp_engine *_self);                    \
+  static void engine_finish_convergence(txp_engine *_self,                  \
+                                        fz_context *ctx);                   \
                                                                             \
   static struct txp_engine_class _class = {                                 \
       .destroy = engine_destroy,                                            \
@@ -107,6 +116,10 @@ struct txp_engine_class
       .detect_changes = engine_detect_changes,                              \
       .end_changes = engine_end_changes,                                    \
       .notify_file_changes = engine_notify_file_changes,                    \
+      .aux_dirty = engine_aux_dirty,                                        \
+      .is_finishing = engine_is_finishing,                                  \
+      .start_finishing = engine_start_finishing,                            \
+      .finish_convergence = engine_finish_convergence,                      \
   }
 
 #endif // GENERIC_ENGINE_H_

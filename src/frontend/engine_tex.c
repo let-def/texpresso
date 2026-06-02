@@ -99,6 +99,9 @@ struct tex_engine
     query_t query;
     char path[1024];
   } deferred;
+
+  bool aux_dirty;
+  bool finishing;
 };
 
 // Backtrackable process state & VFS representation
@@ -234,6 +237,22 @@ static void pop_process(fz_context *ctx, struct tex_engine *self)
   mark_t mark =
     self->process_count > 0 ? get_process(self)->snap : self->restart;
   log_rollback(ctx, self->log, mark);
+}
+
+static void clear_convergence_stash(fz_context *ctx, struct tex_engine *self)
+{
+  fileentry_t *e;
+  for (int index = 0; (e = filesystem_scan(self->fs, &index));)
+  {
+    if (e->edit_data_from_convergence && e->edit_data)
+    {
+      fz_drop_buffer(ctx, e->edit_data);
+      e->edit_data = NULL;
+      e->edit_data_from_convergence = false;
+    }
+  }
+  self->aux_dirty = false;
+  self->finishing = false;
 }
 
 static bool read_query(struct tex_engine *self, channel_t *t, query_t *q)
@@ -799,6 +818,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
         editor_append(BUF_LOG, output_data(e), pos);
       else if (self->st.stdout.entry == e)
         editor_append(BUF_OUT, output_data(e), pos);
+      else
+        self->aux_dirty = true;
       a.tag = A_DONE;
       channel_write_answer(self->c, p->fd, &a);
       break;
@@ -965,6 +986,8 @@ static void revert_trace(trace_entry_t *te)
 static void rollback_processes(fz_context *ctx, struct tex_engine *self, int reverted, int trace)
 {
   self->deferred.active = false;
+  clear_convergence_stash(ctx, self);
+
   fprintf(
     stderr,
     "rolling back to position %d\nbefore rollback: %d bytes of output\n",
@@ -1392,6 +1415,137 @@ static void engine_notify_file_changes(txp_engine *_self,
 {
   SELF;
   rollback_add_change(ctx, self, entry, offset);
+}
+
+static bool is_system_output(const char *path)
+{
+  if (strcmp(path, "stdout") == 0)
+    return true;
+  const char *dot = strrchr(path, '.');
+  if (!dot)
+    return false;
+  return strcmp(dot, ".log") == 0
+      || strcmp(dot, ".xdv") == 0
+      || strcmp(dot, ".dvi") == 0
+      || strcmp(dot, ".pdf") == 0
+      || strcmp(dot, ".synctex") == 0;
+}
+
+// Reset per-entry `seen` counters before respawning the engine. Without
+// this, the new engine's Q_OPRD never enters the `e->seen < 0` branch
+// in answer_query, so no first-open trace entry is generated. Later
+// rollbacks would walk back through the trace without ever bringing
+// entry->seen below the changed offset, walking past trace[0] into OOB
+// memory and crashing in revert_trace.
+static void reset_seen_for_respawn(struct tex_engine *self)
+{
+  fileentry_t *e;
+  for (int index = 0; (e = filesystem_scan(self->fs, &index));)
+    e->seen = -1;
+}
+
+static bool engine_aux_dirty(txp_engine *_self)
+{
+  SELF;
+  return self->aux_dirty;
+}
+
+static bool engine_is_finishing(txp_engine *_self)
+{
+  SELF;
+  return self->finishing;
+}
+
+// Mark the engine as needing to run to end-of-document. The main loop
+// keeps calling engine_step (because need_advance honours is_finishing),
+// so the engine processes its remaining queries between SDL events —
+// UI stays responsive. When the engine closes its socket, status flips
+// to DOC_TERMINATED and finish_convergence does the post-pass work.
+static void engine_start_finishing(txp_engine *_self)
+{
+  SELF;
+  self->finishing = true;
+}
+
+static void engine_finish_convergence(txp_engine *_self, fz_context *ctx)
+{
+  SELF;
+  if (!self->finishing)
+    return;
+  if (engine_get_status(_self) != DOC_TERMINATED)
+    return;
+
+  self->finishing = false;
+
+  bool converged = true;
+  fileentry_t *e;
+  for (int index = 0; (e = filesystem_scan(self->fs, &index));)
+  {
+    if (e->saved.level != FILE_WRITE || !e->saved.data)
+      continue;
+    if (is_system_output(e->path))
+      continue;
+    bool stashed_match = e->edit_data && e->edit_data_from_convergence
+                         && e->saved.data->len == e->edit_data->len
+                         && memcmp(e->saved.data->data, e->edit_data->data,
+                                   e->saved.data->len) == 0;
+    if (!stashed_match)
+    {
+      converged = false;
+      break;
+    }
+  }
+
+  if (converged)
+  {
+    fprintf(stderr, "[rerun] aux byte-stable, convergence reached\n");
+    // Finishing left the latest process dead (fd=-1) at the top of the
+    // snapshot stack. Strip dead processes so get_process() returns a
+    // live snapshot the next user edit can roll back into.
+    while (self->process_count > 0 && get_process(self)->fd == -1)
+      pop_process(ctx, self);
+    if (self->process_count == 0)
+    {
+      reset_seen_for_respawn(self);
+      incdvi_reset(self->dvi);
+      synctex_rollback(ctx, self->stex, 0);
+      editor_truncate(BUF_OUT, output_data(self->st.stdout.entry));
+      editor_truncate(BUF_LOG, output_data(self->st.log.entry));
+      prepare_process(ctx, self);
+    }
+    self->aux_dirty = false;
+    return;
+  }
+
+  for (int index = 0; (e = filesystem_scan(self->fs, &index));)
+  {
+    if (e->saved.level != FILE_WRITE || !e->saved.data)
+      continue;
+    if (is_system_output(e->path))
+      continue;
+    // Don't clobber edit_data the editor pushed (interpret_open sets
+    // edit_data without the convergence flag).
+    if (e->edit_data && !e->edit_data_from_convergence)
+      continue;
+    if (e->edit_data)
+      fz_drop_buffer(ctx, e->edit_data);
+    // Copy, don't share: log_rollback truncates saved.data->len in place.
+    e->edit_data = fz_new_buffer_from_copied_data(ctx, e->saved.data->data,
+                                                  e->saved.data->len);
+    e->edit_data_from_convergence = true;
+  }
+
+  while (self->process_count > 0)
+    pop_process(ctx, self);
+
+  reset_seen_for_respawn(self);
+  incdvi_reset(self->dvi);
+  synctex_rollback(ctx, self->stex, 0);
+  editor_truncate(BUF_OUT, output_data(self->st.stdout.entry));
+  editor_truncate(BUF_LOG, output_data(self->st.log.entry));
+
+  prepare_process(ctx, self);
+  self->aux_dirty = false;
 }
 
 static void engine_begin_changes(txp_engine *_self, fz_context *ctx)

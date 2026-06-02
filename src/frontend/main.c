@@ -153,6 +153,12 @@ static int repaint_on_resize(void *data, SDL_Event *event)
 
 static bool need_advance(fz_context *ctx, ui_state *ui)
 {
+  if (send(get_status, ui->eng) != DOC_RUNNING)
+    return false;
+
+  if (send(is_finishing, ui->eng))
+    return true;
+
   int need = send(page_count, ui->eng) <= ui->page;
 
   if (!need)
@@ -164,7 +170,7 @@ static bool need_advance(fz_context *ctx, ui_state *ui)
       synctex_has_target(stx);
   }
 
-  return (need && send(get_status, ui->eng) == DOC_RUNNING);
+  return need;
 }
 
 static bool advance_engine(fz_context *ctx, ui_state *ui)
@@ -725,6 +731,8 @@ static void realize_change(struct persistent_state *ps,
 
 #define BUFFERED_OPS 64
 #define BUFFERED_CHARS 4096
+#define T_IDLE_MS 500
+#define MAX_RERUNS 5
 
 struct {
   char buffer[BUFFERED_CHARS];
@@ -1220,6 +1228,7 @@ bool texpresso_main(struct persistent_state *ps)
   SDL_Thread *poll_stdin_thread =
     SDL_CreateThread(poll_stdin_thread_main, "poll_stdin_thread", poll_stdin_pipe);
   bool stdin_eof = 0;
+  int rerun_count = 0;
 
   while (!quit)
   {
@@ -1271,12 +1280,14 @@ bool texpresso_main(struct persistent_state *ps)
       if (!ps->paused)
         send(step, ui->eng, ps->ctx, true);
       schedule_event(RELOAD_EVENT);
+      rerun_count = 0;
     }
 
     // Process document
     {
       int before_page_count = send(page_count, ui->eng);
       bool advance = !ps->paused && advance_engine(ps->ctx, ui);
+      send(finish_convergence, ui->eng, ps->ctx);
       int after_page_count = send(page_count, ui->eng);
       fflush(stdout);
 
@@ -1289,9 +1300,25 @@ bool texpresso_main(struct persistent_state *ps)
           continue;
         if (!stdin_eof)
           wakeup_poll_thread(poll_stdin_pipe, 'c');
-        has_event = SDL_WaitEvent(&e);
+        bool rerun_eligible = ps->rerun
+                              && rerun_count < MAX_RERUNS
+                              && !send(is_finishing, ui->eng)
+                              && send(aux_dirty, ui->eng);
+        if (rerun_eligible)
+          has_event = SDL_WaitEventTimeout(&e, T_IDLE_MS);
+        else
+          has_event = SDL_WaitEvent(&e);
         if (!has_event)
         {
+          if (rerun_eligible)
+          {
+            rerun_count++;
+            fprintf(stderr, "[rerun] idle %dms: finishing pass %d/%d\n",
+                    T_IDLE_MS, rerun_count, MAX_RERUNS);
+            send(start_finishing, ui->eng);
+            schedule_event(RELOAD_EVENT);
+            continue;
+          }
           fprintf(stderr, "SDL_WaitEvent error: %s\n", SDL_GetError());
           break;
         }
