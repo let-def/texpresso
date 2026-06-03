@@ -32,13 +32,9 @@ enum EDITOR_COMMAND
   EDIT_UNMAP_WINDOW,
   EDIT_CROP,
   EDIT_INVERT,
-  EDIT_SYNCTEX_BACKWARD,
-  EDIT_SET_PAGE,
-  EDIT_SET_OUTPUT_SIZE,
-  EDIT_GO_HOME,
-  EDIT_GO_END,
-  EDIT_RESET_ZOOM,
-  EDIT_SET_FIT_MODE,
+  EDIT_REGISTER,
+  EDIT_PAUSE,
+  EDIT_RESUME,
 };
 
 struct editor_change
@@ -123,30 +119,14 @@ struct editor_command
     } invert;
 
     struct {
-      int page;
-      float x, y;
-    } synctex_backward;
+      const char *path;
+    } reg;
 
     struct {
-      int page;
-    } set_page;
+    } pause;
 
     struct {
-      int width, height;
-    } set_output_size;
-
-    struct {
-    } go_home;
-
-    struct {
-    } go_end;
-
-    struct {
-    } reset_zoom;
-
-    struct {
-      char mode[8];
-    } set_fit_mode;
+    } resume;
   };
 };
 
@@ -169,5 +149,17 @@ void editor_flush(void);
 void editor_synctex(const char *dirname, const char *basename, int basename_len, int line, int column);
 void editor_reset_sync(void);
 void editor_notify_file_opened(int index, const char *path, int len);
+
+enum EDITOR_LOOKUP_STATUS
+{
+  LOOKUP_SUCCESSFUL,
+  LOOKUP_FAILED,
+  LOOKUP_PROMISED,
+};
+
+void editor_notify_lookup(const char *path,
+                          int len,
+                          bool read,
+                          enum EDITOR_LOOKUP_STATUS status);
 
 #endif  // EDITOR_H_

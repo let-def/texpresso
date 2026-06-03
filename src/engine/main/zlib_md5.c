@@ -67,7 +67,7 @@ int ttbc_get_data_md5(const uint8_t *data,
   _picohash_md5_init(&ctx);
   _picohash_md5_update(&ctx, data, len);
   _picohash_md5_final(&ctx, digest);
-  return 1;
+  return 0;
 }
 
 int ttstub_get_file_md5(const char *path,
@@ -76,7 +76,7 @@ int ttstub_get_file_md5(const char *path,
   ttbc_input_handle_t *input = ttstub_input_open(path, TTBC_FILE_FORMAT_PROGRAM_DATA, 0);
 
   if (!input)
-    return 0;
+    return 1;
   _picohash_md5_ctx_t ctx;
   _picohash_md5_init(&ctx);
 
@@ -90,5 +90,5 @@ int ttstub_get_file_md5(const char *path,
 
   _picohash_md5_final(&ctx, digest);
 
-  return 1;
+  return 0;
 }

@@ -4,7 +4,6 @@ driver/proxy
 .gdb_history
 .cache
 *.log
-*.aux
 *.dSYM
 *.so
 *.o
@@ -13,7 +12,6 @@ texpresso
 compile_commands.json
 Makefile.config
 .DS_Store
-*.xdv
+test/*.xdv
 test/*.fmt
 test/test_utf_mapping
-test/out/
