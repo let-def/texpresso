@@ -55,6 +55,16 @@ enum editor_protocol
   EDITOR_JSON,
 };
 
+struct webview_state {
+  // Incremental render state
+  unsigned char *prev_rgb;
+  int prev_w, prev_h;
+  int prev_page;
+
+  // Temp directory for QOI files (set via -tmpdir flag)
+  char *tmpdir;
+};
+
 struct persistent_state {
   struct initial_state initial;
   enum editor_protocol protocol;
@@ -71,6 +81,15 @@ struct persistent_state {
 
   bool line_output, use_tectonic, use_texlive, initialize_only, stream_mode;
   bool paused;
+
+  // Webview mode
+  bool webview_mode;
+  bool dark_mode;
+  float default_resolution;
+  float trim_factor;
+  int render_width;
+  int render_height;
+  struct webview_state webview;
 };
 
 bool texpresso_main(struct persistent_state *ps);

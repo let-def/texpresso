@@ -12,6 +12,7 @@ texpresso
 compile_commands.json
 Makefile.config
 .DS_Store
+test/out/
 test/*.xdv
 test/*.fmt
 test/test_utf_mapping

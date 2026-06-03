@@ -103,6 +103,7 @@ txp_renderer *txp_renderer_new(fz_context *ctx, SDL_Renderer *sdl)
     self->config.foreground_color = 0x000000;
     self->config.themed_color = 1;
     self->config.invert_color = 0;
+    self->config.trim_factor = 0.0f;
   }
   fz_catch(ctx)
   {
@@ -221,15 +222,21 @@ bool txp_renderer_page_bounds(fz_context *ctx, txp_renderer *self, txp_renderer_
   float doc_ar = (bounds.x1 - bounds.x0) / (bounds.y1 - bounds.y0);
 
   float doc_w, doc_h;
+  float zoom = self->config.zoom;
+
+  // Trim: zoom into page to crop margins
+  if (self->config.trim_factor > 0.0f && self->config.trim_factor < 0.5f) {
+    zoom *= 1.0f / (1.0f - 2.0f * self->config.trim_factor);
+  }
 
   if (out_ar <= doc_ar || self->config.fit == FIT_WIDTH)
   {
-    doc_w = self->output_w * self->config.zoom;
+    doc_w = self->output_w * zoom;
     doc_h = doc_w / doc_ar;
   }
   else
   {
-    doc_h = self->output_h * self->config.zoom;
+    doc_h = self->output_h * zoom;
     doc_w = doc_h * doc_ar;
   }
 
@@ -317,7 +324,7 @@ static int fz_irect_area(fz_irect r)
 
 #define remap(v, bp, wp) (bp) + ((v) * (wp - bp)) / 255
 
-static void invert_pixmap(fz_context *ctx, fz_pixmap *pix, uint32_t black, uint32_t white)
+void txp_renderer_invert_pixmap(fz_context *ctx, fz_pixmap *pix, uint32_t black, uint32_t white)
 {
   uint8_t *data0 = fz_pixmap_samples(ctx, pix);
   int stride = fz_pixmap_stride(ctx, pix);
@@ -378,7 +385,7 @@ static void render_rect(fz_context *ctx, txp_renderer *self, fz_rect bounds, voi
   uint32_t bg, fg;
   txp_get_colors(&self->config, &bg, &fg);
   //if (bg != 0x00FFFFFF || fg != 0x00000000)
-    invert_pixmap(ctx, pm, fg, bg);
+    txp_renderer_invert_pixmap(ctx, pm, fg, bg);
   fz_drop_pixmap(ctx, pm);
 }
 
@@ -994,4 +1001,44 @@ void txp_renderer_screen_size(fz_context *ctx, txp_renderer *self, int *w, int *
 {
   *w = self->output_w;
   *h = self->output_h;
+}
+
+fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
+                                          int width, int height,
+                                          uint32_t bg_color, uint32_t fg_color)
+{
+  fz_irect bbox = fz_make_irect(0, 0, width, height);
+  fz_pixmap *pix = fz_new_pixmap_with_bbox(ctx, fz_device_rgb(ctx), bbox, NULL, 0);
+  if (!pix) return NULL;
+
+  // Fill with background color (white by default)
+  fz_clear_pixmap_with_value(ctx, pix, 0xFF);
+
+  // Compute scale to fit the content into the pixmap
+  fz_rect bounds = fz_bound_display_list(ctx, dl);
+  float doc_w = bounds.x1 - bounds.x0;
+  float doc_h = bounds.y1 - bounds.y0;
+  if (doc_w <= 0) doc_w = width;
+  if (doc_h <= 0) doc_h = height;
+
+  float scale_x = (float)width / doc_w;
+  float scale_y = (float)height / doc_h;
+  float scale = fz_min(scale_x, scale_y);
+
+  // Center the content
+  float tx = (width - doc_w * scale) / 2.0f;
+  float ty = (height - doc_h * scale) / 2.0f;
+
+  fz_matrix ctm = fz_translate(tx, ty);
+  ctm = fz_concat(ctm, fz_scale(scale, scale));
+  ctm = fz_concat(ctm, fz_translate(-bounds.x0, -bounds.y0));
+
+  fz_device *dev = fz_new_draw_device(ctx, ctm, pix);
+  fz_run_display_list(ctx, dl, dev, fz_identity, fz_infinite_rect, NULL);
+  fz_close_device(ctx, dev);
+  fz_drop_device(ctx, dev);
+
+  txp_renderer_invert_pixmap(ctx, pix, bg_color, fg_color);
+
+  return pix;
 }
