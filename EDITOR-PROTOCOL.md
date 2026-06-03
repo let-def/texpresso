@@ -3,7 +3,7 @@
 The process should be started from the editor passing the root TeX file as argument:
 
 ```
-texpressso [-I path]* [-json] [-lines] [-texlive] [-tectonic] [-test-initialize] [-stream] <some-dir>/root.tex
+texpressso [-I path]* [-json] [-lines] [-texlive] [-tectonic] [-test-initialize] [-stream] [-webview] [-tmpdir path] [-resolution N] <some-dir>/root.tex
 ```
 
 The rest of the communication will happen on stdin/stdout:
@@ -17,6 +17,9 @@ Description of the arguments:
 - `-tectonic`: use Tectonic as TeX distribution.
 - `-test-initialize`: run a single cycle, used only for initialization test.
 - `-stream`: skip filesystem lookups for user files. Files not yet pushed are treated as missing and the engine backtracks when they arrive.
+- `-webview`: run in webview mode, outputting QOI images via stdout JSON messages without creating an SDL window.
+- `-tmpdir path`: set the temporary directory for QOI output files (default: `$TMPDIR` or `/tmp`).
+- `-resolution N`: default rendering resolution multiplier as a float (default: `2.5`).
 - `-I path`: populate an "include path" in which files should be looked up in priority
 
 The include path is useful if one uses a build system that puts auxiliary files in a dedicated build directory, while the TeX sources are in a separate source directory. In this case, TeXpresso can be started using `texpresso -I build/ source/main.tex`.
@@ -151,6 +154,120 @@ engine starts paused, so `(resume)` is required to begin compilation.
 ```
 
 Try to scroll the UI to the contents defined in TeX file at "path" and line. The path can be absolute or relative to the root document.
+
+```scheme
+(synctex-backward page x y)
+```
+
+Perform backward SyncTeX search: the preview reported a click at coordinates `(x, y)` (in TeX points) on `page`. TeXpresso will scan the SyncTeX data and emit a `(synctex "path" line column)` message with the corresponding source location.
+
+```scheme
+(set-page page)
+```
+
+Jump to a specific page number (0-indexed). In webview mode, if the engine hasn't produced the requested page yet, TeXpresso polls the engine for up to ~500ms. If the page still doesn't exist, a `["page-error", count]` message is emitted.
+
+```scheme
+(set-output-size width height)
+```
+
+Set the render output dimensions (in pixels) for webview mode. When set, these override the automatic dimension detection from page bounds × resolution. Set both to 0 to revert to automatic detection.
+
+```scheme
+(go-home)
+```
+
+Jump to the first page (page 0).
+
+```scheme
+(go-end)
+```
+
+Jump to the last page. TeXpresso polls the engine until it terminates (up to ~500ms timeout), then navigates to the final page count minus one.
+
+```scheme
+(reset-zoom)
+```
+
+Reset the preview zoom level. In webview mode, this emits a `["zoom-reset"]` message to the viewer.
+
+```scheme
+(set-fit-mode "mode")
+```
+
+Set the fit mode for page display. `"mode"` is either `"width"` or `"page"`. In webview mode, this emits a `["fit-mode-changed", "mode"]` message.
+
+```scheme
+(invert)
+```
+
+In SDL mode: toggle color inversion. In webview mode: toggle dark/light mode and emit a `["dark-mode", bool]` message.
+
+```scheme
+(set-trim-factor factor)
+```
+
+Set the margin trimming factor (0.0 to 0.5). Trimming crops the page by `factor` from each of the four sides. The SDL renderer applies trim via the zoom multiplier; the webview renderer applies it via render+crop in the output module.
+
+## Webview mode
+
+The `-webview` flag starts TeXpresso in webview mode, intended for embedded preview panels (e.g. VSCode webview). In this mode:
+
+- No SDL window is created; only `SDL_INIT_TIMER | SDL_INIT_EVENTS` are initialized.
+- Rendered pages are encoded as QOI images, written to temporary files, and announced via stdout JSON messages.
+- The viewer reads these messages to display the preview.
+
+Additional CLI flags for webview mode:
+
+```
+-webview              Run in webview mode (no SDL window)
+-tmpdir path          Set temporary directory for QOI files (default: $TMPDIR or /tmp)
+-resolution N         Default rendering resolution multiplier (default: 2.5)
+```
+
+### Webview output messages (texpresso → viewer)
+
+```
+["page", page, total, "path", w, h, page_w, page_h]
+```
+
+A full page QOI image has been written to `"path"`. `page` is the page number (0-indexed), `total` is the current page count, `w`×`h` are the rendered image dimensions, and `page_w`×`page_h` are the original page dimensions in TeX points.
+
+```
+["page-diff", page, total, w, h, page_w, page_h, count, [[x, y, w, h, "path"], ...]]
+```
+
+An incremental update to a previously rendered page. Only the dirty rectangles (changed regions) are encoded as QOI images. Each rect has position `(x, y)`, size `(w, h)`, and a path to the QOI temp file. This is emitted when less than 50% of the page has changed since the last render.
+
+```
+["synctex-scroll", x, y]
+```
+
+Scroll the preview to position `(x, y)` in TeX points, resulting from a forward SyncTeX search. The viewer should scroll to make this point visible.
+
+```
+["dark-mode", "true"|"false"]
+```
+
+Emitted when the user toggles dark mode via the `(invert)` command in webview mode.
+
+```
+["page-error", count]
+```
+
+Emitted when a `(set-page)` request targets a page that doesn't exist. `count` is the current total page count.
+
+```
+["zoom-reset"]
+```
+
+Emitted when the zoom is reset via `(reset-zoom)`.
+
+```
+["fit-mode-changed", "mode"]
+```
+
+Emitted when the fit mode changes via `(set-fit-mode)`. `"mode"` is `"width"` or `"page"`.
 
 ## Messages (texpresso -> editor)
 

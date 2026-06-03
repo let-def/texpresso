@@ -1,0 +1,420 @@
+% !texpresso-trim: 0.05
+% TeXpresso Webview Full Feature Test Document
+% ============================================
+% Tests: basic rendering, multi-page navigation, incremental dirty rects,
+% dark mode, trim factor, SyncTeX forward/backward, zoom, multi-file,
+% math, figures, tables, and more.
+
+\documentclass[12pt,a4paper]{article}
+
+% === Packages ===
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{float}
+
+% === Page setup ===
+\usepackage[margin=2.5cm]{geometry}
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0pt}
+
+% === Metadata ===
+\title{TeXpresso Webview Test Suite}
+\author{Test Author}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================
+\section{Basic Rendering}
+% ============================================
+
+This section tests basic text rendering with various LaTeX constructs.
+
+\subsection{Plain Text}
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor
+incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
+nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+
+\textbf{Bold text}, \textit{italic text}, \texttt{monospace text},
+\underline{underlined text}, and \textsc{small caps}.
+
+{\tiny tiny} {\scriptsize scriptsize} {\footnotesize footnotesize}
+{\small small} {\normalsize normal} {\large large} {\Large Large}
+{\huge huge} {\Huge Huge}.
+
+\subsection{Special Characters}
+
+Special TeX characters: \# \$ \% \& \_ \{ \} \~{} \^{} \textbackslash.
+Unicode: café, naïve, Zürich, \emph{日本語}, \emph{中文测试}.
+
+\subsection{Font Effects}
+
+\begin{itemize}
+  \item \textbf{Bold item}: This is a bold list item for visual testing.
+  \item \textit{Italic item}: This is an italic list item for visual testing.
+  \item \texttt{Monospace item}: This is a monospace list item.
+  \item \underline{Underlined item}: Underlined text test.
+\end{itemize}
+
+% ============================================
+\section{Multi-Page Content}
+\label{sec:multipage}
+% ============================================
+
+This section and the following ones test multi-page navigation features:
+\texttt{go-home}, \texttt{go-end}, \texttt{set-page}, and page scrolling.
+
+\subsection{Long Paragraph}
+
+\fbox{\begin{minipage}{\textwidth}
+This is a paragraph inside a framed box. It should render with a visible border.
+The border helps verify that the trim factor cropping is working correctly.
+If \texttt{texpresso-trim: 0.05} is active, the page margins should be slightly
+cropped from all four sides, making the content appear slightly larger.
+\end{minipage}}
+
+\subsection{Page Filling Content}
+
+% Generate enough content to span multiple pages
+\begin{enumerate}[label=\arabic*.]
+  \item First item in a long enumeration that will span multiple pages.
+  \item Second item — the enumeration should continue across pages.
+  \item Third item — testing page boundary rendering.
+  \item Fourth item — continued page break test.
+  \item Fifth item with longer text: this item contains significantly more
+        text than the others to ensure that the enumeration items have varying
+        heights, which helps test the dirty rect algorithm when items are
+        edited, added, or removed from the middle of the list.
+  \item Sixth item — more content for multi-page coverage.
+  \item Seventh item — approaching the next page likely.
+  \item Eighth item — still going.
+  \item Ninth item — almost there.
+  \item Tenth item — first page should be full by now.
+\end{enumerate}
+
+% ============================================
+\section{Incremental Rendering Test}
+\label{sec:incremental}
+% ============================================
+
+Edit the content below and observe \texttt{page-diff} messages in stdout.
+Only the changed regions should be transmitted as QOI dirty rects.
+
+\subsection{Edit Target: Delete Me}
+
+\begin{quote}
+\textbf{INSTRUCTION:} Try deleting this entire blockquote, then undo.
+Watch for any visual artifacts or ghost traces during the transition.
+
+This quote contains text at a different horizontal position than normal
+paragraphs (it's indented). When deleted, the paragraph below should move
+up into this space. The dirty rect algorithm must handle the varying
+horizontal positions correctly.
+\end{quote}
+
+\subsection{Edit Target: Modify List}
+
+\begin{itemize}
+  \item Apple — edit this item by changing the text.
+  \item \textbf{Banana} — try adding or removing the bold formatting.
+  \item Cherry — delete this line entirely and observe the reflow.
+  \item Date — add a new line after this one.
+  \item Elderberry — modify any text here.
+\end{itemize}
+
+\subsection{Edit Target: Math Formula}
+
+Edit the formula below and check that the preview updates correctly:
+
+\begin{equation}
+  E = mc^{2}
+  \label{eq:emc2}
+\end{equation}
+
+Try changing it to: $F = ma$ or $e^{i\pi} + 1 = 0$.
+
+% ============================================
+\section{Mathematics}
+\label{sec:math}
+% ============================================
+
+\subsection{Inline Math}
+
+The quadratic formula: $x = \frac{-b \pm \sqrt{b^{2} - 4ac}}{2a}$.
+
+The Pythagorean theorem: $a^{2} + b^{2} = c^{2}$.
+
+\subsection{Display Math}
+
+\begin{equation}
+  \int_{0}^{\infty} e^{-x^{2}} \, dx = \frac{\sqrt{\pi}}{2}
+  \label{eq:gaussian}
+\end{equation}
+
+\begin{align}
+  \nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_{0}} \\
+  \nabla \cdot \mathbf{B} &= 0 \\
+  \nabla \times \mathbf{E} &= -\frac{\partial \mathbf{B}}{\partial t} \\
+  \nabla \times \mathbf{B} &= \mu_{0}\mathbf{J} +
+    \mu_{0}\varepsilon_{0}\frac{\partial \mathbf{E}}{\partial t}
+  \label{eq:maxwell}
+\end{align}
+
+\begin{equation}
+  \zeta(s) = \sum_{n=1}^{\infty} \frac{1}{n^{s}} =
+    \prod_{p \text{ prime}} \frac{1}{1 - p^{-s}}
+  \label{eq:zeta}
+\end{equation}
+
+\subsection{Matrix}
+
+\begin{equation}
+  \begin{pmatrix}
+    a_{11} & a_{12} & a_{13} \\
+    a_{21} & a_{22} & a_{23} \\
+    a_{31} & a_{32} & a_{33}
+  \end{pmatrix}
+  \begin{pmatrix} x_{1} \\ x_{2} \\ x_{3} \end{pmatrix}
+  =
+  \begin{pmatrix} b_{1} \\ b_{2} \\ b_{3} \end{pmatrix}
+  \label{eq:matrix}
+\end{equation}
+
+\subsection{Cases}
+
+\begin{equation}
+  f(x) = \begin{cases}
+    0, & x < 0 \\
+    \frac{1}{2}, & x = 0 \\
+    1, & x > 0
+  \end{cases}
+  \label{eq:cases}
+\end{equation}
+
+% ============================================
+\section{Tables}
+\label{sec:tables}
+% ============================================
+
+\subsection{Simple Table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|c|c|c|}
+\hline
+\textbf{Column A} & \textbf{Column B} & \textbf{Column C} \\
+\hline
+Row 1, Col 1 & Row 1, Col 2 & Row 1, Col 3 \\
+\hline
+Row 2, Col 1 & Row 2, Col 2 & Row 2, Col 3 \\
+\hline
+Row 3, Col 1 & Row 3, Col 2 & Row 3, Col 3 \\
+\hline
+\end{tabular}
+\caption{Simple bordered table}
+\label{tab:simple}
+\end{table}
+
+\subsection{Booktabs Table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}llr@{}}
+\toprule
+\multicolumn{2}{c}{\textbf{Item}} & \\
+\cmidrule(r){1-2}
+\textbf{Animal} & \textbf{Description} & \textbf{Price (\$)} \\
+\midrule
+Gnat      & per gram   & 13.65 \\
+          & each       &  0.01 \\
+Gnu       & stuffed    & 92.50 \\
+Emu       & stuffed    & 33.33 \\
+Armadillo & frozen     &  8.99 \\
+\bottomrule
+\end{tabular}
+\caption{Professional booktabs table}
+\label{tab:booktabs}
+\end{table}
+
+% ============================================
+\section{Code Listing}
+\label{sec:code}
+% ============================================
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  numbers=left,
+  numberstyle=\tiny,
+  frame=single,
+  breaklines=true,
+}
+
+\begin{lstlisting}[language=C, caption={C code example}, label={lst:c}]
+#include <stdio.h>
+
+int main(int argc, char **argv) {
+    printf("Hello, TeXpresso!\n");
+    // Edit this comment and observe incremental update
+    for (int i = 0; i < 10; i++) {
+        printf("Line %d\n", i);
+    }
+    return 0;
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language=Python, caption={Python example}, label={lst:python}]
+def fibonacci(n: int) -> list[int]:
+    """Generate first n Fibonacci numbers."""
+    result = [0, 1]
+    for i in range(2, n):
+        result.append(result[i-1] + result[i-2])
+    return result[:n]
+
+# Try modifying this function
+print(fibonacci(20))
+\end{lstlisting}
+
+% ============================================
+\section{Graphics}
+\label{sec:graphics}
+% ============================================
+
+This section tests rendering of included graphics and colored elements.
+
+\subsection{Color Boxes}
+
+\fcolorbox{red}{white}{\textcolor{red}{Red border box}} \hspace{1em}
+\fcolorbox{blue}{white}{\textcolor{blue}{Blue border box}} \hspace{1em}
+\fcolorbox{green!50!black}{green!10}{
+  \textcolor{green!50!black}{Green box with tinted background}}
+
+\subsection{Color Swatches}
+
+\begin{center}
+\colorbox{red!20}{\rule{0pt}{30pt}\hspace{30pt}}
+\colorbox{blue!20}{\rule{0pt}{30pt}\hspace{30pt}}
+\colorbox{green!20}{\rule{0pt}{30pt}\hspace{30pt}}
+\colorbox{yellow!20}{\rule{0pt}{30pt}\hspace{30pt}}
+\colorbox{orange!20}{\rule{0pt}{30pt}\hspace{30pt}}
+\colorbox{purple!20}{\rule{0pt}{30pt}\hspace{30pt}}
+\end{center}
+
+\subsection{Rules and Lines}
+
+\noindent\rule{\textwidth}{0.4pt}
+
+\vspace{1em}
+\noindent\rule{\textwidth}{2pt}
+
+\vspace{1em}
+\noindent\rule[2pt]{0.5\textwidth}{0.4pt}\hfill\rule[2pt]{0.3\textwidth}{0.4pt}
+
+% ============================================
+\section{Dark Mode Test}
+\label{sec:darkmode}
+% ============================================
+
+\textbf{INSTRUCTION:} Toggle dark mode via \texttt{invert} command.
+The should emit \texttt{["dark-mode","true"]} or \texttt{["dark-mode","false"]}.
+The viewer should invert colors accordingly.
+
+This paragraph has normal text, \textbf{bold text}, \textit{italic text},
+and a colored word: \textcolor{red}{RED TEXT}. All of these should be
+visible and legible in both light and dark modes.
+
+\begin{quote}
+This blockquote should also be readable in dark mode.
+The inversion should not cause readability issues.
+\end{quote}
+
+% ============================================
+\section{SyncTeX Test}
+\label{sec:synctex}
+% ============================================
+
+This section tests SyncTeX bidirectional synchronization.
+
+\subsection{Forward SyncTeX Targets}
+
+These sentences serve as forward SyncTeX targets --- place your cursor
+anywhere in this paragraph and trigger forward SyncTeX. The preview
+should scroll to highlight the corresponding position.
+
+\subsection{Backward SyncTeX Targets}
+
+Click anywhere on this sentence in the preview. The editor should jump
+to this exact line in the source \LaTeX{} file.
+
+\textbf{Click this bold text} to test backward SyncTeX with bold formatting.
+
+\textit{Click this italic text} to test backward SyncTeX with italic formatting.
+
+A longer paragraph for backward SyncTeX testing at various horizontal
+positions within the line. Click at the beginning, middle, and end of
+this paragraph to verify that the synctex-backward coordinates are
+accurate at all positions along the text baseline.
+
+% ============================================
+\section{Final Page}
+\label{sec:final}
+% ============================================
+
+This is the final section of the document. Use this to test:
+
+\begin{enumerate}
+  \item \textbf{go-end}: Jump to the last page. Should arrive here.
+  \item \textbf{go-home}: Jump back to page 0 (title page).
+  \item \textbf{set-page}: Jump to specific pages (e.g., Section~\ref{sec:math}).
+  \item \textbf{Zoom}: Ctrl+wheel to zoom in/out, then \texttt{reset-zoom}.
+  \item \textbf{Fit mode}: \texttt{set-fit-mode "width"} vs \texttt{"page"}.
+  \item \textbf{Output size}: \texttt{set-output-size} with custom dimensions.
+\end{enumerate}
+
+\subsection{Zoom and Navigation Test}
+
+\begin{center}
+\fbox{\begin{minipage}{0.8\textwidth}
+\begin{center}
+\textbf{\Large Zoom Target Area}
+
+\vspace{1em}
+This box is a visual anchor for zoom testing.
+
+Try Ctrl+scroll while hovering over different parts of this box.
+The zoom should center on the cursor position.
+
+\vspace{1em}
+\texttt{reset-zoom} should restore the default zoom level.
+\end{center}
+\end{minipage}}
+\end{center}
+
+\vspace{2em}
+
+% Fill the rest of the page
+\begin{center}
+\rule{0.6\textwidth}{0.4pt}
+
+\vspace{1em}
+\textit{--- End of Test Document ---}
+
+\vspace{1em}
+Total sections: 8 \quad | \quad
+Total pages should be approximately 10--15
+
+\vspace{1em}
+\rule{0.6\textwidth}{0.4pt}
+\end{center}
+
+\end{document}
