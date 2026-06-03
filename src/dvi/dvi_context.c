@@ -74,11 +74,19 @@ void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev)
   st->gs.ctm.d = -1;
   st->gs.ctm.e = 72;
   st->gs.ctm.f = 72;
+  dc->base_ctm = st->gs.ctm;
+  st->gs.fill_alpha = 1.0f;
+  st->gs.stroke_alpha = 1.0f;
+  st->gs.text.scale = 1.0f;   // Tz default: 100% = no horizontal scaling
+  st->gs.text.font_size = 1.0f; // minimum safe default
   st->gs_stack.depth = 0;
 
   dc->colorstack.depth = 0;
   for (int i = 0; i < dc->pdfcolorstacks.capacity; i++)
     dc->pdfcolorstacks.stacks[i].depth = 0;
+
+  // Reset PS function state to prevent cross-page contamination
+  ps_state_reset();
 }
 
 void dvi_context_end_frame(fz_context *ctx, dvi_context *dc)

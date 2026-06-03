@@ -37,19 +37,7 @@ static void output_fill_rect(fz_context *ctx, dvi_context *dc, dvi_state *st, in
     fz_path *path = fz_new_path(ctx);
     fz_rectto(ctx, path, x0 * s, - y0 * s, x1 * s, - y1 * s);
     fz_fill_path(ctx, dc->dev, path, 0, st->gs.ctm, fz_device_rgb(ctx),
-                 st->gs.colors.fill, 1.0, color_params);
-    fz_drop_path(ctx, path);
-  }
-}
-
-static void output_debug_rect(fz_context *ctx, dvi_context *dc, dvi_state *st, int32_t x0, int32_t y0, int32_t x1, int32_t y1)
-{
-  if (ctx && dc->dev)
-  {
-    fz_path *path = fz_new_path(ctx);
-    fz_rectto(ctx, path, x0 * dc->scale, - y0 * dc->scale, x1 * dc->scale, - y1 * dc->scale);
-    fz_stroke_path(ctx, dc->dev, path, &fz_default_stroke_state, st->gs.ctm,
-                   fz_device_rgb(ctx), st->gs.colors.line, 0.8, color_params);
+                 st->gs.colors.fill, st->gs.fill_alpha, color_params);
     fz_drop_path(ctx, path);
   }
 }
@@ -60,8 +48,28 @@ void dvi_context_flush_text(fz_context *ctx, dvi_context *dc, dvi_state *st)
   {
     if (!dc->dev)
       abort();
-    fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
-        st->gs.colors.fill, 1.0, color_params);
+    // Respect PDF text render mode (Tr): 0=fill, 1=stroke, 2=fill+stroke, 3=invisible
+    switch (st->gs.text.render)
+    {
+    case 0:
+      fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
+          st->gs.colors.fill, st->gs.fill_alpha, color_params);
+      break;
+    case 1:
+      fz_stroke_text(ctx, dc->dev, dc->text, &fz_default_stroke_state, fz_identity,
+          fz_device_rgb(ctx), st->gs.colors.line, st->gs.stroke_alpha, color_params);
+      break;
+    case 2:
+      fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
+          st->gs.colors.fill, st->gs.fill_alpha, color_params);
+      break;
+    case 3:
+      break;
+    default:
+      fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
+          st->gs.colors.fill, st->gs.fill_alpha, color_params);
+      break;
+    }
     fz_drop_text(ctx, dc->text);
     dc->text = NULL;
   }
@@ -81,9 +89,6 @@ static dvi_fontdef *dvi_current_font(fz_context *ctx, dvi_state *st)
 
 void dvi_exec_char(fz_context *ctx, dvi_context *dc, dvi_state *st, uint32_t c, bool set)
 {
-  int debug = 0;
-
-  // fprintf(stderr, "%s_char: %C = %u\n", set ? "set" : "put", c, c);
 
   dvi_fontdef *def = dvi_current_font(ctx, st);
   if (def->kind != TEX_FONT)
@@ -136,8 +141,9 @@ void dvi_exec_char(fz_context *ctx, dvi_context *dc, dvi_state *st, uint32_t c, 
       if (dc->dev)
       {
         float s = dc->scale * scale_factor.value;
+        fz_matrix ctm = dvi_get_ctm(dc, st);
         fz_show_glyph(ctx, get_text(ctx, dc), font->fz,
-                      fz_pre_scale(dvi_get_ctm(dc, st), s, s), u, c, 0, 0,
+                      fz_pre_scale(ctm, s, s), u, c, 0, 0,
                       FZ_BIDI_LTR, FZ_LANG_UNSET);
       }
     }
@@ -175,28 +181,6 @@ void dvi_exec_char(fz_context *ctx, dvi_context *dc, dvi_state *st, uint32_t c, 
     {
       tex_tfm *tfm = font->tfm;
       fixed_t w = fixed_mul(tex_tfm_char_width(tfm, c), scale_factor);
-      if (debug)
-      {
-        float s = dc->scale * scale_factor.value;
-        fixed_t h = tex_tfm_char_height(tfm, c);
-        fixed_t d = tex_tfm_char_depth(tfm, c);
-        if (debug)
-        {
-          h = fixed_mul(h, scale_factor);
-          d = fixed_mul(d, scale_factor);
-          fprintf(stderr, "setchar%u h:=%d+%d=%d\n", c, st->registers.h,
-                  w.value, st->registers.h + w.value);
-          fprintf(stderr, "  char: w:%dr, h:%dr, d:%dr\n", w.value, h.value,
-                  d.value);
-          fprintf(stderr, "  box: (%dr, %dr, %dr, %dr)\n", st->registers.h,
-                  st->registers.v - h.value, st->registers.h + w.value,
-                  st->registers.v + d.value);
-
-          output_debug_rect(
-              ctx, dc, st, st->registers.h, st->registers.v - h.value,
-              st->registers.h + w.value, st->registers.v + d.value);
-        }
-      }
       if (set)
         st->registers.h += w.value;
     }
@@ -208,7 +192,13 @@ bool dvi_exec_push(fz_context *ctx, dvi_context *dc, dvi_state *st)
   dvi_context_flush_text(ctx, dc, st);
   if (st->registers_stack.depth >= st->registers_stack.limit)
     return 0;
+  // Refuse if gs_stack is full to prevent save/restore pairing corruption
+  // (gs_stack is shared with PS gsave/grestore).
+  if (st->gs_stack.depth >= st->gs_stack.limit)
+    return 0;
   st->registers_stack.base[st->registers_stack.depth] = st->registers;
+  st->gs_stack.base[st->gs_stack.depth] = st->gs;
+  st->gs_stack.depth += 1;
   st->registers_stack.depth += 1;
   return 1;
 }
@@ -220,6 +210,13 @@ bool dvi_exec_pop(fz_context *ctx, dvi_context *dc, dvi_state *st)
     return 0;
   st->registers_stack.depth -= 1;
   st->registers = st->registers_stack.base[st->registers_stack.depth];
+  // Restore graphics state saved in matching push.
+  if (st->gs_stack.depth > 0) {
+    int cd0 = st->gs.clip_depth;
+    st->gs_stack.depth -= 1;
+    st->gs = st->gs_stack.base[st->gs_stack.depth];
+    if (dc->dev) for (int i = st->gs.clip_depth; i < cd0; ++i) fz_pop_clip(ctx, dc->dev);
+  }
   return 1;
 }
 
@@ -325,7 +322,6 @@ void dvi_exec_xdvglyphs(fz_context *ctx, dvi_context *dc, dvi_state *st, fixed_t
                 int char_count, uint16_t *chars,
                 int num_glyphs, fixed_t *dx, fixed_t dy0, fixed_t *dy, uint16_t *glyphs)
 {
-  //fprintf(stderr, "dvi_exec_xdvglyphs: width:%d, chars:%d, glyphs:%d\n", width.value, char_count, num_glyphs);
   dvi_fontdef *def = dvi_current_font(ctx, st);
   if (def->kind != XDV_FONT)
   {
