@@ -5,9 +5,9 @@
 
 void webview_state_init(struct webview_state *state);
 void webview_state_free(struct webview_state *state);
-void webview_state_set_tmpdir(struct webview_state *state, const char *dir);
+bool webview_state_set_tmpdir(struct webview_state *state, const char *dir);
 
-void webview_output_page(fz_context *ctx, txp_engine *eng,
+bool webview_output_page(fz_context *ctx, fz_display_list *dl,
                          struct webview_state *state,
                          int page, int total_pages,
                          int img_width, int img_height,

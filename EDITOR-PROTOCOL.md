@@ -3,7 +3,7 @@
 The process should be started from the editor passing the root TeX file as argument:
 
 ```
-texpressso [-I path]* [-json] [-lines] [-texlive] [-tectonic] [-test-initialize] [-stream] [-webview] [-tmpdir path] [-resolution N] <some-dir>/root.tex
+texpresso [-I path]* [-json] [-lines] [-texlive] [-tectonic] [-test-initialize] [-stream] [-webview] [-tmpdir path] [-resolution N] <some-dir>/root.tex
 ```
 
 The rest of the communication will happen on stdin/stdout:
@@ -17,7 +17,7 @@ Description of the arguments:
 - `-tectonic`: use Tectonic as TeX distribution.
 - `-test-initialize`: run a single cycle, used only for initialization test.
 - `-stream`: skip filesystem lookups for user files. Files not yet pushed are treated as missing and the engine backtracks when they arrive.
-- `-webview`: run in webview mode, outputting QOI images via stdout JSON messages without creating an SDL window.
+- `-webview`: run in webview mode, outputting QOI images via stdout JSON messages without creating an SDL window; requires `-json`.
 - `-tmpdir path`: set the temporary directory for QOI output files (default: `$TMPDIR` or `/tmp`).
 - `-resolution N`: default rendering resolution multiplier as a float (default: `2.5`).
 - `-I path`: populate an "include path" in which files should be looked up in priority
@@ -211,7 +211,7 @@ Set the margin trimming factor (0.0 to 0.5). Trimming crops the page by `factor`
 
 ## Webview mode
 
-The `-webview` flag starts TeXpresso in webview mode, intended for embedded preview panels (e.g. VSCode webview). In this mode:
+The `-webview` flag starts TeXpresso in webview mode, intended for embedded preview panels (e.g. VSCode webview). It must be combined with `-json`, because page messages use the JSON editor protocol. In this mode:
 
 - No SDL window is created; only `SDL_INIT_TIMER | SDL_INIT_EVENTS` are initialized.
 - Rendered pages are encoded as QOI images, written to temporary files, and announced via stdout JSON messages.
@@ -220,7 +220,7 @@ The `-webview` flag starts TeXpresso in webview mode, intended for embedded prev
 Additional CLI flags for webview mode:
 
 ```
--webview              Run in webview mode (no SDL window)
+-webview              Run in webview mode (requires -json; no SDL window)
 -tmpdir path          Set temporary directory for QOI files (default: $TMPDIR or /tmp)
 -resolution N         Default rendering resolution multiplier (default: 2.5)
 ```
@@ -233,11 +233,15 @@ Additional CLI flags for webview mode:
 
 A full page QOI image has been written to `"path"`. `page` is the page number (0-indexed), `total` is the current page count, `w`×`h` are the rendered image dimensions, and `page_w`×`page_h` are the original page dimensions in TeX points.
 
+The receiving editor owns each temporary image after it reads the message and should delete the file. TeXpresso cannot unlink it immediately because transport only announces a path; a consumer that exits before cleanup can leave stale `texpresso-*` files in the selected temporary directory.
+
 ```
 ["page-diff", page, total, w, h, page_w, page_h, count, [[x, y, w, h, "path"], ...]]
 ```
 
 An incremental update to a previously rendered page. Only the dirty rectangles (changed regions) are encoded as QOI images. Each rect has position `(x, y)`, size `(w, h)`, and a path to the QOI temp file. This is emitted when less than 50% of the page has changed since the last render.
+
+As with a full-page message, the receiver should delete every rectangle file after reading it.
 
 ```
 ["synctex-scroll", x, y]
@@ -246,7 +250,7 @@ An incremental update to a previously rendered page. Only the dirty rectangles (
 Scroll the preview to position `(x, y)` in TeX points, resulting from a forward SyncTeX search. The viewer should scroll to make this point visible.
 
 ```
-["dark-mode", "true"|"false"]
+["dark-mode", true|false]
 ```
 
 Emitted when the user toggles dark mode via the `(invert)` command in webview mode.

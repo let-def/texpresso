@@ -29,6 +29,8 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
+#include <limits.h>
+#include <math.h>
 #include "mydvi.h"
 #include "providers.h"
 #include "renderer.h"
@@ -40,7 +42,6 @@
 #include "editor.h"
 #include "base64.h"
 #include "webview_output.h"
-#include "qoi.h"
 
 struct persistent_state *pstate;
 
@@ -919,6 +920,48 @@ static void display_page(struct persistent_state *ps, ui_state *ui)
   schedule_event(RENDER_EVENT);
 }
 
+static bool output_webview_page(struct persistent_state *ps, ui_state *ui,
+                                int page_count)
+{
+  fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
+  if (!dl)
+  {
+    fprintf(stderr, "[webview] ERROR: page %d has no display list\n", ui->page);
+    return false;
+  }
+
+  fz_rect bounds = fz_bound_display_list(ps->ctx, dl);
+  int page_width = (int)(bounds.x1 - bounds.x0);
+  int page_height = (int)(bounds.y1 - bounds.y0);
+  if (page_width <= 0) page_width = 612;
+  if (page_height <= 0) page_height = 792;
+
+  int width = ps->render_width;
+  int height = ps->render_height;
+  if (width <= 0 || height <= 0)
+  {
+    double scaled_width = page_width * (double)ps->default_resolution;
+    double scaled_height = page_height * (double)ps->default_resolution;
+    if (!isfinite(scaled_width) || !isfinite(scaled_height) ||
+        scaled_width < 1.0 || scaled_height < 1.0 ||
+        scaled_width > INT_MAX || scaled_height > INT_MAX)
+    {
+      fprintf(stderr, "[webview] ERROR: requested resolution is out of range\n");
+      fz_drop_display_list(ps->ctx, dl);
+      return false;
+    }
+    width = (int)scaled_width;
+    height = (int)scaled_height;
+  }
+
+  bool sent = webview_output_page(ps->ctx, dl, &ps->webview,
+                                  ui->page, page_count,
+                                  width, height, page_width, page_height,
+                                  ps->dark_mode, ps->trim_factor);
+  fz_drop_display_list(ps->ctx, dl);
+  return sent;
+}
+
 #if !SDL_VERSION_ATLEAST(2, 0, 16)
 static void
 SDL_SetWindowAlwaysOnTop(SDL_Window *window, SDL_bool state)
@@ -1020,6 +1063,7 @@ static void interpret_command(struct persistent_state *ps,
 
     case EDIT_MOVE_WINDOW:
     {
+      if (ps->webview_mode) break;
       float x = cmd.move_window.x, y = cmd.move_window.y,
             w = cmd.move_window.w, h = cmd.move_window.h;
       int x0 = x, y0 = y;
@@ -1033,6 +1077,7 @@ static void interpret_command(struct persistent_state *ps,
 
     case EDIT_MAP_WINDOW:
     {
+      if (ps->webview_mode) break;
       float x = cmd.move_window.x, y = cmd.move_window.y,
             w = cmd.move_window.w, h = cmd.move_window.h;
       int x0 = x, y0 = y;
@@ -1048,6 +1093,7 @@ static void interpret_command(struct persistent_state *ps,
 
     case EDIT_UNMAP_WINDOW:
     {
+      if (ps->webview_mode) break;
       if (!(SDL_GetWindowFlags(ui->window) & SDL_WINDOW_INPUT_FOCUS))
         SDL_SetWindowBordered(ui->window, SDL_TRUE);
       SDL_SetWindowAlwaysOnTop(ui->window, SDL_FALSE);
@@ -1060,6 +1106,7 @@ static void interpret_command(struct persistent_state *ps,
       break;
 
     case EDIT_STAY_ON_TOP:
+      if (ps->webview_mode) break;
       SDL_SetWindowAlwaysOnTop(ui->window, cmd.stay_on_top.status);
       fprintf(stderr, "[command] stay-on-top %d\n", cmd.stay_on_top.status);
       break;
@@ -1192,7 +1239,8 @@ static void interpret_command(struct persistent_state *ps,
     break;
 
     case EDIT_SET_OUTPUT_SIZE:
-      if (cmd.set_output_size.width > 0 && cmd.set_output_size.height > 0) {
+      if ((cmd.set_output_size.width == 0 && cmd.set_output_size.height == 0) ||
+          (cmd.set_output_size.width > 0 && cmd.set_output_size.height > 0)) {
         ps->render_width = cmd.set_output_size.width;
         ps->render_height = cmd.set_output_size.height;
         schedule_event(RELOAD_EVENT);
@@ -1205,11 +1253,22 @@ static void interpret_command(struct persistent_state *ps,
       break;
 
     case EDIT_SET_FIT_MODE:
+      if (strcmp(cmd.set_fit_mode.mode, "width") != 0 &&
+          strcmp(cmd.set_fit_mode.mode, "page") != 0)
+      {
+        fprintf(stderr, "[command] set-fit-mode: expected width or page\n");
+        break;
+      }
       fprintf(stdout, "[\"fit-mode-changed\",\"%s\"]\n", cmd.set_fit_mode.mode);
       fflush(stdout);
       break;
 
     case EDIT_SET_TRIM_FACTOR:
+      if (!isfinite(cmd.set_trim_factor.factor))
+      {
+        fprintf(stderr, "[command] set-trim-factor: expected a finite number\n");
+        break;
+      }
       ps->trim_factor = cmd.set_trim_factor.factor;
       if (ps->trim_factor < 0.0f) ps->trim_factor = 0.0f;
       if (ps->trim_factor >= 0.5f) ps->trim_factor = 0.49f;
@@ -1259,8 +1318,7 @@ bool texpresso_main(struct persistent_state *ps)
   struct fullscreen_state fs = {
     .has_backup = false,
     .prev_fs = ps->window &&
-               (SDL_GetWindowFlags(ps->window) &
-                SDL_WINDOW_FULLSCREEN_DESKTOP) != 0,
+      (SDL_GetWindowFlags(ps->window) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0,
   };
 
   ui_state raw_ui, *ui = &raw_ui;
@@ -1390,6 +1448,7 @@ bool texpresso_main(struct persistent_state *ps)
   SDL_Thread *poll_stdin_thread =
     SDL_CreateThread(poll_stdin_thread_main, "poll_stdin_thread", poll_stdin_pipe);
   bool stdin_eof = 0;
+  bool webview_page_output = !ps->webview_mode;
 
   while (!quit)
   {
@@ -1459,30 +1518,8 @@ bool texpresso_main(struct persistent_state *ps)
       // Immediate render for real-time editing feedback (only on content changes, not during preload)
       if (ps->webview_mode && ui->page < after_page_count && had_changes)
       {
-        // Always get page dimensions from display list for accurate page_w/page_h
-        int pw = 0, ph = 0;
-        fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
-        if (dl)
-        {
-          fz_rect bounds = fz_bound_display_list(ps->ctx, dl);
-          pw = (int)(bounds.x1 - bounds.x0);
-          ph = (int)(bounds.y1 - bounds.y0);
-          fz_drop_display_list(ps->ctx, dl);
-        }
-        if (pw == 0) pw = 612;
-        if (ph == 0) ph = 792;
-
-        int w = ps->render_width;
-        int h = ps->render_height;
-        if (w == 0 || h == 0)
-        {
-          w = (int)(pw * ps->default_resolution);
-          h = (int)(ph * ps->default_resolution);
-        }
-        webview_output_page(ps->ctx, ui->eng, &ps->webview,
-                            ui->page, after_page_count,
-                            w, h, pw, ph,
-                            ps->dark_mode, ps->trim_factor);
+        if (output_webview_page(ps, ui, after_page_count))
+          webview_page_output = true;
         webview_rendered_this_iteration = true;
       }
 
@@ -1796,7 +1833,8 @@ bool texpresso_main(struct persistent_state *ps)
           break;
 
         case RENDER_EVENT:
-          render(ps->ctx, ui);
+          if (!ps->webview_mode)
+            render(ps->ctx, ui);
           send(begin_changes, ui->eng, ps->ctx);
           flush_changes(ps, ui);
           if (send(end_changes, ui->eng, ps->ctx))
@@ -1825,32 +1863,8 @@ bool texpresso_main(struct persistent_state *ps)
           {
             if (ps->webview_mode)
             {
-              // Always get page dimensions from display list for accurate page_w/page_h
-              int pw = 0, ph = 0;
-              fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
-              if (dl)
-              {
-                fz_rect bounds = fz_bound_display_list(ps->ctx, dl);
-                pw = (int)(bounds.x1 - bounds.x0);
-                ph = (int)(bounds.y1 - bounds.y0);
-                fz_drop_display_list(ps->ctx, dl);
-              }
-              if (pw == 0) pw = 612;
-              if (ph == 0) ph = 792;
-
-              int w = ps->render_width;
-              int h = ps->render_height;
-              if (w == 0 || h == 0)
-              {
-                w = (int)(pw * ps->default_resolution);
-                h = (int)(ph * ps->default_resolution);
-              }
-              fprintf(stderr, "[main] RELOAD_EVENT render page %d/%d w=%d h=%d\n",
-                      ui->page, page_count, w, h);
-              webview_output_page(ps->ctx, ui->eng, &ps->webview,
-                                  ui->page, page_count,
-                                  w, h, pw, ph,
-                                  ps->dark_mode, ps->trim_factor);
+              if (output_webview_page(ps, ui, page_count))
+                webview_page_output = true;
             }
             else
             {
@@ -1863,9 +1877,12 @@ bool texpresso_main(struct persistent_state *ps)
           break;
       }
     }
-    if (ps->initialize_only &&
-        (send(page_count, ui->eng) > 0 ||
-         (send(get_status, ui->eng) == DOC_TERMINATED && stdin_eof)))
+    bool document_done =
+      send(get_status, ui->eng) == DOC_TERMINATED && stdin_eof;
+    bool initialize_ready = ps->webview_mode
+      ? (webview_page_output || document_done)
+      : (send(page_count, ui->eng) > 0 || document_done);
+    if (ps->initialize_only && initialize_ready)
     {
       fprintf(stderr, "[info] Initialize mode: terminating engine process\n");
       quit = 1;
@@ -1884,7 +1901,10 @@ bool texpresso_main(struct persistent_state *ps)
     SDL_DelEventWatch(repaint_on_resize, &repaint_on_resize_env);
 
   if (ps->initial.initialized && ps->initial.display_list)
+  {
     fz_drop_display_list(ps->ctx, ps->initial.display_list);
+    ps->initial.display_list = NULL;
+  }
   ps->initial.initialized = 1;
   ps->initial.page = ui->page;
   ps->initial.need_synctex = ui->need_synctex;

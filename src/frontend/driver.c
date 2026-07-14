@@ -24,6 +24,8 @@
 
 #include <unistd.h>
 #include <signal.h>
+#include <errno.h>
+#include <math.h>
 #include <mupdf/fitz.h>
 #include "logo.h"
 #include "driver.h"
@@ -104,6 +106,45 @@ static bool should_reload_binary(void)
   return 0;
 }
 
+static bool resolve_tmpdir_argument(char output[PATH_MAX],
+                                    const char *work_dir, const char *argument)
+{
+  if (!argument[0])
+  {
+    fprintf(stderr, "[error] -tmpdir requires a non-empty path\n");
+    return false;
+  }
+
+  int written;
+  if (argument[0] == '/')
+    written = snprintf(output, PATH_MAX, "%s", argument);
+  else
+    written = snprintf(output, PATH_MAX, "%s/%s", work_dir, argument);
+
+  if (written < 0 || written >= PATH_MAX)
+  {
+    fprintf(stderr, "[error] -tmpdir path is too long\n");
+    output[0] = '\0';
+    return false;
+  }
+  return true;
+}
+
+static bool parse_resolution(float *output, const char *argument)
+{
+  char *end = NULL;
+  errno = 0;
+  float value = strtof(argument, &end);
+  if (errno != 0 || end == argument || *end != '\0' ||
+      !isfinite(value) || value <= 0.0f)
+  {
+    fprintf(stderr, "[error] -resolution expects a positive finite number\n");
+    return false;
+  }
+  *output = value;
+  return true;
+}
+
 static void usage(void)
 {
   fprintf(stderr,
@@ -129,7 +170,7 @@ static void usage(void)
   fprintf(stderr,
           " -stream   Skip filesystem lookups; files are pushed via editor commands\n");
   fprintf(stderr,
-          " -webview  Run in webview mode (output QOI files via stdout, no SDL window)\n");
+          " -webview  Run in webview mode (requires -json; no SDL window)\n");
   fprintf(stderr,
           " -tmpdir   Set temporary directory for QOI output files\n");
   fprintf(stderr,
@@ -166,7 +207,7 @@ int main(int argc, const char **argv)
   bool stream_mode = 0;
   bool webview_mode = 0;
   float default_resolution = 2.5f;
-  char tmpdir_buf[4096] = {0};
+  char tmpdir_buf[PATH_MAX] = {0};
 
   int inclusion_path_size = 1;
   for (int i = 1; i < argc; i++)
@@ -223,7 +264,8 @@ int main(int argc, const char **argv)
           usage();
           exit(1);
         }
-        snprintf(tmpdir_buf, sizeof(tmpdir_buf), "%s", argv[i]);
+        if (!resolve_tmpdir_argument(tmpdir_buf, work_dir, argv[i]))
+          exit(1);
       }
       else if (strcmp(arg, "-resolution") == 0)
       {
@@ -234,8 +276,8 @@ int main(int argc, const char **argv)
           usage();
           exit(1);
         }
-        default_resolution = atof(argv[i]);
-        if (default_resolution <= 0) default_resolution = 2.5f;
+        if (!parse_resolution(&default_resolution, argv[i]))
+          exit(1);
       }
       else
       {
@@ -263,6 +305,22 @@ int main(int argc, const char **argv)
   {
     usage();
     exit(1);
+  }
+
+  if (webview_mode && protocol != EDITOR_JSON)
+  {
+    fprintf(stderr, "[error] -webview requires -json\n");
+    usage();
+    exit(1);
+  }
+
+  if (webview_mode && !tmpdir_buf[0])
+  {
+    const char *tmpdir = getenv("TMPDIR");
+    if (!tmpdir || !tmpdir[0])
+      tmpdir = "/tmp";
+    if (!resolve_tmpdir_argument(tmpdir_buf, work_dir, tmpdir))
+      exit(1);
   }
 
   if (use_tectonic && use_texlive)
@@ -351,8 +409,8 @@ int main(int argc, const char **argv)
   if (!webview_mode)
   {
     //Create window
-    char window_title[128];
-    snprintf(window_title, sizeof(window_title), "TeXpresso %s", doc_name);
+    char window_title[128] = "TeXpresso ";
+    strcat(window_title, doc_name);
 
 #if SDL_VERSION_ATLEAST(2, 0, 8)
     SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
@@ -361,7 +419,7 @@ int main(int argc, const char **argv)
     window = SDL_CreateWindow(window_title,
       SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
       700, 900,
-      SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
+      SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
     );
 
     if (window == NULL)
@@ -373,16 +431,15 @@ int main(int argc, const char **argv)
     SDL_Surface *logo = texpresso_logo();
     fprintf(stderr, "texpresso logo: %dx%d\n", logo->w, logo->h);
 #ifndef __APPLE__
-    // SDL_SetWindowIcon on macOS calls [NSApp setApplicationIconImage:]
-    // which scales the image to fill the Dock cell, ignoring transparent
-    // padding. On macOS we rely on the .app bundle's AppIcon.icns instead
-    // (see scripts/build-macos-app.sh).
+    // Keep the macOS app bundle icon behavior from current upstream.
     SDL_SetWindowIcon(window, logo);
 #endif
     SDL_FreeSurface(logo);
 
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
+    SDL_ShowWindow(window);
   }
+
   struct persistent_state pstate = {
       .initial = {0,},
       .protocol = protocol,
@@ -413,8 +470,11 @@ int main(int argc, const char **argv)
       .render_height = 0,
   };
   webview_state_init(&pstate.webview);
-  if (tmpdir_buf[0])
-    webview_state_set_tmpdir(&pstate.webview, tmpdir_buf);
+  if (tmpdir_buf[0] && !webview_state_set_tmpdir(&pstate.webview, tmpdir_buf))
+  {
+    fprintf(stderr, "[error] cannot allocate -tmpdir path\n");
+    exit(1);
+  }
 
   int exit_code = 0;
 

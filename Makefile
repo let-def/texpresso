@@ -98,6 +98,9 @@ test-texpresso:
 test-texpresso-texlive:
 	env SDL_VIDEODRIVER=dummy build/texpresso -texlive -test-initialize test/simple.tex
 
+test-webview:
+	bash test/test-webview.sh
+
 test-texpresso-tectonic:
 	env SDL_VIDEODRIVER=dummy build/texpresso -tectonic -test-initialize test/simple.tex
 
@@ -114,4 +117,4 @@ macos-app: texpresso
 	@[ "$$(uname)" = "Darwin" ] || { echo "macos-app requires macOS"; exit 1; }
 	bash scripts/build-macos-app.sh
 
-.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file macos-app
+.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-webview test-stream test-open-base64 test-register test-lookup-file macos-app

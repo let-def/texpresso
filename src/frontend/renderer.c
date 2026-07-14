@@ -1007,6 +1007,9 @@ fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
                                           int width, int height,
                                           uint32_t bg_color, uint32_t fg_color)
 {
+  if (!dl || width <= 0 || height <= 0)
+    return NULL;
+
   fz_irect bbox = fz_make_irect(0, 0, width, height);
   fz_pixmap *pix = fz_new_pixmap_with_bbox(ctx, fz_device_rgb(ctx), bbox, NULL, 0);
   if (!pix) return NULL;
