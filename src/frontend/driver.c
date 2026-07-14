@@ -26,6 +26,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <math.h>
+#include <sys/stat.h>
 #include <mupdf/fitz.h>
 #include "logo.h"
 #include "driver.h"
@@ -130,6 +131,22 @@ static bool resolve_tmpdir_argument(char output[PATH_MAX],
   return true;
 }
 
+static bool validate_tmpdir(const char *path)
+{
+  struct stat st;
+  if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode))
+  {
+    fprintf(stderr, "[error] -tmpdir %s: not an existing directory\n", path);
+    return false;
+  }
+  if (access(path, W_OK | X_OK) != 0)
+  {
+    fprintf(stderr, "[error] -tmpdir %s: directory is not writable\n", path);
+    return false;
+  }
+  return true;
+}
+
 static bool parse_resolution(float *output, const char *argument)
 {
   char *end = NULL;
@@ -140,6 +157,13 @@ static bool parse_resolution(float *output, const char *argument)
   {
     fprintf(stderr, "[error] -resolution expects a positive finite number\n");
     return false;
+  }
+  if (value > TXP_MAX_WEBVIEW_RESOLUTION)
+  {
+    fprintf(stderr,
+            "[warning] -resolution clamped from %.3g to %.1f (maximum)\n",
+            value, TXP_MAX_WEBVIEW_RESOLUTION);
+    value = TXP_MAX_WEBVIEW_RESOLUTION;
   }
   *output = value;
   return true;
@@ -174,7 +198,8 @@ static void usage(void)
   fprintf(stderr,
           " -tmpdir   Set temporary directory for QOI output files\n");
   fprintf(stderr,
-          " -resolution N  Default rendering resolution multiplier (default 2.5)\n");
+          " -resolution N  Default rendering resolution multiplier "
+          "(default 2.5, maximum 8.0)\n");
 }
 
 int main(int argc, const char **argv)
@@ -323,6 +348,9 @@ int main(int argc, const char **argv)
       exit(1);
   }
 
+  if (webview_mode && !validate_tmpdir(tmpdir_buf))
+    exit(1);
+
   if (use_tectonic && use_texlive)
   {
     fprintf(stderr, "[error] -texlive and -tectonic are mutually exclusive.\n");
@@ -409,8 +437,8 @@ int main(int argc, const char **argv)
   if (!webview_mode)
   {
     //Create window
-    char window_title[128] = "TeXpresso ";
-    strcat(window_title, doc_name);
+    char window_title[128];
+    snprintf(window_title, sizeof(window_title), "TeXpresso %.117s", doc_name);
 
 #if SDL_VERSION_ATLEAST(2, 0, 8)
     SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
@@ -419,7 +447,7 @@ int main(int argc, const char **argv)
     window = SDL_CreateWindow(window_title,
       SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
       700, 900,
-      SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
+      SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
     );
 
     if (window == NULL)
@@ -437,7 +465,6 @@ int main(int argc, const char **argv)
     SDL_FreeSurface(logo);
 
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
-    SDL_ShowWindow(window);
   }
 
   struct persistent_state pstate = {
@@ -463,14 +490,15 @@ int main(int argc, const char **argv)
       .paused = stream_mode,
 
       .webview_mode = webview_mode,
-      .dark_mode = false,
+      .webview_dark_mode = false,
       .default_resolution = default_resolution,
       .trim_factor = 0.0f,
-      .render_width = 0,
-      .render_height = 0,
+      .webview_render_width = 0,
+      .webview_render_height = 0,
   };
   webview_state_init(&pstate.webview);
-  if (tmpdir_buf[0] && !webview_state_set_tmpdir(&pstate.webview, tmpdir_buf))
+  if (webview_mode && tmpdir_buf[0] &&
+      !webview_state_set_tmpdir(&pstate.webview, tmpdir_buf))
   {
     fprintf(stderr, "[error] cannot allocate -tmpdir path\n");
     exit(1);

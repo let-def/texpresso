@@ -936,8 +936,8 @@ static bool output_webview_page(struct persistent_state *ps, ui_state *ui,
   if (page_width <= 0) page_width = 612;
   if (page_height <= 0) page_height = 792;
 
-  int width = ps->render_width;
-  int height = ps->render_height;
+  int width = ps->webview_render_width;
+  int height = ps->webview_render_height;
   if (width <= 0 || height <= 0)
   {
     double scaled_width = page_width * (double)ps->default_resolution;
@@ -957,7 +957,7 @@ static bool output_webview_page(struct persistent_state *ps, ui_state *ui,
   bool sent = webview_output_page(ps->ctx, dl, &ps->webview,
                                   ui->page, page_count,
                                   width, height, page_width, page_height,
-                                  ps->dark_mode, ps->trim_factor);
+                                  ps->webview_dark_mode, ps->trim_factor);
   fz_drop_display_list(ps->ctx, dl);
   return sent;
 }
@@ -1143,8 +1143,9 @@ static void interpret_command(struct persistent_state *ps,
     case EDIT_INVERT:
     {
       if (ps->webview_mode) {
-        ps->dark_mode = !ps->dark_mode;
-        fprintf(stdout, "[\"dark-mode\",%s]\n", ps->dark_mode ? "true" : "false");
+        ps->webview_dark_mode = !ps->webview_dark_mode;
+        fprintf(stdout, "[\"dark-mode\",%s]\n",
+                ps->webview_dark_mode ? "true" : "false");
         fflush(stdout);
         schedule_event(RELOAD_EVENT);
       } else {
@@ -1241,8 +1242,8 @@ static void interpret_command(struct persistent_state *ps,
     case EDIT_SET_OUTPUT_SIZE:
       if ((cmd.set_output_size.width == 0 && cmd.set_output_size.height == 0) ||
           (cmd.set_output_size.width > 0 && cmd.set_output_size.height > 0)) {
-        ps->render_width = cmd.set_output_size.width;
-        ps->render_height = cmd.set_output_size.height;
+        ps->webview_render_width = cmd.set_output_size.width;
+        ps->webview_render_height = cmd.set_output_size.height;
         schedule_event(RELOAD_EVENT);
       }
       break;
@@ -1271,7 +1272,13 @@ static void interpret_command(struct persistent_state *ps,
       }
       ps->trim_factor = cmd.set_trim_factor.factor;
       if (ps->trim_factor < 0.0f) ps->trim_factor = 0.0f;
-      if (ps->trim_factor >= 0.5f) ps->trim_factor = 0.49f;
+      if (ps->trim_factor > TXP_MAX_TRIM_FACTOR)
+      {
+        fprintf(stderr,
+                "[warning] set-trim-factor clamped from %.3g to %.1f\n",
+                ps->trim_factor, TXP_MAX_TRIM_FACTOR);
+        ps->trim_factor = TXP_MAX_TRIM_FACTOR;
+      }
       if (!ps->webview_mode && ui->doc_renderer) {
         txp_renderer_config *cfg = txp_renderer_get_config(ps->ctx, ui->doc_renderer);
         cfg->trim_factor = ps->trim_factor;

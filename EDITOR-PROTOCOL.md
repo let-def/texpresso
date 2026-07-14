@@ -18,8 +18,8 @@ Description of the arguments:
 - `-test-initialize`: run a single cycle, used only for initialization test.
 - `-stream`: skip filesystem lookups for user files. Files not yet pushed are treated as missing and the engine backtracks when they arrive.
 - `-webview`: run in webview mode, outputting QOI images via stdout JSON messages without creating an SDL window; requires `-json`.
-- `-tmpdir path`: set the temporary directory for QOI output files (default: `$TMPDIR` or `/tmp`).
-- `-resolution N`: default rendering resolution multiplier as a float (default: `2.5`).
+- `-tmpdir path`: set an existing, writable temporary directory for QOI output files (default: `$TMPDIR` or `/tmp`).
+- `-resolution N`: default rendering resolution multiplier as a positive float (default: `2.5`; values above `8.0` are clamped with a warning).
 - `-I path`: populate an "include path" in which files should be looked up in priority
 
 The include path is useful if one uses a build system that puts auxiliary files in a dedicated build directory, while the TeX sources are in a separate source directory. In this case, TeXpresso can be started using `texpresso -I build/ source/main.tex`.
@@ -207,7 +207,11 @@ In SDL mode: toggle color inversion. In webview mode: toggle dark/light mode and
 (set-trim-factor factor)
 ```
 
-Set the margin trimming factor (0.0 to 0.5). Trimming crops the page by `factor` from each of the four sides. The SDL renderer applies trim via the zoom multiplier; the webview renderer applies it via render+crop in the output module.
+Set the margin trimming factor from `0.0` through `0.4`. Larger values are
+clamped to `0.4`, which bounds the corresponding render zoom at 5×. Trimming
+crops the page by `factor` from each of the four sides. The SDL renderer applies
+trim via the zoom multiplier; the webview renderer applies it via render+crop
+in the output module.
 
 ## Webview mode
 
@@ -221,8 +225,8 @@ Additional CLI flags for webview mode:
 
 ```
 -webview              Run in webview mode (requires -json; no SDL window)
--tmpdir path          Set temporary directory for QOI files (default: $TMPDIR or /tmp)
--resolution N         Default rendering resolution multiplier (default: 2.5)
+-tmpdir path          Set existing writable directory for QOI files (default: $TMPDIR or /tmp)
+-resolution N         Default rendering multiplier (default: 2.5, maximum: 8.0)
 ```
 
 ### Webview output messages (texpresso → viewer)
@@ -240,6 +244,11 @@ The receiving editor owns each temporary image after it reads the message and sh
 ```
 
 An incremental update to a previously rendered page. Only the dirty rectangles (changed regions) are encoded as QOI images. Each rect has position `(x, y)`, size `(w, h)`, and a path to the QOI temp file. This is emitted when less than 50% of the page has changed since the last render.
+
+The initial implementation retains one previous raster, so dirty-rectangle
+updates apply only when the same page is rendered consecutively. Sixteen
+rectangles cap per-frame file/message fan-out; updates covering at least half
+the raster fall back to a full-page QOI.
 
 As with a full-page message, the receiver should delete every rectangle file after reading it.
 

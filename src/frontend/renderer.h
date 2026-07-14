@@ -29,6 +29,9 @@
 #include <SDL2/SDL.h>
 #include <mupdf/fitz.h>
 
+/* Keep trim zoom bounded: 0.4 corresponds to at most a 5x render. */
+#define TXP_MAX_TRIM_FACTOR 0.4f
+
 typedef struct txp_renderer_s txp_renderer;
 
 txp_renderer *txp_renderer_new(fz_context *ctx, SDL_Renderer *sdl);
@@ -90,7 +93,8 @@ fz_point txp_renderer_screen_to_document(fz_context *ctx, txp_renderer *self, fz
 fz_point txp_renderer_document_to_screen(fz_context *ctx, txp_renderer *self, fz_point pt);
 fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
                                           int width, int height,
-                                          uint32_t bg_color, uint32_t fg_color);
+                                          uint32_t black_color,
+                                          uint32_t white_color);
 void txp_renderer_invert_pixmap(fz_context *ctx, fz_pixmap *pix,
                                  uint32_t black, uint32_t white);
 

@@ -85,6 +85,52 @@ if (invalid_resolution.returncode == 0 or
     print(invalid_resolution.stderr[-2000:], file=sys.stderr)
     raise SystemExit(1)
 
+clamped_resolution = subprocess.run(
+    [
+        str(root / "build" / "texpresso"),
+        "-webview",
+        "-resolution",
+        "100",
+        str(root / "test" / "simple.tex"),
+    ],
+    cwd=sandbox,
+    env=env,
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+    timeout=10,
+    check=False,
+)
+if "-resolution clamped from 100 to 8.0" not in clamped_resolution.stderr:
+    print("FAIL: oversized -resolution was not clamped", file=sys.stderr)
+    print(clamped_resolution.stderr[-2000:], file=sys.stderr)
+    raise SystemExit(1)
+
+missing_tmpdir = subprocess.run(
+    [
+        str(root / "build" / "texpresso"),
+        "-json",
+        "-webview",
+        "-tmpdir",
+        "does-not-exist",
+        str(root / "test" / "simple.tex"),
+    ],
+    cwd=sandbox,
+    env=env,
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+    timeout=10,
+    check=False,
+)
+if (missing_tmpdir.returncode == 0 or
+        "not an existing directory" not in missing_tmpdir.stderr):
+    print("FAIL: nonexistent -tmpdir was not rejected", file=sys.stderr)
+    print(missing_tmpdir.stderr[-2000:], file=sys.stderr)
+    raise SystemExit(1)
+
 requires_json = subprocess.run(
     [
         str(root / "build" / "texpresso"),
@@ -111,6 +157,7 @@ protocol_input = "\n".join([
     '["unmap-window"]',
     '["stay-on-top",true]',
     '["set-output-size",320,240]',
+    '["set-trim-factor",0.49]',
 ]) + "\n"
 
 try:
@@ -190,6 +237,9 @@ if "[info] Initialize mode: terminating engine process" not in result.stderr:
     raise SystemExit(1)
 if "[info] Initialize mode: test completed" not in result.stderr:
     print("FAIL: initialize did not complete", file=sys.stderr)
+    raise SystemExit(1)
+if "set-trim-factor clamped from 0.49 to 0.4" not in result.stderr:
+    print("FAIL: oversized trim factor was not clamped", file=sys.stderr)
     raise SystemExit(1)
 
 print(

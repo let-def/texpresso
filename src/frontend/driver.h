@@ -30,6 +30,9 @@
 #include <mupdf/fitz/context.h>
 #include "renderer.h"
 
+/* Bound headless rasterization even when an editor sends bad configuration. */
+#define TXP_MAX_WEBVIEW_RESOLUTION 8.0f
+
 enum custom_events {
   SCAN_EVENT,
   RENDER_EVENT,
@@ -84,11 +87,11 @@ struct persistent_state {
 
   // Webview mode
   bool webview_mode;
-  bool dark_mode;
+  bool webview_dark_mode;
   float default_resolution;
   float trim_factor;
-  int render_width;
-  int render_height;
+  int webview_render_width;
+  int webview_render_height;
   struct webview_state webview;
 };
 

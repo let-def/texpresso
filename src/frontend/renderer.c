@@ -225,7 +225,8 @@ bool txp_renderer_page_bounds(fz_context *ctx, txp_renderer *self, txp_renderer_
   float zoom = self->config.zoom;
 
   // Trim: zoom into page to crop margins
-  if (self->config.trim_factor > 0.0f && self->config.trim_factor < 0.5f) {
+  if (self->config.trim_factor > 0.0f &&
+      self->config.trim_factor <= TXP_MAX_TRIM_FACTOR) {
     zoom *= 1.0f / (1.0f - 2.0f * self->config.trim_factor);
   }
 
@@ -1005,7 +1006,8 @@ void txp_renderer_screen_size(fz_context *ctx, txp_renderer *self, int *w, int *
 
 fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
                                           int width, int height,
-                                          uint32_t bg_color, uint32_t fg_color)
+                                          uint32_t black_color,
+                                          uint32_t white_color)
 {
   if (!dl || width <= 0 || height <= 0)
     return NULL;
@@ -1041,7 +1043,8 @@ fz_pixmap *txp_renderer_render_to_pixmap(fz_context *ctx, fz_display_list *dl,
   fz_close_device(ctx, dev);
   fz_drop_device(ctx, dev);
 
-  txp_renderer_invert_pixmap(ctx, pix, bg_color, fg_color);
+  /* Map source black/white to the requested output colors. */
+  txp_renderer_invert_pixmap(ctx, pix, black_color, white_color);
 
   return pix;
 }

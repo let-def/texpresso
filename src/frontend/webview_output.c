@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <stdint.h>
+#include <math.h>
+#include <limits.h>
 #include <mupdf/fitz.h>
 
 #ifdef __APPLE__
@@ -113,7 +115,9 @@ static bool write_qoi_file(const char *tmpdir, unsigned char *rgb,
   return true;
 }
 
+/* Bound temporary-file/message fan-out for a single frame update. */
 #define MAX_DIRTY_RECTS 16
+/* Above half a page, one full QOI is cheaper than many small QOIs. */
 #define DIRTY_RATIO_THRESHOLD 0.5f
 typedef struct {
   int x, y, w, h;
@@ -126,19 +130,14 @@ static int compute_dirty_rects(unsigned char *old_rgb, unsigned char *new_rgb,
   size_t total_pixels = (size_t)w * (size_t)h;
   size_t dirty_pixels = 0;
   int rect_count = 0;
-
-  if (h > 4096) {
-    *dirty_ratio = 1.0f;
-    return -1;
-  }
-
-  int row_min_x[4096];
-  int row_max_x[4096];
   int dirty_start = -1;
+  int dirty_min_x = w;
+  int dirty_max_x = -1;
+  size_t row_bytes = (size_t)w * 3;
 
   for (int y = 0; y < h; y++) {
-    unsigned char *old_row = old_rgb + y * w * 3;
-    unsigned char *new_row = new_rgb + y * w * 3;
+    unsigned char *old_row = old_rgb + (size_t)y * row_bytes;
+    unsigned char *new_row = new_rgb + (size_t)y * row_bytes;
     int min_x = w, max_x = -1;
 
     for (int x = 0; x < w; x++) {
@@ -152,25 +151,21 @@ static int compute_dirty_rects(unsigned char *old_rgb, unsigned char *new_rgb,
       }
     }
 
-    row_min_x[y] = min_x;
-    row_max_x[y] = max_x;
-
     if (max_x >= 0 && dirty_start < 0) {
       dirty_start = y;
+      dirty_min_x = min_x;
+      dirty_max_x = max_x;
+    } else if (max_x >= 0) {
+      if (min_x < dirty_min_x) dirty_min_x = min_x;
+      if (max_x > dirty_max_x) dirty_max_x = max_x;
     }
 
     if (dirty_start >= 0 && (max_x < 0 || y == h - 1)) {
       int end_y = (max_x >= 0) ? y : y - 1;
-
-      // Two-pass: first min rx, then rw with final rx
-      int rx = w, ry = dirty_start, rw = 0, rh = end_y - dirty_start + 1;
-      for (int ry2 = dirty_start; ry2 <= end_y; ry2++) {
-        if (row_min_x[ry2] < rx) rx = row_min_x[ry2];
-      }
-      for (int ry2 = dirty_start; ry2 <= end_y; ry2++) {
-        int candidate_w = row_max_x[ry2] + 1 - rx;
-        if (candidate_w > rw) rw = candidate_w;
-      }
+      int rx = dirty_min_x;
+      int ry = dirty_start;
+      int rw = dirty_max_x - dirty_min_x + 1;
+      int rh = end_y - dirty_start + 1;
 
       if (rw > 0 && rh > 0 && rect_count < max_rects) {
         rects[rect_count].x = rx;
@@ -184,6 +179,8 @@ static int compute_dirty_rects(unsigned char *old_rgb, unsigned char *new_rgb,
       }
 
       dirty_start = -1;
+      dirty_min_x = w;
+      dirty_max_x = -1;
     }
   }
 
@@ -220,6 +217,27 @@ static const char *resolve_tmpdir(struct webview_state *state, const char *expli
   return "/tmp";
 }
 
+static bool trimmed_dimension(int base, float trim_factor, int *result)
+{
+  if (trim_factor <= 0.0f)
+  {
+    *result = base;
+    return true;
+  }
+
+  double zoom = 1.0 / (1.0 - 2.0 * (double)trim_factor);
+  double scaled = ceil((double)base * zoom);
+  if (!isfinite(scaled) || scaled < base || scaled > INT_MAX - 1)
+    return false;
+
+  int value = (int)scaled;
+  /* Match parity so the center crop has an integral offset on both sides. */
+  if (((value - base) & 1) != 0)
+    value++;
+  *result = value;
+  return true;
+}
+
 bool webview_output_page(fz_context *ctx, fz_display_list *dl,
                          struct webview_state *state,
                          int page, int total_pages,
@@ -239,23 +257,36 @@ bool webview_output_page(fz_context *ctx, fz_display_list *dl,
     return false;
   }
 
-  uint32_t bg, fg;
+  if (!isfinite(trim_factor) || trim_factor < 0.0f)
+  {
+    fprintf(stderr, "[webview] ERROR: invalid trim factor\n");
+    return false;
+  }
+  if (trim_factor > TXP_MAX_TRIM_FACTOR)
+    trim_factor = TXP_MAX_TRIM_FACTOR;
+
+  /* These colors describe where source black and white are mapped. */
+  uint32_t black_color, white_color;
   if (dark_mode) {
-    bg = 0x00FFFFFF; fg = 0x00000000;
+    black_color = 0x00FFFFFF;
+    white_color = 0x00000000;
   } else {
-    bg = 0x00000000; fg = 0x00FFFFFF;
+    black_color = 0x00000000;
+    white_color = 0x00FFFFFF;
   }
 
   // Trim: render at zoomed resolution, then crop center to output size.
   // This clips all four sides equally without touching the renderer.
   fz_pixmap *pix = NULL;
   int trim_w = img_width, trim_h = img_height;
-  if (trim_factor > 0.0f && trim_factor < 0.5f) {
-    float zoom = 1.0f / (1.0f - 2.0f * trim_factor);
-    trim_w = (int)(img_width * zoom);
-    trim_h = (int)(img_height * zoom);
+  if (!trimmed_dimension(img_width, trim_factor, &trim_w) ||
+      !trimmed_dimension(img_height, trim_factor, &trim_h) ||
+      (size_t)trim_w > SIZE_MAX / (size_t)trim_h / 3) {
+    fprintf(stderr, "[webview] ERROR: trimmed render dimensions are out of range\n");
+    return false;
   }
-  pix = txp_renderer_render_to_pixmap(ctx, dl, trim_w, trim_h, bg, fg);
+  pix = txp_renderer_render_to_pixmap(ctx, dl, trim_w, trim_h,
+                                      black_color, white_color);
   if (pix && (trim_w != img_width || trim_h != img_height)) {
     // Crop center of zoomed pixmap back to output size
     int crop_x = (trim_w - img_width) / 2;
@@ -271,10 +302,20 @@ bool webview_output_page(fz_context *ctx, fz_display_list *dl,
       int src_stride = fz_pixmap_stride(ctx, pix);
       int dst_stride = fz_pixmap_stride(ctx, cropped);
       int n = fz_pixmap_components(ctx, pix);
+      if (n != 3 || src_stride <= 0 || dst_stride <= 0 ||
+          (size_t)src_stride < (size_t)trim_w * (size_t)n ||
+          (size_t)dst_stride < (size_t)img_width * (size_t)n)
+      {
+        fprintf(stderr, "[webview] ERROR: renderer did not return packed RGB\n");
+        fz_drop_pixmap(ctx, cropped);
+        fz_drop_pixmap(ctx, pix);
+        return false;
+      }
       for (int y = 0; y < img_height; y++) {
-        memcpy(dst_samples + y * dst_stride,
-               src_samples + (crop_y + y) * src_stride + crop_x * n,
-               img_width * n);
+        memcpy(dst_samples + (size_t)y * (size_t)dst_stride,
+               src_samples + (size_t)(crop_y + y) * (size_t)src_stride +
+                   (size_t)crop_x * (size_t)n,
+               (size_t)img_width * (size_t)n);
       }
       fz_drop_pixmap(ctx, pix);
       pix = cropped;
@@ -291,7 +332,9 @@ bool webview_output_page(fz_context *ctx, fz_display_list *dl,
   int n = fz_pixmap_components(ctx, pix);
   int stride = fz_pixmap_stride(ctx, pix);
 
-  if (w <= 0 || h <= 0 || n < 3 ||
+  /* txp_renderer_render_to_pixmap creates device-RGB pixmaps without alpha. */
+  if (w <= 0 || h <= 0 || n != 3 || stride <= 0 ||
+      (size_t)stride < (size_t)w * (size_t)n ||
       (size_t)w > SIZE_MAX / (size_t)h / 3) {
     fprintf(stderr, "[webview] ERROR: invalid rendered pixmap dimensions\n");
     fz_drop_pixmap(ctx, pix);
@@ -305,17 +348,14 @@ bool webview_output_page(fz_context *ctx, fz_display_list *dl,
     return false;
   }
 
-  if (stride == w * n && n == 3) {
+  size_t row_bytes = (size_t)w * 3;
+  if ((size_t)stride == (size_t)w * (size_t)n) {
     memcpy(rgb, samples, rgb_size);
   } else {
     for (int y = 0; y < h; y++) {
-      unsigned char *src = samples + stride * y;
-      unsigned char *dst = rgb + w * 3 * y;
-      for (int x = 0; x < w; x++) {
-        dst[x * 3 + 0] = src[x * n + 0];
-        dst[x * 3 + 1] = src[x * n + 1];
-        dst[x * 3 + 2] = src[x * n + 2];
-      }
+      unsigned char *src = samples + (size_t)stride * (size_t)y;
+      unsigned char *dst = rgb + row_bytes * (size_t)y;
+      memcpy(dst, src, row_bytes);
     }
   }
 
@@ -329,6 +369,7 @@ bool webview_output_page(fz_context *ctx, fz_display_list *dl,
   bool send_update = true;
   bool is_diff = false;
   bool page_sent = false;
+  /* The first implementation intentionally caches only the latest page. */
   if (*prev_rgb && *prev_w == w && *prev_h == h && *prev_page == page) {
     dirty_rect_t rects[MAX_DIRTY_RECTS];
     float dirty_ratio = 0;
@@ -343,12 +384,18 @@ bool webview_output_page(fz_context *ctx, fz_display_list *dl,
       for (int i = 0; i < n_rects; i++) {
         dirty_rect_t *r = &rects[i];
         int rw = r->w, rh = r->h;
-        unsigned char *rect_rgb = malloc((size_t)rw * (size_t)rh * 3);
+        if (rw <= 0 || rh <= 0 ||
+            (size_t)rw > SIZE_MAX / (size_t)rh / 3)
+          continue;
+        size_t rect_row_bytes = (size_t)rw * 3;
+        size_t rect_rgb_size = rect_row_bytes * (size_t)rh;
+        unsigned char *rect_rgb = malloc(rect_rgb_size);
         if (!rect_rgb) continue;
         for (int ry = 0; ry < rh; ry++) {
-          memcpy(rect_rgb + ry * rw * 3,
-                 rgb + ((r->y + ry) * w + r->x) * 3,
-                 rw * 3);
+          memcpy(rect_rgb + (size_t)ry * rect_row_bytes,
+                 rgb + ((size_t)(r->y + ry) * (size_t)w +
+                        (size_t)r->x) * 3,
+                 rect_row_bytes);
         }
         qoi_desc rdesc = { .width = rw, .height = rh, .channels = 3, .colorspace = QOI_SRGB };
         int rqoi_len = 0;
