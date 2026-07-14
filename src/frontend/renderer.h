@@ -50,6 +50,12 @@ typedef struct
   uint32_t background_color, foreground_color;
 } txp_renderer_config;
 
+struct fullscreen_state {
+  txp_renderer_config windowed_backup;
+  bool has_backup;
+  bool prev_fs;
+};
+
 typedef struct
 {
   // Bounds of the page being displayed (after cropping), in

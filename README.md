@@ -28,6 +28,8 @@ See the [screencasts](#Screencasts) at the end of this file for a visual demo of
 
 TeXpresso has been tested on Linux and macOS and should work with both AMD64 and Apple Silicon architectures. See [INSTALL.md](./INSTALL.md) for dependency and build instructions.
 
+On macOS, `make macos-app` additionally produces `build/TeXpresso.app`, a bundle whose dock icon renders at the correct HIG size. Launch it with `open build/TeXpresso.app --args /abs/path.tex` or point your editor at `build/TeXpresso.app/Contents/MacOS/texpresso`. The plain `build/texpresso` binary falls back to the default macOS binary icon.
+
 ### Design
 
 The TeXpresso system is built of the following parts:
@@ -51,14 +53,19 @@ The driver sends information between the editor and the renderer in both directi
 Keyboard controls:
 - `←`, `→`: change page
 - `↑`, `↓`: move within the page
-- `p` (for "page"): switch between "fit-to-page" and "fit-to-width" zoom modes
-- `c` ("crop"): crop borders
+- `h`, `j`, `k`, `l`: Pan page. Press shift to move faster
+- `<Space>` / `b`: Next page / previous page (like less).
+- `p` ("page"): fit to page
+- `w` ("width"): fit to width
+- `c` ("crop"): toggle crop borders
 - `q` ("quit"): quit
 - `i` ("invert"): dark mode
 - `I` : toggle theming
 - `t` ("top"): toggle stay-on-top (keeping TeXpresso above the editor window)
-- `b` ("border"): toggle window borders
-- `F5`: start fullscreen presentation (leave with `ESC`)
+- `B` ("border"): toggle window borders (previously "b")
+- `+` / `-`: Zoom in / out
+- `F5`, `f`, `F11`: Toggle fullscreen presentation
+- `ESC`: Exit full screen
 
 Mouse controls:
 

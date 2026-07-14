@@ -351,8 +351,8 @@ int main(int argc, const char **argv)
   if (!webview_mode)
   {
     //Create window
-    char window_title[128] = "TeXpresso ";
-    strcat(window_title, doc_name);
+    char window_title[128];
+    snprintf(window_title, sizeof(window_title), "TeXpresso %s", doc_name);
 
 #if SDL_VERSION_ATLEAST(2, 0, 8)
     SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
@@ -361,7 +361,7 @@ int main(int argc, const char **argv)
     window = SDL_CreateWindow(window_title,
       SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
       700, 900,
-      SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
+      SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
     );
 
     if (window == NULL)
@@ -372,13 +372,17 @@ int main(int argc, const char **argv)
 
     SDL_Surface *logo = texpresso_logo();
     fprintf(stderr, "texpresso logo: %dx%d\n", logo->w, logo->h);
+#ifndef __APPLE__
+    // SDL_SetWindowIcon on macOS calls [NSApp setApplicationIconImage:]
+    // which scales the image to fill the Dock cell, ignoring transparent
+    // padding. On macOS we rely on the .app bundle's AppIcon.icns instead
+    // (see scripts/build-macos-app.sh).
     SDL_SetWindowIcon(window, logo);
+#endif
     SDL_FreeSurface(logo);
 
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
-    SDL_ShowWindow(window);
   }
-
   struct persistent_state pstate = {
       .initial = {0,},
       .protocol = protocol,

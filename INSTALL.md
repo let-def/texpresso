@@ -87,6 +87,7 @@ Other targets are:
 - `config` to generate configuration in `Makefile.config` (automatically called during first build)
 - `dev` produces `build/texpresso-dev` which supports hot-reloading to ease development
 - `debug` produces debugging tools in `build/`
+- `macos-app` (macOS only) bundles the built binaries into `build/TeXpresso.app` with a HIG-compliant dock icon; requires `rsvg-convert` and `iconutil` in `PATH`
 - `clean` to remove intermediate build files
 - `distclean` to remove all build files (`build/` and `Makefile.config`)
 

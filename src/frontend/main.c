@@ -471,6 +471,22 @@ static void next_page(fz_context *ctx, ui_state *ui, bool pan)
   schedule_event(RELOAD_EVENT);
 }
 
+static void ui_pan_x(fz_context *ctx, ui_state *ui, float factor)
+{
+  fz_point scale = get_scale_factor(ui->window);
+
+  txp_renderer_config *config = txp_renderer_get_config(ctx, ui->doc_renderer);
+
+  txp_renderer_bounds bounds;
+  if (!txp_renderer_page_bounds(ctx, ui->doc_renderer, &bounds))
+    return;
+
+  float delta = bounds.window_size.x * scale.x * factor;
+
+  config->pan.x += delta;
+  schedule_event(RENDER_EVENT);
+}
+
 static void ui_pan(fz_context *ctx, ui_state *ui, float factor)
 {
   fz_point scale = get_scale_factor(ui->window);
@@ -1037,6 +1053,7 @@ static void interpret_command(struct persistent_state *ps,
       SDL_SetWindowAlwaysOnTop(ui->window, SDL_FALSE);
       fprintf(stderr, "[command] unmap-window\n");
     }
+    break;
 
     case EDIT_RESCAN:
       schedule_event(SCAN_EVENT);
@@ -1205,6 +1222,32 @@ static void interpret_command(struct persistent_state *ps,
   }
 }
 
+static void sync_fullscreen_state(struct fullscreen_state *fs,
+                                  txp_renderer_config *config,
+                                  SDL_Window *win)
+{
+  bool cur_fs = (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
+  if (cur_fs == fs->prev_fs) return;
+
+  if (cur_fs) {
+    if (!fs->has_backup) {
+      fs->windowed_backup.crop = config->crop;
+      fs->windowed_backup.fit  = config->fit;
+      fs->windowed_backup.zoom = config->zoom;
+      fs->has_backup = true;
+    }
+    config->crop = false;
+    config->fit  = FIT_PAGE;
+    config->zoom = 1.0;
+  } else if (fs->has_backup) {
+    config->crop = fs->windowed_backup.crop;
+    config->fit  = fs->windowed_backup.fit;
+    config->zoom = fs->windowed_backup.zoom;
+    fs->has_backup = false;
+  }
+  fs->prev_fs = cur_fs;
+}
+
 /* Entry point */
 
 bool texpresso_main(struct persistent_state *ps)
@@ -1212,6 +1255,13 @@ bool texpresso_main(struct persistent_state *ps)
   editor_set_protocol(ps->protocol);
   editor_set_line_output(ps->line_output);
   pstate = ps;
+
+  struct fullscreen_state fs = {
+    .has_backup = false,
+    .prev_fs = ps->window &&
+               (SDL_GetWindowFlags(ps->window) &
+                SDL_WINDOW_FULLSCREEN_DESKTOP) != 0,
+  };
 
   ui_state raw_ui, *ui = &raw_ui;
 
@@ -1559,15 +1609,77 @@ bool texpresso_main(struct persistent_state *ps)
             next_page(ps->ctx, ui, 0);
             break;
 
-          case SDLK_p:
-            config->fit = (config->fit == FIT_PAGE) ? FIT_WIDTH : FIT_PAGE;
+          case SDLK_PLUS:
+          case SDLK_KP_PLUS:
+          case SDLK_EQUALS: // Handles standard '=' key (often sharing '+' on keyboards)
+            config->zoom *= 1.1;
             schedule_event(RENDER_EVENT);
             break;
 
+          case SDLK_MINUS:
+          case SDLK_KP_MINUS:
+            config->zoom /= 1.1;
+            schedule_event(RENDER_EVENT);
+            break;
+
+          case SDLK_h:
+            if (SDL_GetModState() & KMOD_SHIFT)
+              ui_pan_x(ps->ctx, ui, 1.0/5.0);  // Large scroll left
+            else
+              ui_pan_x(ps->ctx, ui, 1.0/25.0);
+            schedule_event(RENDER_EVENT);
+            break;
+
+          case SDLK_l:
+            if (SDL_GetModState() & KMOD_SHIFT)
+              ui_pan_x(ps->ctx, ui, -1.0/5.0);  // Large scroll right
+            else
+              ui_pan_x(ps->ctx, ui, -1.0/25.0);
+            schedule_event(RENDER_EVENT);
+            break;
+
+          case SDLK_j:
+            if (SDL_GetModState() & KMOD_SHIFT)
+              ui_pan(ps->ctx, ui, -1.0/5.0); // Medium down-pan
+            else
+              ui_pan(ps->ctx, ui, -1.0/25.0); // Fine line down-pan
+            break;
+
+          case SDLK_k:
+            if (SDL_GetModState() & KMOD_SHIFT)
+              ui_pan(ps->ctx, ui, 1.0/5.0);  // Medium up-pan
+            else
+              ui_pan(ps->ctx, ui, 1.0/25.0);  // Fine line up-pan
+            break;
+
+          case SDLK_SPACE:
+            ui_pan(ps->ctx, ui, -2.0/3.0); // Page down (matching down arrow)
+            break;
+
           case SDLK_b:
-            SDL_SetWindowBordered(
-                ui->window,
-                !!(SDL_GetWindowFlags(ui->window) & SDL_WINDOW_BORDERLESS));
+            if (SDL_GetModState() & KMOD_SHIFT)
+            {
+              // Shift + B: Toggle Window Border
+              SDL_SetWindowBordered(
+                  ui->window,
+                  !!(SDL_GetWindowFlags(ui->window) & SDL_WINDOW_BORDERLESS));
+            }
+            else
+            {
+              ui_pan(ps->ctx, ui, 2.0/3.0); // Lowercase b: Page up (matching up arrow)
+            }
+            break;
+
+          case SDLK_w:
+            config->fit = FIT_WIDTH;
+            config->zoom = 1;
+            schedule_event(RENDER_EVENT);
+            break;
+
+          case SDLK_p:
+            config->fit = FIT_PAGE;
+            config->zoom = 1;
+            schedule_event(RENDER_EVENT);
             break;
 
           case SDLK_t:
@@ -1593,9 +1705,13 @@ bool texpresso_main(struct persistent_state *ps)
             SDL_SetWindowFullscreen(ui->window, 0);
             break;
 
+          // Toggle Fullscreen
+          case SDLK_f:
           case SDLK_F5:
-            SDL_SetWindowFullscreen(ui->window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-            config->fit = FIT_PAGE;
+          case SDLK_F11:
+            SDL_SetWindowFullscreen(ui->window,
+              (SDL_GetWindowFlags(ui->window) & SDL_WINDOW_FULLSCREEN_DESKTOP) ?
+                0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
             schedule_event(RENDER_EVENT);
             break;
 
@@ -1648,6 +1764,7 @@ bool texpresso_main(struct persistent_state *ps)
           case SDL_WINDOWEVENT_SIZE_CHANGED:
           case SDL_WINDOWEVENT_RESIZED:
           case SDL_WINDOWEVENT_EXPOSED:
+            sync_fullscreen_state(&fs, config, ui->window);
             schedule_event(RENDER_EVENT);
             break;
         }
