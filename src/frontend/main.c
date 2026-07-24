@@ -1257,6 +1257,37 @@ bool texpresso_main(struct persistent_state *ps)
     ui->page = 0;
     ui->zoom = 0;
     ui->need_synctex = 1;
+
+    // Fetch the config pointer so we can modify it
+    txp_renderer_config *config = txp_renderer_get_config(ps->ctx, ui->doc_renderer);
+
+    // Load saved state file
+#ifdef __linux__
+    char *pref_path = SDL_GetPrefPath("", "texpresso");
+#else
+    char *pref_path = SDL_GetPrefPath("let-def", "texpresso");
+#endif
+
+    if (pref_path) {
+      char file_path[1024];
+      snprintf(file_path, sizeof(file_path), "%sstate", pref_path);
+        
+      FILE *f = fopen(file_path, "r");
+      if (f) {
+        int w, h, x, y, crop, fit;
+        if (fscanf(f, "%d %d %d %d %d %d", &w, &h, &x, &y, &crop, &fit) == 6) {
+          // Apply the window dimensions
+          SDL_SetWindowSize(ui->window, w, h);
+          SDL_SetWindowPosition(ui->window, x, y);
+
+          // Apply the rendering states
+          config->crop = crop;
+          config->fit = fit;
+        }
+        fclose(f);
+      }
+      SDL_free(pref_path);
+    }
   }
 
   ui->mouse_status = UI_MOUSE_NONE;
@@ -1715,6 +1746,32 @@ bool texpresso_main(struct persistent_state *ps)
   ps->initial.display_list = txp_renderer_get_contents(ps->ctx, ui->doc_renderer);
   if (ps->initial.display_list)
     fz_keep_display_list(ps->ctx, ps->initial.display_list);
+
+  if (quit) { 
+#ifdef __linux__
+    char *pref_path = SDL_GetPrefPath("", "texpresso");
+#else
+    char *pref_path = SDL_GetPrefPath("let-def", "texpresso");
+#endif
+
+    if (pref_path) {
+      char file_path[1024];
+      snprintf(file_path, sizeof(file_path), "%sstate", pref_path);
+      FILE *f = fopen(file_path, "w");
+      if (f) {
+        int w, h, x, y;
+        SDL_GetWindowSize(ui->window, &w, &h);
+        SDL_GetWindowPosition(ui->window, &x, &y);
+              
+        // Safe to use ps->initial.config here as it was just copied above
+        fprintf(f, "%d %d %d %d %d %d\n", 
+            w, h, x, y, 
+            ps->initial.config.crop, ps->initial.config.fit);
+        fclose(f);
+      }
+      SDL_free(pref_path);
+    }
+  }
 
   txp_renderer_free(ps->ctx, ui->doc_renderer);
   send(destroy, ui->eng, ps->ctx);
