@@ -136,7 +136,7 @@ snapshot+replay correctness.
 | 0 | **pdftex feasibility spike** — pdftex → wasm → wasm2c, render `simple.tex`, measure wall-time vs native fork engine | perf acceptable? |
 | 1 | Import/VFS layer + unified `txp_engine` wasm backend driving pdftex with **zero engine patches** | one full compile, no source edits |
 | 2 | Coroutine-stack + mprotect-COW snapshot on linear memory; validate rollback == re-run | snapshot correctness — **done (mprotect COW; PASS, 18/1084 pages)** |
-| 3 | Wire behind `txp_engine` vtable alongside fork engine; xetex next | xetex renders — **xetex runs via wasm2c, emits XDV; ICU data load pending** |
+| 3 | Wire behind `txp_engine` vtable alongside fork engine; xetex next | **xetex renders via wasm2c (glyphs in XDV)** |
 | 4 | luatex (PUC Lua) | luatex renders |
 
 ### xetex font stack (Phase 3 notes)
@@ -158,12 +158,13 @@ on `env`/`wasi`, not the engine). xetex-native runs a full pass and writes XDV
 through the host I/O. xetex.wasm is linked `-sALLOW_MEMORY_GROWTH=1` (it xmallocs
 ~72 MB at startup vs the 16 MB default heap).
 
-**Open blocker — ICU data:** xetex's font-manager init calls
-`ucnv_open("macintosh"/"UTF16BE"/"UTF8")`, all returning `U_FILE_ACCESS_ERROR` —
-ICU can't reach its common data. The data is statically linked (in the 24 MB
-wasm) but the static entry point isn't consulted at runtime under wasm2c. Fix
-direction: rebuild ICU data as a loadable archive and load it from `ICU_DATA` at
-runtime (via the now-implemented file mmap), rather than static packaging.
+**ICU data (solved):** ICU's static data entry point isn't consulted at runtime
+under wasm2c (`ucnv_open` → `U_FILE_ACCESS_ERROR`). Fix: build ICU data as a
+loadable archive (`--with-data-packaging=archive` → `icudt78l.dat`), pass the
+host environment through (`environ_get`) so the engine sees `ICU_DATA`, and load
+the `.dat` via the host's file `_mmap_js`. xetex.wasm drops from 24 MB to 3.3 MB
+(no embedded data). A bracket-path font (`\font\x="[/abs/font.ttf]"`) now renders
+glyphs into the XDV. Run with `ICU_DATA=<dir with icudt78l.dat>`.
 | 5 | Windows COW shim + port frontend I/O; Windows build | runs on Windows |
 
 ## 8. Success criteria

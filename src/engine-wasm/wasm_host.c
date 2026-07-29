@@ -204,16 +204,30 @@ u32 w2c_wasi__snapshot__preview1_args_get(struct w2c_wasi__snapshot__preview1 *w
 u32 w2c_wasi__snapshot__preview1_environ_sizes_get(
     struct w2c_wasi__snapshot__preview1 *w, u32 count_ptr, u32 bufsize_ptr) {
   w2c_engine *m = w->mod;
-  wr_u32(m, count_ptr, 0);
-  wr_u32(m, bufsize_ptr, 0);
+  extern char **environ;
+  uint32_t count = 0, bufsize = 0;
+  for (char **e = environ; *e; e++) {
+    count++;
+    bufsize += (uint32_t)strlen(*e) + 1;
+  }
+  wr_u32(m, count_ptr, count);
+  wr_u32(m, bufsize_ptr, bufsize);
   return WASI_ESUCCESS;
 }
 
 u32 w2c_wasi__snapshot__preview1_environ_get(
     struct w2c_wasi__snapshot__preview1 *w, u32 environ_ptr, u32 buf_ptr) {
-  (void)w;
-  (void)environ_ptr;
-  (void)buf_ptr;
+  w2c_engine *m = w->mod;
+  extern char **environ;
+  /* Pass the host environment through (the engine reads ICU_DATA, TEXMF*, ...). */
+  uint32_t buf = buf_ptr, i = 0;
+  for (char **e = environ; *e; e++, i++) {
+    uint32_t len = (uint32_t)strlen(*e) + 1;
+    if (!mem_ok(m, buf, len)) return WASI_EINVAL;
+    memcpy(mem_base(m) + buf, *e, len);
+    wr_u32(m, environ_ptr + i * 4, buf);
+    buf += len;
+  }
   return WASI_ESUCCESS;
 }
 

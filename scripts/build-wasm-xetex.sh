@@ -77,6 +77,14 @@ emmake make -C libs -j"$JOBS" || true
 # data/tool build). Force the real host compiler as explicit configure args.
 sed -i.bak 's|^icu_native_args = .*|& CC=cc CXX=c++ CFLAGS=-O2 CXXFLAGS=-O2 LDFLAGS=|' \
   libs/icu/Makefile
+# Build ICU data as a loadable archive (icudt78l.dat) instead of static: the
+# static entry point isn't reached at runtime under wasm2c, so we load the .dat
+# from ICU_DATA at runtime (via file mmap). TeX Live's kludge expects a
+# libicudata.a in lib/; in archive mode that's the small stubdata, so fall back
+# to copying it there.
+sed -i.bak3 's|^icu_build_args = .*|& --with-data-packaging=archive|' libs/icu/Makefile
+sed -i.bak4 's|cp icudt.a libicudata.a)|cp icudt.a libicudata.a || cp ../stubdata/libicudata.a libicudata.a)|' \
+  libs/icu/Makefile
 rm -rf libs/icu/icu-native libs/icu/icu-build
 
 # Fix freetype: its native build system ignores our CFLAGS, so setjmp/longjmp
@@ -113,3 +121,8 @@ emmake make -C texk/web2c -j"$JOBS" xetex
 
 echo "built: $BUILD/texk/web2c/xetex.wasm"
 ls -la texk/web2c/xetex.wasm 2>/dev/null || { echo "xetex.wasm not produced" >&2; exit 1; }
+
+# Runtime: ICU loads its data from this .dat via $ICU_DATA (see the host's file
+# mmap). Point ICU_DATA at a directory containing icudt78l.dat when running.
+echo "ICU data (set ICU_DATA to its dir at runtime):"
+ls -la "$BUILD"/libs/icu/icu-build/data/out/icudt78l.dat 2>/dev/null
