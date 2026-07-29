@@ -1,11 +1,12 @@
 #!/bin/bash
-# Cross-compile pristine pdftex to standalone WASI WebAssembly via Emscripten.
+# Cross-compile pristine pdftex to WebAssembly via Emscripten for wasm2c.
 #
-# Standalone WASM, no JS runtime, no JS compat. setjmp/longjmp uses the wasm
-# exception-handling feature (no JS invoke_* trampolines). Output feeds wasm2c.
-#
-# Speed: configure with light flags (feature detection doesn't need -O2 /
-# exceptions), apply real flags only at build time; skip emcc sanity check.
+# NON-standalone so filesystem syscalls (openat/stat/lstat/...) are emitted as
+# imports our C host implements — that is the VFS hook. NOT standalone, because
+# standalone inlines those to empty-FS ENOSYS stubs the host never sees.
+# setjmp/longjmp uses wasm exception handling (SUPPORT_LONGJMP=wasm), so there
+# are no JS invoke_* trampolines despite non-standalone. No JS runtime is used;
+# the ~4 "_js" imports (time/abort) are implemented in C by the host.
 #
 # Prerequisites: scripts/fetch-engines.sh (source), and emcc on PATH.
 # Output: engines/build-wasm/texk/web2c/pdftex.wasm
@@ -13,9 +14,8 @@ set -euo pipefail
 
 export EMCC_SKIP_SANITY_CHECK=1
 
-# Real build flags (applied at make time, not during configure).
 WASMFLAGS="-O2 -sSUPPORT_LONGJMP=wasm -fwasm-exceptions"
-LINKFLAGS="-sSTANDALONE_WASM -sSUPPORT_LONGJMP=wasm -fwasm-exceptions"
+LINKFLAGS="-sSUPPORT_LONGJMP=wasm -fwasm-exceptions"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/engines/texlive-source"

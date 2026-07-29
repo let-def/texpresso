@@ -1,19 +1,23 @@
 /*
  * Native host for the wasm2c-compiled pdftex engine.
  *
- * Implements the 22 wasm imports (WASI subset + a few Linux syscalls emscripten
- * leaves as env.__syscall_*) against native POSIX, and runs the engine's WASI
+ * Implements the wasm imports (WASI subset + the Linux syscalls emscripten
+ * leaves as env.__syscall_*) against native POSIX, and runs the engine's
  * `_start` entry point in-process — no JS, no node.
  *
- * This is the Phase 1 bring-up host: enough to run `pdftex --version` natively.
- * File I/O for real typesetting (openat/stat) will be routed through texpresso's
- * VFS later; standalone emscripten currently resolves those internally.
+ * File operations (openat/stat/lstat/newfstatat) are imports here — that is the
+ * hook texpresso's VFS will replace. For now they map to the native FS. Two
+ * cross-ABI translations are required: the engine passes Linux O_* flag values
+ * (openat), and stat results are written in emscripten's struct-stat layout.
  */
+#include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -186,6 +190,12 @@ void w2c_wasi__snapshot__preview1_proc_exit(struct w2c_wasi__snapshot__preview1 
 
 static uint32_t neg_errno(int e) { return (uint32_t)(-e); }
 
+/* Linux AT_FDCWD is -100; the host's differs (macOS -2). Translate. */
+#define L_AT_FDCWD ((uint32_t)-100)
+static int xlate_dirfd(uint32_t d) {
+  return d == L_AT_FDCWD ? AT_FDCWD : (int)d;
+}
+
 u32 w2c_env_0x5F_syscall_getcwd(struct w2c_env *e, u32 buf, u32 size) {
   w2c_pdftex *m = e->mod;
   if (!mem_ok(m, buf, size)) return neg_errno(EFAULT);
@@ -202,7 +212,7 @@ u32 w2c_env_0x5F_syscall_faccessat(struct w2c_env *e, u32 dirfd, u32 path,
                                    u32 amode, u32 flags) {
   w2c_pdftex *m = e->mod;
   const char *p = (const char *)mem_base(m) + path;
-  int r = faccessat((int)dirfd, p, (int)amode, (int)flags);
+  int r = faccessat(xlate_dirfd(dirfd), p, (int)amode, (int)flags);
   return r < 0 ? neg_errno(errno) : 0;
 }
 
@@ -210,7 +220,7 @@ u32 w2c_env_0x5F_syscall_readlinkat(struct w2c_env *e, u32 dirfd, u32 path,
                                     u32 buf, u32 bufsize) {
   w2c_pdftex *m = e->mod;
   const char *p = (const char *)mem_base(m) + path;
-  ssize_t r = readlinkat((int)dirfd, p, (char *)mem_base(m) + buf, bufsize);
+  ssize_t r = readlinkat(xlate_dirfd(dirfd), p, (char *)mem_base(m) + buf, bufsize);
   return r < 0 ? neg_errno(errno) : (uint32_t)r;
 }
 
@@ -218,7 +228,7 @@ u32 w2c_env_0x5F_syscall_unlinkat(struct w2c_env *e, u32 dirfd, u32 path,
                                   u32 flags) {
   w2c_pdftex *m = e->mod;
   const char *p = (const char *)mem_base(m) + path;
-  int r = unlinkat((int)dirfd, p, (int)flags);
+  int r = unlinkat(xlate_dirfd(dirfd), p, (int)flags);
   return r < 0 ? neg_errno(errno) : 0;
 }
 
@@ -231,7 +241,7 @@ u32 w2c_env_0x5F_syscall_rmdir(struct w2c_env *e, u32 path) {
 u32 w2c_env_0x5F_syscall_renameat(struct w2c_env *e, u32 od, u32 op, u32 nd,
                                   u32 np) {
   w2c_pdftex *m = e->mod;
-  int r = renameat((int)od, (const char *)mem_base(m) + op, (int)nd,
+  int r = renameat(xlate_dirfd(od), (const char *)mem_base(m) + op, xlate_dirfd(nd),
                    (const char *)mem_base(m) + np);
   return r < 0 ? neg_errno(errno) : 0;
 }
@@ -261,10 +271,189 @@ u32 w2c_env_0x5Femscripten_system(struct w2c_env *e, u32 cmd) {
   return (uint32_t)-1; /* shell escape disabled */
 }
 
+/* ---------------- file operations (the VFS hook) ----------------
+ * The engine uses Linux O_* flag values and expects stat results in
+ * emscripten's struct-stat layout. Translate both. */
+
+/* Linux/i386 O_* values as seen from the wasm side. */
+#define L_O_ACCMODE 03
+#define L_O_CREAT 0100
+#define L_O_EXCL 0200
+#define L_O_NOCTTY 0400
+#define L_O_TRUNC 01000
+#define L_O_APPEND 02000
+#define L_O_NONBLOCK 04000
+#define L_O_DIRECTORY 0200000
+#define L_O_CLOEXEC 02000000
+
+static int xlate_open_flags(uint32_t lf) {
+  int hf = (int)(lf & L_O_ACCMODE); /* RDONLY/WRONLY/RDWR share 0/1/2 */
+  if (lf & L_O_CREAT) hf |= O_CREAT;
+  if (lf & L_O_EXCL) hf |= O_EXCL;
+  if (lf & L_O_NOCTTY) hf |= O_NOCTTY;
+  if (lf & L_O_TRUNC) hf |= O_TRUNC;
+  if (lf & L_O_APPEND) hf |= O_APPEND;
+  if (lf & L_O_NONBLOCK) hf |= O_NONBLOCK;
+  if (lf & L_O_DIRECTORY) hf |= O_DIRECTORY;
+  if (lf & L_O_CLOEXEC) hf |= O_CLOEXEC;
+  return hf;
+}
+
+/* emscripten struct stat offsets (extracted from the toolchain). */
+static void write_estat(w2c_pdftex *m, uint32_t p, const struct stat *s) {
+  uint8_t *b = mem_base(m) + p;
+  memset(b, 0, 96);
+#define PUT32(off, v) do { uint32_t _v = (uint32_t)(v); memcpy(b + (off), &_v, 4); } while (0)
+#define PUT64(off, v) do { uint64_t _v = (uint64_t)(v); memcpy(b + (off), &_v, 8); } while (0)
+  PUT32(0, s->st_dev);
+  PUT32(4, s->st_mode);
+  PUT32(8, s->st_nlink);
+  PUT32(12, s->st_uid);
+  PUT32(16, s->st_gid);
+  PUT32(20, s->st_rdev);
+  PUT64(24, s->st_size);
+  PUT32(32, s->st_blksize);
+  PUT32(36, s->st_blocks);
+  PUT64(40, s->st_atime);       /* atim.tv_sec */
+  PUT64(56, s->st_mtime);       /* mtim.tv_sec */
+  PUT64(72, s->st_ctime);       /* ctim.tv_sec */
+  PUT64(88, s->st_ino);
+#undef PUT32
+#undef PUT64
+}
+
+u32 w2c_env_0x5F_syscall_openat(struct w2c_env *e, u32 dirfd, u32 path,
+                                u32 flags, u32 mode) {
+  w2c_pdftex *m = e->mod;
+  const char *p = (const char *)mem_base(m) + path;
+  int r = openat(xlate_dirfd(dirfd), p, xlate_open_flags(flags), (mode_t)mode);
+  return r < 0 ? neg_errno(errno) : (uint32_t)r;
+}
+
+u32 w2c_env_0x5F_syscall_stat64(struct w2c_env *e, u32 path, u32 buf) {
+  w2c_pdftex *m = e->mod;
+  struct stat s;
+  if (stat((const char *)mem_base(m) + path, &s) < 0) return neg_errno(errno);
+  write_estat(m, buf, &s);
+  return 0;
+}
+
+u32 w2c_env_0x5F_syscall_lstat64(struct w2c_env *e, u32 path, u32 buf) {
+  w2c_pdftex *m = e->mod;
+  struct stat s;
+  if (lstat((const char *)mem_base(m) + path, &s) < 0) return neg_errno(errno);
+  write_estat(m, buf, &s);
+  return 0;
+}
+
+u32 w2c_env_0x5F_syscall_newfstatat(struct w2c_env *e, u32 dirfd, u32 path,
+                                    u32 buf, u32 flags) {
+  w2c_pdftex *m = e->mod;
+  int hf = 0;
+  if (flags & 0x100 /* AT_SYMLINK_NOFOLLOW (Linux) */) hf |= AT_SYMLINK_NOFOLLOW;
+  if (flags & 0x1000 /* AT_EMPTY_PATH */) hf |= AT_SYMLINK_NOFOLLOW; /* best effort */
+  struct stat s;
+  if (fstatat(xlate_dirfd(dirfd), (const char *)mem_base(m) + path, &s, hf) < 0)
+    return neg_errno(errno);
+  write_estat(m, buf, &s);
+  return 0;
+}
+
+u32 w2c_env_0x5F_syscall_fcntl64(struct w2c_env *e, u32 fd, u32 cmd, u32 arg) {
+  (void)e;
+  /* TeX mainly probes F_GETFL/F_SETFD; passthrough the common ones. */
+  int r = fcntl((int)fd, (int)cmd, (long)arg);
+  return r < 0 ? neg_errno(errno) : (uint32_t)r;
+}
+
+u32 w2c_env_0x5F_syscall_ioctl(struct w2c_env *e, u32 fd, u32 req, u32 arg) {
+  (void)e; (void)fd; (void)req; (void)arg;
+  return neg_errno(ENOTTY); /* not a tty; TeX handles this gracefully */
+}
+
+/* ---------------- time / abort (emscripten "_js" imports) ---------------- */
+
+/* struct tm in wasm: 9 ints then tm_gmtoff(long) + tm_zone(ptr). */
+static void write_tm(w2c_pdftex *m, uint32_t p, const struct tm *t) {
+  uint8_t *b = mem_base(m) + p;
+  int32_t v[9] = {t->tm_sec,  t->tm_min,  t->tm_hour,
+                  t->tm_mday, t->tm_mon,  t->tm_year,
+                  t->tm_wday, t->tm_yday, t->tm_isdst};
+  memcpy(b, v, sizeof(v));
+}
+
+u32 w2c_env_0x5Fgmtime_js(struct w2c_env *e, u64 t, u32 tmptr) {
+  w2c_pdftex *m = e->mod;
+  time_t tt = (time_t)t;
+  struct tm r;
+  gmtime_r(&tt, &r);
+  write_tm(m, tmptr, &r);
+  return 0;
+}
+
+u32 w2c_env_0x5Flocaltime_js(struct w2c_env *e, u64 t, u32 tmptr) {
+  w2c_pdftex *m = e->mod;
+  time_t tt = (time_t)t;
+  struct tm r;
+  localtime_r(&tt, &r);
+  write_tm(m, tmptr, &r);
+  return 0;
+}
+
+void w2c_env_0x5Ftzset_js(struct w2c_env *e, u32 tz, u32 dst, u32 tzname1,
+                          u32 tzname2) {
+  (void)e; (void)tz; (void)dst; (void)tzname1; (void)tzname2;
+  tzset();
+}
+
+void w2c_env_0x5Fabort_js(struct w2c_env *e) {
+  (void)e;
+  abort();
+}
+
+/* ---------------- process / heap / assert ---------------- */
+
+void w2c_env_exit(struct w2c_env *e, u32 code) {
+  (void)e;
+  exit((int)code);
+}
+
+void w2c_env_0x5F_assert_fail(struct w2c_env *e, u32 cond, u32 file, u32 line,
+                              u32 func) {
+  w2c_pdftex *m = e->mod;
+  fprintf(stderr, "assertion failed: %s (%s:%u, %s)\n",
+          (const char *)mem_base(m) + cond, (const char *)mem_base(m) + file,
+          line, (const char *)mem_base(m) + func);
+  abort();
+}
+
+f64 w2c_env_emscripten_date_now(struct w2c_env *e) {
+  (void)e;
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+}
+
+f64 w2c_env_emscripten_get_now(struct w2c_env *e) {
+  (void)e;
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+}
+
+/* Grow the linear memory to at least `requested` bytes. */
+u32 w2c_env_emscripten_resize_heap(struct w2c_env *e, u32 requested) {
+  w2c_pdftex *m = e->mod;
+  wasm_rt_memory_t *mem = &m->w2c_memory;
+  if ((uint64_t)requested <= mem->size) return 1;
+  uint64_t need_pages = ((uint64_t)requested - mem->size + 65535) / 65536;
+  uint64_t r = wasm_rt_grow_memory(mem, need_pages);
+  return (r == (uint64_t)-1) ? 0 : 1;
+}
+
 /* ------------------------------ main ------------------------------ */
 
 int main(int argc, char **argv) {
-  /* Present args to the engine as: pdftex <user args...> */
   g_argc = argc;
   g_argv = argv;
 
@@ -277,7 +466,25 @@ int main(int argc, char **argv) {
   wasi.mod = &mod;
 
   wasm2c_pdftex_instantiate(&mod, &env, &wasi);
-  w2c_pdftex_0x5Fstart(&mod); /* WASI entry; calls proc_exit -> exit() */
+  w2c_pdftex_0x5F_wasm_call_ctors(&mod); /* run static constructors first */
+
+  /* Build argv[] inside wasm memory and call __main_argc_argv.
+   * Layout: argc+1 pointers (NULL-terminated) followed by the strings. */
+  uint32_t ptrbytes = (uint32_t)(argc + 1) * 4;
+  uint32_t strbytes = 0;
+  for (int i = 0; i < argc; i++) strbytes += (uint32_t)strlen(argv[i]) + 1;
+  uint32_t total = (ptrbytes + strbytes + 15u) & ~15u;
+  uint32_t base = w2c_pdftex_0x5Femscripten_stack_alloc(&mod, total);
+  uint32_t sp = base + ptrbytes;
+  for (int i = 0; i < argc; i++) {
+    uint32_t len = (uint32_t)strlen(argv[i]) + 1;
+    memcpy(mem_base(&mod) + sp, argv[i], len);
+    wr_u32(&mod, base + (uint32_t)i * 4, sp);
+    sp += len;
+  }
+  wr_u32(&mod, base + (uint32_t)argc * 4, 0); /* argv[argc] = NULL */
+
+  w2c_pdftex_0x5F_main_argc_argv(&mod, (u32)argc, base);
 
   wasm2c_pdftex_free(&mod);
   wasm_rt_free();
