@@ -51,12 +51,9 @@ emmake make -j"$JOBS"
 cd texk/web2c
 emmake make pdftex
 
-# Asyncify: spill the wasm call stack into linear memory at suspend points so a
-# linear-memory snapshot captures full execution state (fork-equivalent). The
-# engine runs normally until the host drives asyncify_start_unwind/rewind.
-# --all-features: accept bulk-memory/EH/etc. the module uses.
-mv pdftex.wasm pdftex.raw.wasm
-wasm-opt --all-features --asyncify -O2 pdftex.raw.wasm -o pdftex.wasm
+# No asyncify: the host snapshots execution state directly by running the
+# engine on a dedicated fixed-address stack (ucontext coroutine) and
+# copy-on-write-ing both the linear memory and that stack. See wasm_host.c.
 
-echo "built: $BUILD/texk/web2c/pdftex.wasm (asyncified)"
+echo "built: $BUILD/texk/web2c/pdftex.wasm"
 ls -la pdftex.wasm

@@ -2,14 +2,23 @@
  * Native host for the wasm2c-compiled pdftex engine.
  *
  * Implements the wasm imports (WASI subset + the Linux syscalls emscripten
- * leaves as env.__syscall_*) against native POSIX, and runs the engine's
- * `_start` entry point in-process — no JS, no node.
+ * leaves as env.__syscall_*) against native POSIX, and runs the engine on a
+ * dedicated fixed-address stack (ucontext coroutine) so its full execution
+ * state can be snapshotted by copy-on-write of the linear memory + that stack —
+ * no JS, no node, no fork, no asyncify.
  *
  * File operations (openat/stat/lstat/newfstatat) are imports here — that is the
  * hook texpresso's VFS will replace. For now they map to the native FS. Two
  * cross-ABI translations are required: the engine passes Linux O_* flag values
  * (openat), and stat results are written in emscripten's struct-stat layout.
  */
+#define _XOPEN_SOURCE 700 /* ucontext on macOS/glibc */
+#define _DARWIN_C_SOURCE 1 /* re-expose MAP_ANON etc. under _XOPEN_SOURCE */
+#include <ucontext.h>
+#include <sys/mman.h>
+#ifndef MAP_ANONYMOUS
+#define MAP_ANONYMOUS MAP_ANON
+#endif
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -36,6 +45,27 @@ struct w2c_wasi__snapshot__preview1 {
 /* argv the wasm engine sees via WASI args_get. Set in main(). */
 static int g_argc;
 static char **g_argv;
+
+/* ---- coroutine: run the engine on a dedicated fixed-address stack ---- */
+#define ENGINE_STACK_SIZE (32u * 1024u * 1024u)
+static ucontext_t g_host_ctx;   /* where the engine yields back to */
+static ucontext_t g_engine_ctx; /* the engine's suspended state */
+static void *g_engine_stack;
+static w2c_pdftex *g_mod;
+static uint32_t g_entry_argv;
+static int g_entry_argc;
+static int g_engine_done;   /* engine returned/exited */
+static int g_yield_next_read; /* request: suspend on the next fd_read */
+static int g_suspended;     /* engine is currently suspended in fd_read */
+
+/* Switch from engine back to host (called from imports on the engine stack). */
+static void engine_yield(void) { swapcontext(&g_engine_ctx, &g_host_ctx); }
+
+static void engine_trampoline(void) {
+  w2c_pdftex_0x5F_main_argc_argv(g_mod, (u32)g_entry_argc, g_entry_argv);
+  g_engine_done = 1;
+  /* uc_link returns us to the host */
+}
 
 /* ---- linear-memory access (wasm is little-endian; host arm64/x86 too) ---- */
 
@@ -75,6 +105,13 @@ u32 w2c_wasi__snapshot__preview1_fd_read(struct w2c_wasi__snapshot__preview1 *w,
                                          u32 fd, u32 iovs, u32 iovs_len,
                                          u32 nread_ptr) {
   w2c_pdftex *m = w->mod;
+  /* Snapshot point: suspend the engine back to the host before this read. */
+  if (g_yield_next_read) {
+    g_yield_next_read = 0;
+    g_suspended = 1;
+    engine_yield();      /* -> host; resumes here after the host swaps back */
+    g_suspended = 0;
+  }
   uint32_t total = 0;
   for (u32 i = 0; i < iovs_len; i++) {
     uint32_t base = rd_u32(m, iovs + i * 8);
@@ -484,7 +521,31 @@ int main(int argc, char **argv) {
   }
   wr_u32(&mod, base + (uint32_t)argc * 4, 0); /* argv[argc] = NULL */
 
-  w2c_pdftex_0x5F_main_argc_argv(&mod, (u32)argc, base);
+  /* Run the engine on a dedicated fixed-address stack so its execution state
+   * (call stack) lives in a region we can snapshot. */
+  g_mod = &mod;
+  g_entry_argc = argc;
+  g_entry_argv = base;
+  g_engine_stack = mmap(NULL, ENGINE_STACK_SIZE, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (g_engine_stack == MAP_FAILED) { perror("mmap engine stack"); return 1; }
+
+  getcontext(&g_engine_ctx);
+  g_engine_ctx.uc_stack.ss_sp = g_engine_stack;
+  g_engine_ctx.uc_stack.ss_size = ENGINE_STACK_SIZE;
+  g_engine_ctx.uc_link = &g_host_ctx;
+  makecontext(&g_engine_ctx, engine_trampoline, 0);
+
+  /* Self-test: suspend once on the first read, then resume — proves the
+   * coroutine suspend/resume works before we add COW snapshotting. */
+  if (getenv("TEXPRESSO_SUSPEND_TEST")) g_yield_next_read = 1;
+
+  swapcontext(&g_host_ctx, &g_engine_ctx); /* run until yield or done */
+  if (g_suspended) {
+    fprintf(stderr, "[host] engine suspended in fd_read; resuming\n");
+    swapcontext(&g_host_ctx, &g_engine_ctx); /* resume to completion */
+  }
+  fprintf(stderr, "[host] engine done=%d\n", g_engine_done);
 
   wasm2c_pdftex_free(&mod);
   wasm_rt_free();
