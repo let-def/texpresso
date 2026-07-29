@@ -57,6 +57,9 @@ static int g_entry_argc;
 static int g_engine_done;   /* engine returned/exited */
 static int g_yield_next_read; /* request: suspend on the next fd_read */
 static int g_suspended;     /* engine is currently suspended in fd_read */
+static unsigned long long g_run_hash = 1469598103934665603ull; /* FNV-1a */
+static int g_defer_close; /* snapshot test: keep fds open so rollback can reset
+                             their positions instead of them being closed */
 
 /* Switch from engine back to host (called from imports on the engine stack). */
 static void engine_yield(void) { swapcontext(&g_engine_ctx, &g_host_ctx); }
@@ -135,7 +138,13 @@ u32 w2c_wasi__snapshot__preview1_fd_write(struct w2c_wasi__snapshot__preview1 *w
     uint32_t base = rd_u32(m, iovs + i * 8);
     uint32_t len = rd_u32(m, iovs + i * 8 + 4);
     if (!mem_ok(m, base, len)) return WASI_EINVAL;
-    ssize_t n = write((int)fd, mem_base(m) + base, len);
+    /* Hash the output stream so the snapshot self-test can compare runs. */
+    const uint8_t *p = mem_base(m) + base;
+    for (uint32_t k = 0; k < len; k++) {
+      g_run_hash ^= p[k];
+      g_run_hash *= 0x100000001b3ull;
+    }
+    ssize_t n = write((int)fd, p, len);
     if (n < 0) return WASI_EIO;
     total += (uint32_t)n;
     if ((uint32_t)n < len) break;
@@ -158,6 +167,7 @@ u32 w2c_wasi__snapshot__preview1_fd_seek(struct w2c_wasi__snapshot__preview1 *w,
 u32 w2c_wasi__snapshot__preview1_fd_close(struct w2c_wasi__snapshot__preview1 *w,
                                           u32 fd) {
   (void)w;
+  if (g_defer_close) return WASI_ESUCCESS; /* rollback needs the fd alive */
   return close((int)fd) < 0 ? WASI_EBADF : WASI_ESUCCESS;
 }
 
@@ -215,10 +225,20 @@ u32 w2c_wasi__snapshot__preview1_clock_time_get(
   return WASI_ESUCCESS;
 }
 
+/* When running under the coroutine, "exit" yields back to the host with a done
+ * flag instead of terminating the process, so the host can snapshot/rollback. */
+static int g_exit_code;
+static void engine_exit(int code) {
+  g_exit_code = code;
+  g_engine_done = 1;
+  if (g_engine_stack) { engine_yield(); return; } /* -> host, never resumes */
+  exit(code);
+}
+
 void w2c_wasi__snapshot__preview1_proc_exit(struct w2c_wasi__snapshot__preview1 *w,
                                             u32 code) {
   (void)w;
-  exit((int)code);
+  engine_exit((int)code);
 }
 
 /* ------------------- env.__syscall_* (Linux ABI) -------------------
@@ -360,10 +380,14 @@ static void write_estat(w2c_pdftex *m, uint32_t p, const struct stat *s) {
 }
 
 u32 w2c_env_0x5F_syscall_openat(struct w2c_env *e, u32 dirfd, u32 path,
-                                u32 flags, u32 mode) {
+                                u32 flags, u32 varargs) {
+  /* Emscripten packs variadic syscall args into memory and passes a pointer:
+   * __syscall_openat(dirfd, path, flags, varargs) reads mode from *varargs. */
   w2c_pdftex *m = e->mod;
   const char *p = (const char *)mem_base(m) + path;
-  int r = openat(xlate_dirfd(dirfd), p, xlate_open_flags(flags), (mode_t)mode);
+  mode_t cmode = 0;
+  if ((flags & L_O_CREAT) && mem_ok(m, varargs, 4)) cmode = (mode_t)rd_u32(m, varargs);
+  int r = openat(xlate_dirfd(dirfd), p, xlate_open_flags(flags), cmode);
   return r < 0 ? neg_errno(errno) : (uint32_t)r;
 }
 
@@ -452,7 +476,7 @@ void w2c_env_0x5Fabort_js(struct w2c_env *e) {
 
 void w2c_env_exit(struct w2c_env *e, u32 code) {
   (void)e;
-  exit((int)code);
+  engine_exit((int)code);
 }
 
 void w2c_env_0x5F_assert_fail(struct w2c_env *e, u32 cond, u32 file, u32 line,
@@ -486,6 +510,40 @@ u32 w2c_env_emscripten_resize_heap(struct w2c_env *e, u32 requested) {
   uint64_t need_pages = ((uint64_t)requested - mem->size + 65535) / 65536;
   uint64_t r = wasm_rt_grow_memory(mem, need_pages);
   return (r == (uint64_t)-1) ? 0 : 1;
+}
+
+/* ---------------- snapshot / rollback (COW-style proof) ----------------
+ * Full-copy for now (the linear memory is mmap fixed-base, so this can drop in
+ * as mprotect dirty-tracking later). Captures linear memory + engine stack +
+ * register context + open-fd positions. */
+#define FNV_INIT 1469598103934665603ull
+static uint8_t *g_snap_mem;
+static wasm_rt_memory_t g_snap_meminfo;
+static uint8_t *g_snap_stack;
+static ucontext_t g_snap_ctx;
+static off_t g_snap_fdpos[64];
+
+static void snapshot_take(w2c_pdftex *m) {
+  g_snap_meminfo = m->w2c_memory;
+  g_snap_mem = malloc(g_snap_meminfo.size);
+  memcpy(g_snap_mem, m->w2c_memory.data, g_snap_meminfo.size);
+  g_snap_stack = malloc(ENGINE_STACK_SIZE);
+  memcpy(g_snap_stack, g_engine_stack, ENGINE_STACK_SIZE);
+  g_snap_ctx = g_engine_ctx;
+  for (int fd = 0; fd < 64; fd++) g_snap_fdpos[fd] = lseek(fd, 0, SEEK_CUR);
+}
+
+static void snapshot_restore(w2c_pdftex *m) {
+  uint64_t cur = m->w2c_memory.size;
+  memcpy(m->w2c_memory.data, g_snap_mem, g_snap_meminfo.size);
+  if (cur > g_snap_meminfo.size) /* zero pages the run grew into */
+    memset(m->w2c_memory.data + g_snap_meminfo.size, 0,
+           cur - g_snap_meminfo.size);
+  m->w2c_memory = g_snap_meminfo; /* data base is fixed (mmap) */
+  memcpy(g_engine_stack, g_snap_stack, ENGINE_STACK_SIZE);
+  g_engine_ctx = g_snap_ctx;
+  for (int fd = 0; fd < 64; fd++)
+    if (g_snap_fdpos[fd] != (off_t)-1) lseek(fd, g_snap_fdpos[fd], SEEK_SET);
 }
 
 /* ------------------------------ main ------------------------------ */
@@ -536,16 +594,38 @@ int main(int argc, char **argv) {
   g_engine_ctx.uc_link = &g_host_ctx;
   makecontext(&g_engine_ctx, engine_trampoline, 0);
 
-  /* Self-test: suspend once on the first read, then resume — proves the
-   * coroutine suspend/resume works before we add COW snapshotting. */
-  if (getenv("TEXPRESSO_SUSPEND_TEST")) g_yield_next_read = 1;
+  int snap_test = getenv("TEXPRESSO_SNAPSHOT_TEST") != NULL;
+  /* Both tests suspend on the first read; the snapshot test rolls back there. */
+  if (snap_test || getenv("TEXPRESSO_SUSPEND_TEST")) g_yield_next_read = 1;
 
-  swapcontext(&g_host_ctx, &g_engine_ctx); /* run until yield or done */
-  if (g_suspended) {
+  swapcontext(&g_host_ctx, &g_engine_ctx); /* run until first yield or done */
+
+  if (g_suspended && snap_test) {
+    g_defer_close = 1;
+    snapshot_take(&mod);
+    g_run_hash = FNV_INIT;
+    swapcontext(&g_host_ctx, &g_engine_ctx); /* run A -> completion */
+    unsigned long long hashA = g_run_hash;
+    fprintf(stderr, "[host] run A done=%d out-hash=%016llx\n", g_engine_done,
+            hashA);
+
+    snapshot_restore(&mod);
+    g_run_hash = FNV_INIT;
+    g_engine_done = 0;
+    swapcontext(&g_host_ctx, &g_engine_ctx); /* run B from the snapshot */
+    unsigned long long hashB = g_run_hash;
+    fprintf(stderr, "[host] run B done=%d out-hash=%016llx\n", g_engine_done,
+            hashB);
+
+    fprintf(stderr, "[host] SNAPSHOT ROLLBACK %s (A=%016llx B=%016llx)\n",
+            hashA == hashB ? "PASS" : "FAIL", hashA, hashB);
+  } else if (g_suspended) {
     fprintf(stderr, "[host] engine suspended in fd_read; resuming\n");
     swapcontext(&g_host_ctx, &g_engine_ctx); /* resume to completion */
+    fprintf(stderr, "[host] engine done=%d\n", g_engine_done);
+  } else {
+    fprintf(stderr, "[host] engine done=%d\n", g_engine_done);
   }
-  fprintf(stderr, "[host] engine done=%d\n", g_engine_done);
 
   wasm2c_pdftex_free(&mod);
   wasm_rt_free();

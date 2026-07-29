@@ -36,12 +36,9 @@ interface. Concretely:
 ### 3.1 Build pipeline (per engine, unchanged engine source)
 ```
 engine.c (stock web2c source, unmodified)
-  │  emcc              Emscripten: clang wasm backend + libc, + Asyncify pass
+  │  emcc              Emscripten: clang wasm backend + libc (non-standalone)
   ▼
-engine.wasm
-  │  wasm-opt --asyncify   spill call stack into linear memory (see 3.3)
-  ▼
-engine.async.wasm
+engine.wasm            (no asyncify — suspend/resume is a host coroutine, 3.3)
   │  wasm2c            generate portable C emulating the wasm
   ▼
 engine_wasm.c (machine-generated; never hand-edited)
@@ -61,14 +58,23 @@ A single `txp_engine` vtable implementation backed by a wasm module:
 - **snapshot / restore** — COW on the linear memory (see 3.4).
 One implementation drives pdftex, xetex, luatex identically.
 
-### 3.3 Snapshotting requires Asyncify (the make-or-break piece)
+### 3.3 Snapshotting via a coroutine stack (the make-or-break piece — proven)
 `fork()` captures the whole process including the **native call stack**.
 Userland COW captures only memory. TeX has a deep C stack mid-run, so heap-only
-COW cannot snapshot a live execution — **unless the call stack lives in the
-linear memory**. Asyncify (a wasm transform) rewrites the module to spill its
-call stack into linear memory and support suspend/resume. With Asyncify,
-snapshotting the linear memory = capturing the full execution state =
-fork-equivalent. Cost: Asyncify adds runtime overhead; measure it.
+COW cannot snapshot a live execution — the call stack must be capturable too.
+
+Rather than Asyncify (which rewrites the module to spill its stack into linear
+memory, at a runtime cost), we run the engine on a **dedicated fixed-address
+stack** via `ucontext`/`swapcontext` (Windows fibers). The engine yields back to
+the host from inside `fd_read` (its natural suspend point). A snapshot is then
+just: copy the linear memory + copy that stack + save the register context. This
+is fork-equivalent, needs **zero wasm instrumentation**, and adds no per-call
+overhead. Asyncify is not used.
+
+**Status: proven.** `wasm_host.c` snapshots at the first read, runs a full
+typeset (run A), rolls back (restore memory + stack + context + fd positions),
+and re-runs from the snapshot (run B). Both runs emit byte-identical output
+(`TEXPRESSO_SNAPSHOT_TEST=1` → `SNAPSHOT ROLLBACK PASS`).
 
 ### 3.4 Copy-on-write snapshot layer
 The wasm linear memory is one `mmap`'d region. Snapshot = mark read-only; a
@@ -104,17 +110,19 @@ snapshot+replay correctness.
 - **wasm2c (AOT → C), not an embedded wasm runtime.** Self-contained portable C,
   no heavyweight runtime dependency; fits texpresso's minimalism. Cost: we build
   the COW + Asyncify plumbing ourselves.
-- **Build from source using SwiftLaTeX's recipes as a base.** Don't reinvent the
-  web2c → emscripten build; fork proven recipes and add our Asyncify flags +
-  import layer. Prebuilt engines can't be reused directly because they lack
-  Asyncify.
+- **Build stock web2c from source under emscripten.** No SwiftLaTeX, no
+  prebuilt engines: raw upstream TeX Live sources, our own build scripts
+  (`scripts/build-wasm-*.sh`), our import layer. Non-standalone so filesystem
+  syscalls surface as imports the host implements (the VFS hook).
+- **Suspend/resume is a host coroutine, not Asyncify.** See 3.3.
 - **Engine source stays stock.** All interception at the wasm import boundary.
 
 ## 6. Toolchain
-- `emcc` (Emscripten) — C → wasm.
-- `wasm-opt --asyncify` (binaryen) — stack-in-memory transform.
-- `wasm2c` (wabt) — wasm → portable C.
-- native compiler (clang/gcc/MSVC) — link into texpresso.
+- `emcc` (Emscripten) — C → wasm (non-standalone; `-sSUPPORT_LONGJMP=wasm
+  -fwasm-exceptions`, no JS runtime used).
+- `wasm2c` (wabt) — wasm → portable C (`--enable-exceptions`).
+- native compiler (clang/gcc/MSVC) — link the module + `wasm_host.c`.
+- No asyncify/binaryen: suspend/resume is a host-side `ucontext` coroutine.
 
 ## 7. Phased plan
 
@@ -122,7 +130,7 @@ snapshot+replay correctness.
 |-------|-------------|------|
 | 0 | **pdftex feasibility spike** — pdftex → wasm → wasm2c, render `simple.tex`, measure wall-time vs native fork engine | perf acceptable? |
 | 1 | Import/VFS layer + unified `txp_engine` wasm backend driving pdftex with **zero engine patches** | one full compile, no source edits |
-| 2 | Asyncify + COW snapshot on linear memory; validate rollback == re-run on a scripted edit sequence | snapshot correctness |
+| 2 | Coroutine-stack + COW snapshot on linear memory; validate rollback == re-run | snapshot correctness — **done (full-copy; PASS)** |
 | 3 | Wire behind `txp_engine` vtable alongside fork engine; xetex next | xetex renders |
 | 4 | luatex (PUC Lua) | luatex renders |
 | 5 | Windows COW shim + port frontend I/O; Windows build | runs on Windows |
@@ -135,7 +143,10 @@ snapshot+replay correctness.
   (target set after the Phase 0 measurement).
 
 ## 9. Open questions
-- Asyncify overhead on real documents — acceptable for interactive latency?
+- Full-copy snapshot cost vs mprotect dirty-tracking on real documents — the
+  linear memory is mmap fixed-base, so mprotect COW is a drop-in optimization.
 - COW granularity vs snapshot frequency — page-level dirty tracking cost.
+- Host I/O state at rollback: file positions/open-fds must be snapshotted too
+  (the proof defers closes + resets positions; texpresso's VFS owns this).
 - luatex build complexity under emscripten (heaviest engine).
 - Do we keep the fork engine long-term (Unix speed) or unify on wasm-COW?
