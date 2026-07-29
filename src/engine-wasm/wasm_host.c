@@ -1,5 +1,9 @@
 /*
- * Native host for the wasm2c-compiled pdftex engine.
+ * Native host for a wasm2c-compiled TeX engine (pdftex or xetex).
+ *
+ * Engine-agnostic: the wasm2c module is generated with `-n engine`, so the
+ * exported symbols are w2c_engine_* and this one host drives any engine. Import
+ * symbols (w2c_env_*, w2c_wasi_*) are keyed on the import module, not the engine.
  *
  * Implements the wasm imports (WASI subset + the Linux syscalls emscripten
  * leaves as env.__syscall_*) against native POSIX, and runs the engine on a
@@ -32,15 +36,15 @@
 #include <unistd.h>
 
 #include "wasm-rt.h"
-#include "pdftex.h" /* wasm2c-generated header */
+#include "engine.h" /* wasm2c-generated header */
 
 /* Import module structs: hold a back-pointer to the instance so imports can
  * reach its linear memory. */
 struct w2c_env {
-  w2c_pdftex *mod;
+  w2c_engine *mod;
 };
 struct w2c_wasi__snapshot__preview1 {
-  w2c_pdftex *mod;
+  w2c_engine *mod;
 };
 
 /* argv the wasm engine sees via WASI args_get. Set in main(). */
@@ -52,13 +56,14 @@ static char **g_argv;
 static ucontext_t g_host_ctx;   /* where the engine yields back to */
 static ucontext_t g_engine_ctx; /* the engine's suspended state */
 static void *g_engine_stack;
-static w2c_pdftex *g_mod;
+static w2c_engine *g_mod;
 static uint32_t g_entry_argv;
 static int g_entry_argc;
 static int g_engine_done;   /* engine returned/exited */
 static int g_yield_next_read; /* request: suspend on the next fd_read */
 static int g_suspended;     /* engine is currently suspended in fd_read */
 static unsigned long long g_run_hash = 1469598103934665603ull; /* FNV-1a */
+static int g_trace; /* TEXPRESSO_TRACE: log openat/mmap for debugging */
 static int g_defer_close; /* snapshot test: keep fds open so rollback can reset
                              their positions instead of them being closed */
 
@@ -66,28 +71,28 @@ static int g_defer_close; /* snapshot test: keep fds open so rollback can reset
 static void engine_yield(void) { swapcontext(&g_engine_ctx, &g_host_ctx); }
 
 static void engine_trampoline(void) {
-  w2c_pdftex_0x5F_main_argc_argv(g_mod, (u32)g_entry_argc, g_entry_argv);
+  w2c_engine_0x5F_main_argc_argv(g_mod, (u32)g_entry_argc, g_entry_argv);
   g_engine_done = 1;
   /* uc_link returns us to the host */
 }
 
 /* ---- linear-memory access (wasm is little-endian; host arm64/x86 too) ---- */
 
-static uint8_t *mem_base(w2c_pdftex *m) { return m->w2c_memory.data; }
-static uint64_t mem_size(w2c_pdftex *m) { return m->w2c_memory.size; }
+static uint8_t *mem_base(w2c_engine *m) { return m->w2c_memory.data; }
+static uint64_t mem_size(w2c_engine *m) { return m->w2c_memory.size; }
 
-static int mem_ok(w2c_pdftex *m, uint32_t addr, uint32_t len) {
+static int mem_ok(w2c_engine *m, uint32_t addr, uint32_t len) {
   return (uint64_t)addr + len <= mem_size(m);
 }
-static uint32_t rd_u32(w2c_pdftex *m, uint32_t addr) {
+static uint32_t rd_u32(w2c_engine *m, uint32_t addr) {
   uint32_t v = 0;
   memcpy(&v, mem_base(m) + addr, 4);
   return v;
 }
-static void wr_u32(w2c_pdftex *m, uint32_t addr, uint32_t v) {
+static void wr_u32(w2c_engine *m, uint32_t addr, uint32_t v) {
   memcpy(mem_base(m) + addr, &v, 4);
 }
-static void wr_u64(w2c_pdftex *m, uint32_t addr, uint64_t v) {
+static void wr_u64(w2c_engine *m, uint32_t addr, uint64_t v) {
   memcpy(mem_base(m) + addr, &v, 8);
 }
 
@@ -108,7 +113,7 @@ static void wr_u64(w2c_pdftex *m, uint32_t addr, uint64_t v) {
 u32 w2c_wasi__snapshot__preview1_fd_read(struct w2c_wasi__snapshot__preview1 *w,
                                          u32 fd, u32 iovs, u32 iovs_len,
                                          u32 nread_ptr) {
-  w2c_pdftex *m = w->mod;
+  w2c_engine *m = w->mod;
   /* Snapshot point: suspend the engine back to the host before this read. */
   if (g_yield_next_read) {
     g_yield_next_read = 0;
@@ -133,7 +138,7 @@ u32 w2c_wasi__snapshot__preview1_fd_read(struct w2c_wasi__snapshot__preview1 *w,
 u32 w2c_wasi__snapshot__preview1_fd_write(struct w2c_wasi__snapshot__preview1 *w,
                                           u32 fd, u32 iovs, u32 iovs_len,
                                           u32 nwritten_ptr) {
-  w2c_pdftex *m = w->mod;
+  w2c_engine *m = w->mod;
   uint32_t total = 0;
   for (u32 i = 0; i < iovs_len; i++) {
     uint32_t base = rd_u32(m, iovs + i * 8);
@@ -157,7 +162,7 @@ u32 w2c_wasi__snapshot__preview1_fd_write(struct w2c_wasi__snapshot__preview1 *w
 u32 w2c_wasi__snapshot__preview1_fd_seek(struct w2c_wasi__snapshot__preview1 *w,
                                          u32 fd, u64 offset, u32 whence,
                                          u32 newoff_ptr) {
-  w2c_pdftex *m = w->mod;
+  w2c_engine *m = w->mod;
   /* WASI whence: 0=SET,1=CUR,2=END — matches POSIX SEEK_* values. */
   off_t r = lseek((int)fd, (off_t)offset, (int)whence);
   if (r < 0) return WASI_EBADF;
@@ -174,7 +179,7 @@ u32 w2c_wasi__snapshot__preview1_fd_close(struct w2c_wasi__snapshot__preview1 *w
 
 u32 w2c_wasi__snapshot__preview1_args_sizes_get(
     struct w2c_wasi__snapshot__preview1 *w, u32 argc_ptr, u32 bufsize_ptr) {
-  w2c_pdftex *m = w->mod;
+  w2c_engine *m = w->mod;
   uint32_t bufsize = 0;
   for (int i = 0; i < g_argc; i++) bufsize += (uint32_t)strlen(g_argv[i]) + 1;
   wr_u32(m, argc_ptr, (uint32_t)g_argc);
@@ -184,7 +189,7 @@ u32 w2c_wasi__snapshot__preview1_args_sizes_get(
 
 u32 w2c_wasi__snapshot__preview1_args_get(struct w2c_wasi__snapshot__preview1 *w,
                                           u32 argv_ptr, u32 argbuf_ptr) {
-  w2c_pdftex *m = w->mod;
+  w2c_engine *m = w->mod;
   uint32_t buf = argbuf_ptr;
   for (int i = 0; i < g_argc; i++) {
     uint32_t len = (uint32_t)strlen(g_argv[i]) + 1;
@@ -198,7 +203,7 @@ u32 w2c_wasi__snapshot__preview1_args_get(struct w2c_wasi__snapshot__preview1 *w
 
 u32 w2c_wasi__snapshot__preview1_environ_sizes_get(
     struct w2c_wasi__snapshot__preview1 *w, u32 count_ptr, u32 bufsize_ptr) {
-  w2c_pdftex *m = w->mod;
+  w2c_engine *m = w->mod;
   wr_u32(m, count_ptr, 0);
   wr_u32(m, bufsize_ptr, 0);
   return WASI_ESUCCESS;
@@ -215,7 +220,7 @@ u32 w2c_wasi__snapshot__preview1_environ_get(
 u32 w2c_wasi__snapshot__preview1_clock_time_get(
     struct w2c_wasi__snapshot__preview1 *w, u32 clock_id, u64 precision,
     u32 time_ptr) {
-  w2c_pdftex *m = w->mod;
+  w2c_engine *m = w->mod;
   (void)precision;
   struct timespec ts;
   clockid_t c = (clock_id == WASI_CLOCK_MONOTONIC) ? CLOCK_MONOTONIC
@@ -255,7 +260,7 @@ static int xlate_dirfd(uint32_t d) {
 }
 
 u32 w2c_env_0x5F_syscall_getcwd(struct w2c_env *e, u32 buf, u32 size) {
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   if (!mem_ok(m, buf, size)) return neg_errno(EFAULT);
   if (getcwd((char *)mem_base(m) + buf, size) == NULL) return neg_errno(errno);
   return (uint32_t)strlen((char *)mem_base(m) + buf) + 1;
@@ -268,7 +273,7 @@ u32 w2c_env_0x5F_syscall_getuid32(struct w2c_env *e) {
 
 u32 w2c_env_0x5F_syscall_faccessat(struct w2c_env *e, u32 dirfd, u32 path,
                                    u32 amode, u32 flags) {
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   const char *p = (const char *)mem_base(m) + path;
   int r = faccessat(xlate_dirfd(dirfd), p, (int)amode, (int)flags);
   return r < 0 ? neg_errno(errno) : 0;
@@ -276,7 +281,7 @@ u32 w2c_env_0x5F_syscall_faccessat(struct w2c_env *e, u32 dirfd, u32 path,
 
 u32 w2c_env_0x5F_syscall_readlinkat(struct w2c_env *e, u32 dirfd, u32 path,
                                     u32 buf, u32 bufsize) {
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   const char *p = (const char *)mem_base(m) + path;
   ssize_t r = readlinkat(xlate_dirfd(dirfd), p, (char *)mem_base(m) + buf, bufsize);
   return r < 0 ? neg_errno(errno) : (uint32_t)r;
@@ -284,21 +289,21 @@ u32 w2c_env_0x5F_syscall_readlinkat(struct w2c_env *e, u32 dirfd, u32 path,
 
 u32 w2c_env_0x5F_syscall_unlinkat(struct w2c_env *e, u32 dirfd, u32 path,
                                   u32 flags) {
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   const char *p = (const char *)mem_base(m) + path;
   int r = unlinkat(xlate_dirfd(dirfd), p, (int)flags);
   return r < 0 ? neg_errno(errno) : 0;
 }
 
 u32 w2c_env_0x5F_syscall_rmdir(struct w2c_env *e, u32 path) {
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   int r = rmdir((const char *)mem_base(m) + path);
   return r < 0 ? neg_errno(errno) : 0;
 }
 
 u32 w2c_env_0x5F_syscall_renameat(struct w2c_env *e, u32 od, u32 op, u32 nd,
                                   u32 np) {
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   int r = renameat(xlate_dirfd(od), (const char *)mem_base(m) + op, xlate_dirfd(nd),
                    (const char *)mem_base(m) + np);
   return r < 0 ? neg_errno(errno) : 0;
@@ -358,7 +363,7 @@ static int xlate_open_flags(uint32_t lf) {
 }
 
 /* emscripten struct stat offsets (extracted from the toolchain). */
-static void write_estat(w2c_pdftex *m, uint32_t p, const struct stat *s) {
+static void write_estat(w2c_engine *m, uint32_t p, const struct stat *s) {
   uint8_t *b = mem_base(m) + p;
   memset(b, 0, 96);
 #define PUT32(off, v) do { uint32_t _v = (uint32_t)(v); memcpy(b + (off), &_v, 4); } while (0)
@@ -384,16 +389,18 @@ u32 w2c_env_0x5F_syscall_openat(struct w2c_env *e, u32 dirfd, u32 path,
                                 u32 flags, u32 varargs) {
   /* Emscripten packs variadic syscall args into memory and passes a pointer:
    * __syscall_openat(dirfd, path, flags, varargs) reads mode from *varargs. */
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   const char *p = (const char *)mem_base(m) + path;
   mode_t cmode = 0;
   if ((flags & L_O_CREAT) && mem_ok(m, varargs, 4)) cmode = (mode_t)rd_u32(m, varargs);
   int r = openat(xlate_dirfd(dirfd), p, xlate_open_flags(flags), cmode);
+  if (g_trace) fprintf(stderr, "[openat] '%s' flags=%#x -> %d (%s)\n", p, flags, r,
+                       r < 0 ? strerror(errno) : "ok");
   return r < 0 ? neg_errno(errno) : (uint32_t)r;
 }
 
 u32 w2c_env_0x5F_syscall_stat64(struct w2c_env *e, u32 path, u32 buf) {
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   struct stat s;
   if (stat((const char *)mem_base(m) + path, &s) < 0) return neg_errno(errno);
   write_estat(m, buf, &s);
@@ -401,7 +408,7 @@ u32 w2c_env_0x5F_syscall_stat64(struct w2c_env *e, u32 path, u32 buf) {
 }
 
 u32 w2c_env_0x5F_syscall_lstat64(struct w2c_env *e, u32 path, u32 buf) {
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   struct stat s;
   if (lstat((const char *)mem_base(m) + path, &s) < 0) return neg_errno(errno);
   write_estat(m, buf, &s);
@@ -410,7 +417,7 @@ u32 w2c_env_0x5F_syscall_lstat64(struct w2c_env *e, u32 path, u32 buf) {
 
 u32 w2c_env_0x5F_syscall_newfstatat(struct w2c_env *e, u32 dirfd, u32 path,
                                     u32 buf, u32 flags) {
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   int hf = 0;
   if (flags & 0x100 /* AT_SYMLINK_NOFOLLOW (Linux) */) hf |= AT_SYMLINK_NOFOLLOW;
   if (flags & 0x1000 /* AT_EMPTY_PATH */) hf |= AT_SYMLINK_NOFOLLOW; /* best effort */
@@ -436,7 +443,7 @@ u32 w2c_env_0x5F_syscall_ioctl(struct w2c_env *e, u32 fd, u32 req, u32 arg) {
 /* ---------------- time / abort (emscripten "_js" imports) ---------------- */
 
 /* struct tm in wasm: 9 ints then tm_gmtoff(long) + tm_zone(ptr). */
-static void write_tm(w2c_pdftex *m, uint32_t p, const struct tm *t) {
+static void write_tm(w2c_engine *m, uint32_t p, const struct tm *t) {
   uint8_t *b = mem_base(m) + p;
   int32_t v[9] = {t->tm_sec,  t->tm_min,  t->tm_hour,
                   t->tm_mday, t->tm_mon,  t->tm_year,
@@ -445,7 +452,7 @@ static void write_tm(w2c_pdftex *m, uint32_t p, const struct tm *t) {
 }
 
 u32 w2c_env_0x5Fgmtime_js(struct w2c_env *e, u64 t, u32 tmptr) {
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   time_t tt = (time_t)t;
   struct tm r;
   gmtime_r(&tt, &r);
@@ -454,7 +461,7 @@ u32 w2c_env_0x5Fgmtime_js(struct w2c_env *e, u64 t, u32 tmptr) {
 }
 
 u32 w2c_env_0x5Flocaltime_js(struct w2c_env *e, u64 t, u32 tmptr) {
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   time_t tt = (time_t)t;
   struct tm r;
   localtime_r(&tt, &r);
@@ -482,7 +489,7 @@ void w2c_env_exit(struct w2c_env *e, u32 code) {
 
 void w2c_env_0x5F_assert_fail(struct w2c_env *e, u32 cond, u32 file, u32 line,
                               u32 func) {
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   fprintf(stderr, "assertion failed: %s (%s:%u, %s)\n",
           (const char *)mem_base(m) + cond, (const char *)mem_base(m) + file,
           line, (const char *)mem_base(m) + func);
@@ -505,12 +512,47 @@ f64 w2c_env_emscripten_get_now(struct w2c_env *e) {
 
 /* Grow the linear memory to at least `requested` bytes. */
 u32 w2c_env_emscripten_resize_heap(struct w2c_env *e, u32 requested) {
-  w2c_pdftex *m = e->mod;
+  w2c_engine *m = e->mod;
   wasm_rt_memory_t *mem = &m->w2c_memory;
   if ((uint64_t)requested <= mem->size) return 1;
   uint64_t need_pages = ((uint64_t)requested - mem->size + 65535) / 65536;
   uint64_t r = wasm_rt_grow_memory(mem, need_pages);
   return (r == (uint64_t)-1) ? 0 : 1;
+}
+
+/* Engines that never mmap (pdftex) don't export memalign. Provide a weak
+ * fallback so the shared host links; the engine's strong definition (xetex)
+ * overrides it, and pdftex never reaches mmap_js anyway. */
+u32 __attribute__((weak))
+w2c_engine_emscripten_builtin_memalign(w2c_engine *m, u32 align, u32 size) {
+  (void)m; (void)align; (void)size;
+  return 0;
+}
+
+/* File-backed mmap (xetex needs it for ICU data + fonts; ICU has no fallback).
+ * Allocate inside wasm memory via the engine's allocator and read the file
+ * region into it. Anonymous mmap (fd < 0) is handled inside musl — decline it. */
+u32 w2c_env_0x5Fmmap_js(struct w2c_env *e, u32 len, u32 prot, u32 flags, u32 fd,
+                        u64 offset, u32 allocated_ptr, u32 addr_ptr) {
+  w2c_engine *m = e->mod;
+  (void)prot; (void)flags;
+  if (g_trace) fprintf(stderr, "[mmap_js] fd=%d len=%u off=%llu\n", (int)fd, len,
+                       (unsigned long long)offset);
+  if ((int)fd < 0) return (uint32_t)(-38); /* -ENOSYS: let musl do anon */
+  uint32_t ptr = w2c_engine_emscripten_builtin_memalign(m, 65536, len);
+  if (!ptr) return (uint32_t)(-12); /* -ENOMEM */
+  ssize_t n = pread((int)fd, mem_base(m) + ptr, len, (off_t)offset);
+  if (n < 0) return (uint32_t)(-5); /* -EIO */
+  if ((uint32_t)n < len) memset(mem_base(m) + ptr + (uint32_t)n, 0, len - (uint32_t)n);
+  wr_u32(m, addr_ptr, ptr);
+  wr_u32(m, allocated_ptr, 1); /* we allocated -> munmap should free (we leak) */
+  return 0;
+}
+
+u32 w2c_env_0x5Fmunmap_js(struct w2c_env *e, u32 addr, u32 len, u32 prot,
+                          u32 flags, u32 fd, u64 offset) {
+  (void)e; (void)addr; (void)len; (void)prot; (void)flags; (void)fd; (void)offset;
+  return 0; /* free not exported by the module; mappings are few and long-lived */
 }
 
 /* ---------------- snapshot / rollback (userland COW) ----------------
@@ -569,7 +611,7 @@ static void cow_install_handler(void) {
   sigaction(SIGBUS, &sa, NULL); /* macOS raises SIGBUS on protected writes */
 }
 
-static void snapshot_take(w2c_pdftex *m) {
+static void snapshot_take(w2c_engine *m) {
   cow_install_handler();
   g_snap_meminfo = m->w2c_memory;
   g_snap_stack = malloc(ENGINE_STACK_SIZE);
@@ -586,7 +628,7 @@ static void snapshot_take(w2c_pdftex *m) {
   g_cow_active = 1;
 }
 
-static void snapshot_restore(w2c_pdftex *m) {
+static void snapshot_restore(w2c_engine *m) {
   g_cow_active = 0;
   mprotect(g_cow_base, g_cow_size, PROT_READ | PROT_WRITE);
   uint64_t npages = g_cow_size / (uint64_t)g_pg;
@@ -614,17 +656,18 @@ static void snapshot_restore(w2c_pdftex *m) {
 int main(int argc, char **argv) {
   g_argc = argc;
   g_argv = argv;
+  g_trace = getenv("TEXPRESSO_TRACE") != NULL;
 
   wasm_rt_init();
 
-  w2c_pdftex mod;
+  w2c_engine mod;
   struct w2c_env env;
   struct w2c_wasi__snapshot__preview1 wasi;
   env.mod = &mod;
   wasi.mod = &mod;
 
-  wasm2c_pdftex_instantiate(&mod, &env, &wasi);
-  w2c_pdftex_0x5F_wasm_call_ctors(&mod); /* run static constructors first */
+  wasm2c_engine_instantiate(&mod, &env, &wasi);
+  w2c_engine_0x5F_wasm_call_ctors(&mod); /* run static constructors first */
 
   /* Build argv[] inside wasm memory and call __main_argc_argv.
    * Layout: argc+1 pointers (NULL-terminated) followed by the strings. */
@@ -632,7 +675,7 @@ int main(int argc, char **argv) {
   uint32_t strbytes = 0;
   for (int i = 0; i < argc; i++) strbytes += (uint32_t)strlen(argv[i]) + 1;
   uint32_t total = (ptrbytes + strbytes + 15u) & ~15u;
-  uint32_t base = w2c_pdftex_0x5Femscripten_stack_alloc(&mod, total);
+  uint32_t base = w2c_engine_0x5Femscripten_stack_alloc(&mod, total);
   uint32_t sp = base + ptrbytes;
   for (int i = 0; i < argc; i++) {
     uint32_t len = (uint32_t)strlen(argv[i]) + 1;
@@ -692,7 +735,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "[host] engine done=%d\n", g_engine_done);
   }
 
-  wasm2c_pdftex_free(&mod);
+  wasm2c_engine_free(&mod);
   wasm_rt_free();
   return 0;
 }

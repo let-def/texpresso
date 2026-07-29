@@ -17,7 +17,9 @@ set -euo pipefail
 export EMCC_SKIP_SANITY_CHECK=1
 
 WASMFLAGS="-O2 -sSUPPORT_LONGJMP=wasm -fwasm-exceptions"
-LINKFLAGS="-sSUPPORT_LONGJMP=wasm -fwasm-exceptions"
+# ALLOW_MEMORY_GROWTH: xetex xmallocs ~72 MB at startup; the default 16 MB
+# non-growable heap exhausts. wasm2c (mmap-reserved) grows fine.
+LINKFLAGS="-sSUPPORT_LONGJMP=wasm -fwasm-exceptions -sALLOW_MEMORY_GROWTH=1"
 # harfbuzz promotes warnings to errors via in-source #pragma GCC diagnostic;
 # emscripten's newer clang fires some (e.g. -Wunused-template). Its own opt-out:
 CXXWASMFLAGS="$WASMFLAGS -DHB_NO_PRAGMA_GCC_DIAGNOSTIC_ERROR"
