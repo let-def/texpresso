@@ -137,7 +137,21 @@ snapshot+replay correctness.
 | 1 | Import/VFS layer + unified `txp_engine` wasm backend driving pdftex with **zero engine patches** | one full compile, no source edits |
 | 2 | Coroutine-stack + mprotect-COW snapshot on linear memory; validate rollback == re-run | snapshot correctness — **done (mprotect COW; PASS, 18/1084 pages)** |
 | 3 | Wire behind `txp_engine` vtable alongside fork engine; xetex next | **xetex renders via wasm2c (glyphs in XDV)** |
-| 4 | luatex (PUC Lua) | luatex renders |
+| 4 | luatex (PUC Lua) | **luatex runs via wasm2c + executes Lua 5.3** (bare `--ini` shipout: WIP) |
+
+### luatex (Phase 4 notes)
+luatex compiles to wasm (4.35 MB) with PUC Lua (lua53), no ICU/fontconfig
+(fonts are handled in Lua). Libs: zlib libpng freetype2 graphite2 harfbuzz pplib
+zziplib lua53. Same harfbuzz/freetype fixes as xetex; kpathsea is a *top-level*
+build subdir (built by the top `make`, not `make -C texk`). Runs via the SAME
+`wasm_host.c` (28 extra imports added: luasocket networking — stubbed;
+`chdir/dup/dup3/fstat64/linkat/mkdirat/symlinkat/utimensat/fd_sync` — real;
+`mktime_js`, `emscripten_get_heap_max`, sighandler/keepalive/DNS — impl/stub).
+Proven: `\directlua` executes Lua 5.3, `kpse.var_value` resolves paths,
+`--version` works. **Follow-up:** bare `--ini \shipout` aborts in kpathsea
+(`assert(kpse->program_name)`) — the output-file open returns NULL (no format/
+backend loaded in bare --ini) and the TEXMFOUTPUT fallback asserts. Needs a
+format/backend or the texpresso I/O driver; not an engine/wasm2c blocker.
 
 ### xetex font stack (Phase 3 notes)
 xetex compiles to wasm with freetype2 + harfbuzz + graphite2 + teckit + icu.

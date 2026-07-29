@@ -285,6 +285,118 @@ u32 w2c_env_0x5F_syscall_getuid32(struct w2c_env *e) {
   return (uint32_t)getuid();
 }
 
+/* defined further below; used by fstat64/mktime_js here */
+static void write_estat(w2c_engine *m, uint32_t p, const struct stat *s);
+static void write_tm(w2c_engine *m, uint32_t p, const struct tm *t);
+
+/* ---- extra file/misc syscalls (luatex) ---- */
+u32 w2c_env_0x5F_syscall_chdir(struct w2c_env *e, u32 path) {
+  w2c_engine *m = e->mod;
+  int r = chdir((const char *)mem_base(m) + path);
+  return r < 0 ? neg_errno(errno) : 0;
+}
+u32 w2c_env_0x5F_syscall_dup(struct w2c_env *e, u32 fd) {
+  (void)e;
+  int r = dup((int)fd);
+  return r < 0 ? neg_errno(errno) : (uint32_t)r;
+}
+u32 w2c_env_0x5F_syscall_dup3(struct w2c_env *e, u32 oldfd, u32 newfd, u32 flags) {
+  (void)e; (void)flags; /* macOS lacks dup3; O_CLOEXEC flag ignored */
+  int r = dup2((int)oldfd, (int)newfd);
+  return r < 0 ? neg_errno(errno) : (uint32_t)r;
+}
+u32 w2c_env_0x5F_syscall_fstat64(struct w2c_env *e, u32 fd, u32 buf) {
+  w2c_engine *m = e->mod;
+  struct stat st;
+  if (fstat((int)fd, &st) < 0) return neg_errno(errno);
+  write_estat(m, buf, &st);
+  return 0;
+}
+u32 w2c_env_0x5F_syscall_mkdirat(struct w2c_env *e, u32 dirfd, u32 path, u32 mode) {
+  w2c_engine *m = e->mod;
+  int r = mkdirat(xlate_dirfd(dirfd), (const char *)mem_base(m) + path, (mode_t)mode);
+  return r < 0 ? neg_errno(errno) : 0;
+}
+u32 w2c_env_0x5F_syscall_linkat(struct w2c_env *e, u32 od, u32 op, u32 nd, u32 np,
+                                u32 flags) {
+  w2c_engine *m = e->mod;
+  int r = linkat(xlate_dirfd(od), (const char *)mem_base(m) + op, xlate_dirfd(nd),
+                 (const char *)mem_base(m) + np, (int)flags);
+  return r < 0 ? neg_errno(errno) : 0;
+}
+u32 w2c_env_0x5F_syscall_symlinkat(struct w2c_env *e, u32 target, u32 nd, u32 lp) {
+  w2c_engine *m = e->mod;
+  int r = symlinkat((const char *)mem_base(m) + target, xlate_dirfd(nd),
+                    (const char *)mem_base(m) + lp);
+  return r < 0 ? neg_errno(errno) : 0;
+}
+u32 w2c_env_0x5F_syscall_utimensat(struct w2c_env *e, u32 dirfd, u32 path,
+                                   u32 times, u32 flags) {
+  (void)e; (void)dirfd; (void)path; (void)times; (void)flags;
+  return 0; /* accept + ignore: file mtimes don't affect typesetting */
+}
+
+/* Time: fill/normalize a wasm struct tm and return time_t (see write_tm). */
+u64 w2c_env_0x5Fmktime_js(struct w2c_env *e, u32 tm_ptr) {
+  w2c_engine *m = e->mod;
+  int32_t v[9];
+  memcpy(v, mem_base(m) + tm_ptr, sizeof v);
+  struct tm t;
+  memset(&t, 0, sizeof t);
+  t.tm_sec = v[0]; t.tm_min = v[1]; t.tm_hour = v[2]; t.tm_mday = v[3];
+  t.tm_mon = v[4]; t.tm_year = v[5]; t.tm_wday = v[6]; t.tm_yday = v[7];
+  t.tm_isdst = v[8];
+  time_t r = mktime(&t);
+  write_tm(m, tm_ptr, &t); /* mktime normalizes the fields */
+  return (u64)(int64_t)r;
+}
+
+u32 w2c_env_emscripten_get_heap_max(struct w2c_env *e) {
+  (void)e;
+  return 0x80000000u; /* 2 GiB ceiling */
+}
+void w2c_env_0x5F_call_sighandler(struct w2c_env *e, u32 handler, u32 sig) {
+  (void)e; (void)handler; (void)sig;
+}
+void w2c_env_0x5Femscripten_runtime_keepalive_clear(struct w2c_env *e) { (void)e; }
+
+/* Networking (luasocket): unsupported — typesetting never needs a socket. */
+u32 w2c_env_0x5Femscripten_lookup_name(struct w2c_env *e, u32 name) {
+  (void)e; (void)name; return 0;
+}
+u32 w2c_env_getaddrinfo(struct w2c_env *e, u32 a, u32 b, u32 c, u32 d) {
+  (void)e; (void)a; (void)b; (void)c; (void)d; return (uint32_t)(-1);
+}
+u32 w2c_env_getnameinfo(struct w2c_env *e, u32 a, u32 b, u32 c, u32 d, u32 f,
+                        u32 g, u32 h) {
+  (void)e; (void)a; (void)b; (void)c; (void)d; (void)f; (void)g; (void)h;
+  return (uint32_t)(-1);
+}
+#define NET_STUB6(nm)                                                          \
+  u32 w2c_env_0x5F_syscall_##nm(struct w2c_env *e, u32 a, u32 b, u32 c, u32 d, \
+                                u32 f, u32 g) {                                \
+    (void)e; (void)a; (void)b; (void)c; (void)d; (void)f; (void)g;            \
+    return neg_errno(ENOSYS);                                                  \
+  }
+NET_STUB6(bind) NET_STUB6(accept4) NET_STUB6(listen) NET_STUB6(recvfrom)
+NET_STUB6(sendto) NET_STUB6(getpeername) NET_STUB6(getsockname)
+NET_STUB6(getsockopt) NET_STUB6(setsockopt) NET_STUB6(shutdown)
+#undef NET_STUB6
+u32 w2c_env_0x5F_syscall_poll(struct w2c_env *e, u32 fds, u32 nfds, u32 timeout) {
+  (void)e; (void)fds; (void)nfds; (void)timeout; return 0; /* no fds ready */
+}
+u32 w2c_env_0x5F_syscall_poll_nonblocking(struct w2c_env *e, u32 a, u32 b) {
+  (void)e; (void)a; (void)b; return 0;
+}
+
+/* fd_sync -> fsync */
+u32 w2c_wasi__snapshot__preview1_fd_sync(struct w2c_wasi__snapshot__preview1 *w,
+                                         u32 fd) {
+  (void)w;
+  fsync((int)fd);
+  return WASI_ESUCCESS;
+}
+
 u32 w2c_env_0x5F_syscall_faccessat(struct w2c_env *e, u32 dirfd, u32 path,
                                    u32 amode, u32 flags) {
   w2c_engine *m = e->mod;
