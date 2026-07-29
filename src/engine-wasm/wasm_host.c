@@ -22,6 +22,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -512,38 +513,100 @@ u32 w2c_env_emscripten_resize_heap(struct w2c_env *e, u32 requested) {
   return (r == (uint64_t)-1) ? 0 : 1;
 }
 
-/* ---------------- snapshot / rollback (COW-style proof) ----------------
- * Full-copy for now (the linear memory is mmap fixed-base, so this can drop in
- * as mprotect dirty-tracking later). Captures linear memory + engine stack +
- * register context + open-fd positions. */
+/* ---------------- snapshot / rollback (userland COW) ----------------
+ * The linear memory is snapshotted by mprotect dirty-tracking: at snapshot the
+ * region is marked read-only; a SIGSEGV/SIGBUS handler saves each page's
+ * original bytes on first write and re-marks it writable. Rollback copies the
+ * saved (dirty) pages back — cost is O(pages written), not O(heap size). The
+ * engine stack (small) + register context + open-fd positions are full-copy.
+ * The memory base is fixed (WASM_RT_USE_MMAP), so the protected region is stable
+ * across grows. */
 #define FNV_INIT 1469598103934665603ull
-static uint8_t *g_snap_mem;
 static wasm_rt_memory_t g_snap_meminfo;
 static uint8_t *g_snap_stack;
 static ucontext_t g_snap_ctx;
 static off_t g_snap_fdpos[64];
 
+/* mprotect COW state for the linear memory */
+static long g_pg;              /* system page size */
+static uint8_t *g_cow_base;    /* = w2c_memory.data (fixed) */
+static uint64_t g_cow_size;    /* protected region size (snapshot size) */
+static uint8_t *g_cow_shadow;  /* saved original pages (size g_cow_size) */
+static uint8_t *g_cow_saved;   /* bitmap: page saved this snapshot */
+static volatile sig_atomic_t g_cow_active;
+static volatile sig_atomic_t g_cow_dirty; /* pages copied this snapshot */
+
+static void cow_fault(int sig, siginfo_t *si, void *uctx) {
+  (void)uctx;
+  uintptr_t a = (uintptr_t)si->si_addr;
+  uintptr_t b = (uintptr_t)g_cow_base;
+  if (g_cow_active && a >= b && a < b + g_cow_size) {
+    uintptr_t off = (a - b) & ~(uintptr_t)(g_pg - 1);
+    uint64_t pi = off / (uint64_t)g_pg;
+    if (!(g_cow_saved[pi >> 3] & (1u << (pi & 7)))) {
+      memcpy(g_cow_shadow + off, g_cow_base + off, (size_t)g_pg); /* save */
+      g_cow_saved[pi >> 3] |= (uint8_t)(1u << (pi & 7));
+      g_cow_dirty++;
+    }
+    mprotect(g_cow_base + off, (size_t)g_pg, PROT_READ | PROT_WRITE);
+    return; /* retry the faulting write */
+  }
+  signal(sig, SIG_DFL); /* not ours: crash as usual */
+  raise(sig);
+}
+
+static void cow_install_handler(void) {
+  static int done;
+  if (done) return;
+  done = 1;
+  g_pg = sysconf(_SC_PAGESIZE);
+  struct sigaction sa;
+  memset(&sa, 0, sizeof sa);
+  sa.sa_sigaction = cow_fault;
+  sa.sa_flags = SA_SIGINFO;
+  sigemptyset(&sa.sa_mask);
+  sigaction(SIGSEGV, &sa, NULL);
+  sigaction(SIGBUS, &sa, NULL); /* macOS raises SIGBUS on protected writes */
+}
+
 static void snapshot_take(w2c_pdftex *m) {
+  cow_install_handler();
   g_snap_meminfo = m->w2c_memory;
-  g_snap_mem = malloc(g_snap_meminfo.size);
-  memcpy(g_snap_mem, m->w2c_memory.data, g_snap_meminfo.size);
   g_snap_stack = malloc(ENGINE_STACK_SIZE);
   memcpy(g_snap_stack, g_engine_stack, ENGINE_STACK_SIZE);
   g_snap_ctx = g_engine_ctx;
   for (int fd = 0; fd < 64; fd++) g_snap_fdpos[fd] = lseek(fd, 0, SEEK_CUR);
+
+  g_cow_base = m->w2c_memory.data;
+  g_cow_size = m->w2c_memory.size; /* multiple of the 64K wasm page */
+  g_cow_shadow = malloc(g_cow_size);
+  g_cow_saved = calloc((g_cow_size / (uint64_t)g_pg + 7) / 8, 1);
+  g_cow_dirty = 0;
+  mprotect(g_cow_base, g_cow_size, PROT_READ);
+  g_cow_active = 1;
 }
 
 static void snapshot_restore(w2c_pdftex *m) {
+  g_cow_active = 0;
+  mprotect(g_cow_base, g_cow_size, PROT_READ | PROT_WRITE);
+  uint64_t npages = g_cow_size / (uint64_t)g_pg;
+  for (uint64_t pi = 0; pi < npages; pi++) /* restore dirtied pages */
+    if (g_cow_saved[pi >> 3] & (1u << (pi & 7)))
+      memcpy(g_cow_base + pi * (uint64_t)g_pg, g_cow_shadow + pi * (uint64_t)g_pg,
+             (size_t)g_pg);
   uint64_t cur = m->w2c_memory.size;
-  memcpy(m->w2c_memory.data, g_snap_mem, g_snap_meminfo.size);
-  if (cur > g_snap_meminfo.size) /* zero pages the run grew into */
-    memset(m->w2c_memory.data + g_snap_meminfo.size, 0,
-           cur - g_snap_meminfo.size);
+  if (cur > g_cow_size) /* zero pages the run grew into */
+    memset(g_cow_base + g_cow_size, 0, cur - g_cow_size);
   m->w2c_memory = g_snap_meminfo; /* data base is fixed (mmap) */
+
   memcpy(g_engine_stack, g_snap_stack, ENGINE_STACK_SIZE);
   g_engine_ctx = g_snap_ctx;
   for (int fd = 0; fd < 64; fd++)
     if (g_snap_fdpos[fd] != (off_t)-1) lseek(fd, g_snap_fdpos[fd], SEEK_SET);
+
+  free(g_cow_shadow); g_cow_shadow = NULL;
+  free(g_cow_saved); g_cow_saved = NULL;
+  free(g_snap_stack); g_snap_stack = NULL;
 }
 
 /* ------------------------------ main ------------------------------ */
@@ -606,8 +669,10 @@ int main(int argc, char **argv) {
     g_run_hash = FNV_INIT;
     swapcontext(&g_host_ctx, &g_engine_ctx); /* run A -> completion */
     unsigned long long hashA = g_run_hash;
-    fprintf(stderr, "[host] run A done=%d out-hash=%016llx\n", g_engine_done,
-            hashA);
+    fprintf(stderr,
+            "[host] run A done=%d out-hash=%016llx (COW: %d/%llu pages dirtied)\n",
+            g_engine_done, hashA, (int)g_cow_dirty,
+            (unsigned long long)(g_cow_size / (uint64_t)g_pg));
 
     snapshot_restore(&mod);
     g_run_hash = FNV_INIT;

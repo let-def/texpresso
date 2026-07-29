@@ -71,10 +71,15 @@ just: copy the linear memory + copy that stack + save the register context. This
 is fork-equivalent, needs **zero wasm instrumentation**, and adds no per-call
 overhead. Asyncify is not used.
 
+The linear memory itself is snapshotted by **mprotect dirty-tracking** (§3.4):
+snapshot marks it read-only (O(1)); a SIGSEGV/SIGBUS handler saves each page on
+first write; rollback copies back only the dirtied pages. The engine stack +
+register context + fd positions are full-copy (small).
+
 **Status: proven.** `wasm_host.c` snapshots at the first read, runs a full
-typeset (run A), rolls back (restore memory + stack + context + fd positions),
-and re-runs from the snapshot (run B). Both runs emit byte-identical output
-(`TEXPRESSO_SNAPSHOT_TEST=1` → `SNAPSHOT ROLLBACK PASS`).
+typeset (run A), rolls back, and re-runs from the snapshot (run B). Both runs
+emit byte-identical output, and only ~1.7% of heap pages (18/1084) are dirtied
+by a full typeset (`TEXPRESSO_SNAPSHOT_TEST=1` → `SNAPSHOT ROLLBACK PASS`).
 
 ### 3.4 Copy-on-write snapshot layer
 The wasm linear memory is one `mmap`'d region. Snapshot = mark read-only; a
@@ -130,7 +135,7 @@ snapshot+replay correctness.
 |-------|-------------|------|
 | 0 | **pdftex feasibility spike** — pdftex → wasm → wasm2c, render `simple.tex`, measure wall-time vs native fork engine | perf acceptable? |
 | 1 | Import/VFS layer + unified `txp_engine` wasm backend driving pdftex with **zero engine patches** | one full compile, no source edits |
-| 2 | Coroutine-stack + COW snapshot on linear memory; validate rollback == re-run | snapshot correctness — **done (full-copy; PASS)** |
+| 2 | Coroutine-stack + mprotect-COW snapshot on linear memory; validate rollback == re-run | snapshot correctness — **done (mprotect COW; PASS, 18/1084 pages)** |
 | 3 | Wire behind `txp_engine` vtable alongside fork engine; xetex next | xetex renders |
 | 4 | luatex (PUC Lua) | luatex renders |
 | 5 | Windows COW shim + port frontend I/O; Windows build | runs on Windows |
@@ -143,9 +148,10 @@ snapshot+replay correctness.
   (target set after the Phase 0 measurement).
 
 ## 9. Open questions
-- Full-copy snapshot cost vs mprotect dirty-tracking on real documents — the
-  linear memory is mmap fixed-base, so mprotect COW is a drop-in optimization.
-- COW granularity vs snapshot frequency — page-level dirty tracking cost.
+- mprotect COW is in (18/1084 pages dirtied for a full typeset). Remaining: the
+  engine stack is still full-copy — track its used extent (via saved SP) if the
+  32 MiB copy shows up in per-keystroke latency.
+- COW granularity vs snapshot frequency on larger real documents.
 - Host I/O state at rollback: file positions/open-fds must be snapshotted too
   (the proof defers closes + resets positions; texpresso's VFS owns this).
 - luatex build complexity under emscripten (heaviest engine).
