@@ -136,8 +136,20 @@ snapshot+replay correctness.
 | 0 | **pdftex feasibility spike** — pdftex → wasm → wasm2c, render `simple.tex`, measure wall-time vs native fork engine | perf acceptable? |
 | 1 | Import/VFS layer + unified `txp_engine` wasm backend driving pdftex with **zero engine patches** | one full compile, no source edits |
 | 2 | Coroutine-stack + mprotect-COW snapshot on linear memory; validate rollback == re-run | snapshot correctness — **done (mprotect COW; PASS, 18/1084 pages)** |
-| 3 | Wire behind `txp_engine` vtable alongside fork engine; xetex next | xetex renders |
+| 3 | Wire behind `txp_engine` vtable alongside fork engine; xetex next | xetex renders — **xetex.wasm builds (24 MB, full font stack)** |
 | 4 | luatex (PUC Lua) | luatex renders |
+
+### xetex font stack (Phase 3 notes)
+xetex compiles to wasm with freetype2 + harfbuzz + graphite2 + teckit + icu.
+It requires fontconfig off-Mac, which has no wasm build; we link a minimal
+**FreeType-backed fontconfig shim** (`src/engine-wasm/fontconfig-shim/`) that
+implements only the enumeration subset xetex uses (`FcFontList` + metadata
+accessors — no matching, cache, or `fonts.conf`), driven by a manifest of font
+paths (`$TEXPRESSO_FONT_MANIFEST`). Cross-build quirks handled in
+`scripts/build-wasm-xetex.sh`: harfbuzz `-Werror` pragmas, ICU native-tool build
+under `emmake`, ICU emscripten platform config, freetype dropping wasm flags.
+New host imports xetex needs beyond pdftex: `_mmap_js`, `_munmap_js`,
+`__syscall_fcntl64`, `__syscall_ioctl`.
 | 5 | Windows COW shim + port frontend I/O; Windows build | runs on Windows |
 
 ## 8. Success criteria
