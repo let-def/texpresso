@@ -1233,6 +1233,13 @@ bool texpresso_main(struct persistent_state *ps)
 
     if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
       ui->eng = txp_create_dvi_engine(ps->ctx, ps->doc_name, hooks);
+#ifdef HAVE_WASM_ENGINE
+    else if (getenv("TEXPRESSO_WASM"))
+    {
+      fprintf(stderr, "[info] using in-process wasm engine\n");
+      ui->eng = txp_create_wasm_engine(ps->ctx, ps->doc_name, hooks);
+    }
+#endif
     else
       ui->eng = txp_create_tex_engine(ps->ctx, engine_path, using_texlive,
                                       ps->stream_mode, ps->inclusion_path,
