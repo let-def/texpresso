@@ -189,6 +189,13 @@ glyphs into the XDV. Run with `ICU_DATA=<dir with icudt78l.dat>`.
   (target set after the Phase 0 measurement).
 
 ## 9. Open questions
+- **Perf (measured):** wasm2c pdftex vs native pdftex (TL2025), 2,000,000-iter
+  compute-bound doc (box build + arithmetic + macro expansion): ~4.49 s vs
+  ~3.37 s → **~1.33× overhead** (~1.35–1.4× pure compute). wasm2c startup is
+  *lower* (47 ms vs 154 ms — skips kpathsea/texmf init). Conclusion: **wasm-only
+  is viable** — 1.3× compute, and COW snapshots mean only the post-edit delta
+  re-runs per keystroke. Hybrid (fork on Unix) not required for perf. Re-measure
+  on real docs after VFS wiring.
 - mprotect COW is in (18/1084 pages dirtied for a full typeset). Remaining: the
   engine stack is still full-copy — track its used extent (via saved SP) if the
   32 MiB copy shows up in per-keystroke latency.
@@ -197,3 +204,5 @@ glyphs into the XDV. Run with `ICU_DATA=<dir with icudt78l.dat>`.
   (the proof defers closes + resets positions; texpresso's VFS owns this).
 - luatex build complexity under emscripten (heaviest engine).
 - Do we keep the fork engine long-term (Unix speed) or unify on wasm-COW?
+  (Perf answer above suggests wasm-only is acceptable; decide after VFS wiring +
+  a real-doc re-measure.)
