@@ -64,6 +64,11 @@ static int g_yield_next_read; /* request: suspend on the next fd_read */
 static int g_suspended;     /* engine is currently suspended in fd_read */
 static unsigned long long g_run_hash = 1469598103934665603ull; /* FNV-1a */
 static int g_trace; /* TEXPRESSO_TRACE: log openat/mmap for debugging */
+/* Virtualized clock: a fixed epoch (seconds), constant for the whole process so
+ * snapshot/replay is deterministic. From $SOURCE_DATE_EPOCH, else read once at
+ * startup. All time sources below derive from it; the engine reads it once and
+ * the value is captured in snapshots. */
+static long long g_epoch;
 static int g_defer_close; /* snapshot test: keep fds open so rollback can reset
                              their positions instead of them being closed */
 
@@ -236,11 +241,10 @@ u32 w2c_wasi__snapshot__preview1_clock_time_get(
     u32 time_ptr) {
   w2c_engine *m = w->mod;
   (void)precision;
-  struct timespec ts;
-  clockid_t c = (clock_id == WASI_CLOCK_MONOTONIC) ? CLOCK_MONOTONIC
-                                                   : CLOCK_REALTIME;
-  if (clock_gettime(c, &ts) != 0) return WASI_EINVAL;
-  uint64_t ns = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+  /* Virtualized: realtime -> fixed epoch; monotonic -> 0 (deterministic). */
+  uint64_t ns = (clock_id == WASI_CLOCK_MONOTONIC)
+                    ? 0ull
+                    : (uint64_t)g_epoch * 1000000000ull;
   wr_u64(m, time_ptr, ns);
   return WASI_ESUCCESS;
 }
@@ -624,16 +628,12 @@ void w2c_env_0x5F_assert_fail(struct w2c_env *e, u32 cond, u32 file, u32 line,
 
 f64 w2c_env_emscripten_date_now(struct w2c_env *e) {
   (void)e;
-  struct timespec ts;
-  clock_gettime(CLOCK_REALTIME, &ts);
-  return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+  return (double)g_epoch * 1000.0; /* virtualized wall clock (fixed) */
 }
 
 f64 w2c_env_emscripten_get_now(struct w2c_env *e) {
   (void)e;
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+  return 0.0; /* virtualized monotonic clock (deterministic) */
 }
 
 /* Grow the linear memory to at least `requested` bytes. */
@@ -783,6 +783,8 @@ int main(int argc, char **argv) {
   g_argc = argc;
   g_argv = argv;
   g_trace = getenv("TEXPRESSO_TRACE") != NULL;
+  const char *sde = getenv("SOURCE_DATE_EPOCH");
+  g_epoch = sde ? atoll(sde) : (long long)time(NULL); /* fixed for the process */
 
   wasm_rt_init();
 
