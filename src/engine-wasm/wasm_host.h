@@ -38,4 +38,31 @@ typedef struct wasm_io_ops {
 /* Install the I/O backend. If never called, the host uses native POSIX. */
 void wasm_host_set_io(const wasm_io_ops *ops, void *ctx);
 
+/* ---- engine lifecycle (single in-process instance) ----
+ * Used by the standalone binaries and by texpresso's engine_wasm backend.
+ * The engine runs on a dedicated ucontext stack so its execution state can be
+ * snapshotted (linear memory via mprotect-COW + the stack + registers). */
+
+/* Instantiate the module, run ctors, place argv in wasm memory, set up the
+ * coroutine. Returns 0 on success. Call wasm_host_set_io() first if you want a
+ * non-native filesystem. */
+int wasm_engine_init(int argc, char **argv);
+void wasm_engine_shutdown(void);
+
+/* Resume the engine until it suspends (yield point) or exits.
+ * Returns 1 if it suspended and can be resumed, 0 if it exited. */
+int wasm_engine_run(void);
+int wasm_engine_exited(void); /* nonzero once the engine has returned/exited */
+
+/* Request that the engine suspend on its next input read (a snapshot point). */
+void wasm_engine_request_yield(void);
+
+/* Single copy-on-write snapshot of the whole execution state, and restore. */
+void wasm_engine_snapshot(void);
+void wasm_engine_restore(void);
+
+/* Keep fds open across close() until the next restore (so a rollback can reset
+ * their positions rather than them being gone). */
+void wasm_engine_defer_close(int on);
+
 #endif /* TEXPRESSO_WASM_HOST_H */

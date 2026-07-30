@@ -57,6 +57,9 @@ static char **g_argv;
 static ucontext_t g_host_ctx;   /* where the engine yields back to */
 static ucontext_t g_engine_ctx; /* the engine's suspended state */
 static void *g_engine_stack;
+static w2c_engine g_module; /* the single engine instance */
+static struct w2c_env g_env;
+static struct w2c_wasi__snapshot__preview1 g_wasi;
 static w2c_engine *g_mod;
 static uint32_t g_entry_argv;
 static int g_entry_argc;
@@ -138,6 +141,7 @@ void wasm_host_set_io(const wasm_io_ops *ops, void *ctx) {
   g_io_ctx = ctx;
 }
 
+#ifndef WASM_HOST_NO_MAIN /* standalone-only test harness (memfs + main) */
 /* ---- in-memory io backend (TEXPRESSO_MEMFS test) ------------------------
  * Proves the io_ops seam fully replaces the native FS — exactly what the
  * texpresso state.c backend will do. Opened files (fd>=3) are served from
@@ -295,6 +299,7 @@ static void memfs_dump(memfs_t *fs) {
             fs->f[i].len, out);
   }
 }
+#endif /* WASM_HOST_NO_MAIN */
 
 /* ------------------------- WASI imports ------------------------- */
 
@@ -929,13 +934,17 @@ static void cow_install_handler(void) {
   sigaction(SIGBUS, &sa, NULL); /* macOS raises SIGBUS on protected writes */
 }
 
-static void snapshot_take(w2c_engine *m) {
+static void snapshot_take(void) {
+  w2c_engine *m = g_mod;
   cow_install_handler();
   g_snap_meminfo = m->w2c_memory;
   g_snap_stack = malloc(ENGINE_STACK_SIZE);
   memcpy(g_snap_stack, g_engine_stack, ENGINE_STACK_SIZE);
   g_snap_ctx = g_engine_ctx;
-  for (int fd = 0; fd < 64; fd++) g_snap_fdpos[fd] = lseek(fd, 0, SEEK_CUR);
+  /* fd positions via the io backend (native fds for standalone; texpresso's
+   * log owns positions for the state.c backend, whose lseek is harmless here). */
+  for (int fd = 0; fd < 64; fd++)
+    g_snap_fdpos[fd] = g_io->lseek(g_io_ctx, fd, 0, SEEK_CUR);
 
   g_cow_base = m->w2c_memory.data;
   g_cow_size = m->w2c_memory.size; /* multiple of the 64K wasm page */
@@ -946,7 +955,8 @@ static void snapshot_take(w2c_engine *m) {
   g_cow_active = 1;
 }
 
-static void snapshot_restore(w2c_engine *m) {
+static void snapshot_restore(void) {
+  w2c_engine *m = g_mod;
   g_cow_active = 0;
   mprotect(g_cow_base, g_cow_size, PROT_READ | PROT_WRITE);
   uint64_t npages = g_cow_size / (uint64_t)g_pg;
@@ -962,107 +972,124 @@ static void snapshot_restore(w2c_engine *m) {
   memcpy(g_engine_stack, g_snap_stack, ENGINE_STACK_SIZE);
   g_engine_ctx = g_snap_ctx;
   for (int fd = 0; fd < 64; fd++)
-    if (g_snap_fdpos[fd] != (off_t)-1) lseek(fd, g_snap_fdpos[fd], SEEK_SET);
+    if (g_snap_fdpos[fd] != (off_t)-1)
+      g_io->lseek(g_io_ctx, fd, g_snap_fdpos[fd], SEEK_SET);
 
   free(g_cow_shadow); g_cow_shadow = NULL;
   free(g_cow_saved); g_cow_saved = NULL;
   free(g_snap_stack); g_snap_stack = NULL;
 }
 
-/* ------------------------------ main ------------------------------ */
-
-int main(int argc, char **argv) {
+/* ---- engine lifecycle API (see wasm_host.h) ---- */
+int wasm_engine_init(int argc, char **argv) {
   g_argc = argc;
   g_argv = argv;
   g_trace = getenv("TEXPRESSO_TRACE") != NULL;
   const char *sde = getenv("SOURCE_DATE_EPOCH");
-  g_epoch = sde ? atoll(sde) : (long long)time(NULL); /* fixed for the process */
+  g_epoch = sde ? atoll(sde) : (long long)time(NULL);
+
+  wasm_rt_init();
+  g_env.mod = &g_module;
+  g_wasi.mod = &g_module;
+  wasm2c_engine_instantiate(&g_module, &g_env, &g_wasi);
+  w2c_engine_0x5F_wasm_call_ctors(&g_module);
+
+  /* argv[] in wasm memory: argc+1 pointers (NULL-terminated) then the strings */
+  uint32_t ptrbytes = (uint32_t)(argc + 1) * 4;
+  uint32_t strbytes = 0;
+  for (int i = 0; i < argc; i++) strbytes += (uint32_t)strlen(argv[i]) + 1;
+  uint32_t total = (ptrbytes + strbytes + 15u) & ~15u;
+  uint32_t base = w2c_engine_0x5Femscripten_stack_alloc(&g_module, total);
+  uint32_t sp = base + ptrbytes;
+  for (int i = 0; i < argc; i++) {
+    uint32_t len = (uint32_t)strlen(argv[i]) + 1;
+    memcpy(mem_base(&g_module) + sp, argv[i], len);
+    wr_u32(&g_module, base + (uint32_t)i * 4, sp);
+    sp += len;
+  }
+  wr_u32(&g_module, base + (uint32_t)argc * 4, 0);
+
+  g_mod = &g_module;
+  g_entry_argc = argc;
+  g_entry_argv = base;
+  g_engine_stack = mmap(NULL, ENGINE_STACK_SIZE, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (g_engine_stack == MAP_FAILED) { perror("mmap engine stack"); return -1; }
+  getcontext(&g_engine_ctx);
+  g_engine_ctx.uc_stack.ss_sp = g_engine_stack;
+  g_engine_ctx.uc_stack.ss_size = ENGINE_STACK_SIZE;
+  g_engine_ctx.uc_link = &g_host_ctx;
+  makecontext(&g_engine_ctx, engine_trampoline, 0);
+  return 0;
+}
+
+int wasm_engine_run(void) {
+  swapcontext(&g_host_ctx, &g_engine_ctx);
+  return g_engine_done ? 0 : 1;
+}
+int wasm_engine_exited(void) { return g_engine_done; }
+void wasm_engine_request_yield(void) { g_yield_next_read = 1; }
+void wasm_engine_snapshot(void) { snapshot_take(); }
+void wasm_engine_restore(void) {
+  snapshot_restore();
+  g_engine_done = 0;
+}
+void wasm_engine_defer_close(int on) { g_defer_close = on; }
+void wasm_engine_shutdown(void) {
+  wasm2c_engine_free(&g_module);
+  wasm_rt_free();
+  if (g_engine_stack && g_engine_stack != MAP_FAILED) {
+    munmap(g_engine_stack, ENGINE_STACK_SIZE);
+    g_engine_stack = NULL;
+  }
+}
+
+/* ------------------------------ main (standalone) ------------------------ */
+#ifndef WASM_HOST_NO_MAIN
+
+int main(int argc, char **argv) {
   memfs_t *memfs = NULL;
   if (getenv("TEXPRESSO_MEMFS")) {
     memfs = calloc(1, sizeof *memfs);
     wasm_host_set_io(&mem_io_ops, memfs); /* serve everything from memory */
   }
 
-  wasm_rt_init();
-
-  w2c_engine mod;
-  struct w2c_env env;
-  struct w2c_wasi__snapshot__preview1 wasi;
-  env.mod = &mod;
-  wasi.mod = &mod;
-
-  wasm2c_engine_instantiate(&mod, &env, &wasi);
-  w2c_engine_0x5F_wasm_call_ctors(&mod); /* run static constructors first */
-
-  /* Build argv[] inside wasm memory and call __main_argc_argv.
-   * Layout: argc+1 pointers (NULL-terminated) followed by the strings. */
-  uint32_t ptrbytes = (uint32_t)(argc + 1) * 4;
-  uint32_t strbytes = 0;
-  for (int i = 0; i < argc; i++) strbytes += (uint32_t)strlen(argv[i]) + 1;
-  uint32_t total = (ptrbytes + strbytes + 15u) & ~15u;
-  uint32_t base = w2c_engine_0x5Femscripten_stack_alloc(&mod, total);
-  uint32_t sp = base + ptrbytes;
-  for (int i = 0; i < argc; i++) {
-    uint32_t len = (uint32_t)strlen(argv[i]) + 1;
-    memcpy(mem_base(&mod) + sp, argv[i], len);
-    wr_u32(&mod, base + (uint32_t)i * 4, sp);
-    sp += len;
-  }
-  wr_u32(&mod, base + (uint32_t)argc * 4, 0); /* argv[argc] = NULL */
-
-  /* Run the engine on a dedicated fixed-address stack so its execution state
-   * (call stack) lives in a region we can snapshot. */
-  g_mod = &mod;
-  g_entry_argc = argc;
-  g_entry_argv = base;
-  g_engine_stack = mmap(NULL, ENGINE_STACK_SIZE, PROT_READ | PROT_WRITE,
-                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (g_engine_stack == MAP_FAILED) { perror("mmap engine stack"); return 1; }
-
-  getcontext(&g_engine_ctx);
-  g_engine_ctx.uc_stack.ss_sp = g_engine_stack;
-  g_engine_ctx.uc_stack.ss_size = ENGINE_STACK_SIZE;
-  g_engine_ctx.uc_link = &g_host_ctx;
-  makecontext(&g_engine_ctx, engine_trampoline, 0);
+  if (wasm_engine_init(argc, argv) != 0) return 1;
 
   int snap_test = getenv("TEXPRESSO_SNAPSHOT_TEST") != NULL;
-  /* Both tests suspend on the first read; the snapshot test rolls back there. */
-  if (snap_test || getenv("TEXPRESSO_SUSPEND_TEST")) g_yield_next_read = 1;
+  if (snap_test || getenv("TEXPRESSO_SUSPEND_TEST")) wasm_engine_request_yield();
 
-  swapcontext(&g_host_ctx, &g_engine_ctx); /* run until first yield or done */
+  int suspended = wasm_engine_run(); /* run until first yield or done */
 
-  if (g_suspended && snap_test) {
-    g_defer_close = 1;
-    snapshot_take(&mod);
+  if (suspended && snap_test) {
+    wasm_engine_defer_close(1);
+    wasm_engine_snapshot();
     g_run_hash = FNV_INIT;
-    swapcontext(&g_host_ctx, &g_engine_ctx); /* run A -> completion */
+    wasm_engine_run(); /* run A -> completion */
     unsigned long long hashA = g_run_hash;
     fprintf(stderr,
             "[host] run A done=%d out-hash=%016llx (COW: %d/%llu pages dirtied)\n",
-            g_engine_done, hashA, (int)g_cow_dirty,
+            wasm_engine_exited(), hashA, (int)g_cow_dirty,
             (unsigned long long)(g_cow_size / (uint64_t)g_pg));
 
-    snapshot_restore(&mod);
+    wasm_engine_restore();
     g_run_hash = FNV_INIT;
-    g_engine_done = 0;
-    swapcontext(&g_host_ctx, &g_engine_ctx); /* run B from the snapshot */
+    wasm_engine_run(); /* run B from the snapshot */
     unsigned long long hashB = g_run_hash;
-    fprintf(stderr, "[host] run B done=%d out-hash=%016llx\n", g_engine_done,
-            hashB);
-
+    fprintf(stderr, "[host] run B done=%d out-hash=%016llx\n",
+            wasm_engine_exited(), hashB);
     fprintf(stderr, "[host] SNAPSHOT ROLLBACK %s (A=%016llx B=%016llx)\n",
             hashA == hashB ? "PASS" : "FAIL", hashA, hashB);
-  } else if (g_suspended) {
+  } else if (suspended) {
     fprintf(stderr, "[host] engine suspended in fd_read; resuming\n");
-    swapcontext(&g_host_ctx, &g_engine_ctx); /* resume to completion */
-    fprintf(stderr, "[host] engine done=%d\n", g_engine_done);
+    wasm_engine_run(); /* resume to completion */
+    fprintf(stderr, "[host] engine done=%d\n", wasm_engine_exited());
   } else {
-    fprintf(stderr, "[host] engine done=%d\n", g_engine_done);
+    fprintf(stderr, "[host] engine done=%d\n", wasm_engine_exited());
   }
 
   if (memfs) memfs_dump(memfs); /* prove output was captured in memory */
-
-  wasm2c_engine_free(&mod);
-  wasm_rt_free();
+  wasm_engine_shutdown();
   return 0;
 }
+#endif /* WASM_HOST_NO_MAIN */
