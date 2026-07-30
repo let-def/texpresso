@@ -37,6 +37,7 @@
 
 #include "wasm-rt.h"
 #include "engine.h" /* wasm2c-generated header */
+#include "wasm_host.h"
 
 /* Import module structs: hold a back-pointer to the instance so imports can
  * reach its linear memory. */
@@ -112,6 +113,31 @@ static void wr_u64(w2c_engine *m, uint32_t addr, uint64_t v) {
 #define WASI_CLOCK_REALTIME 0
 #define WASI_CLOCK_MONOTONIC 1
 
+/* ---- I/O backend (see wasm_host.h) ---- */
+static int n_openat(void *c, int d, const char *p, int fl, mode_t m) {
+  (void)c; return openat(d, p, fl, m);
+}
+static ssize_t n_read(void *c, int fd, void *b, size_t n) { (void)c; return read(fd, b, n); }
+static ssize_t n_write(void *c, int fd, const void *b, size_t n) { (void)c; return write(fd, b, n); }
+static off_t n_lseek(void *c, int fd, off_t o, int w) { (void)c; return lseek(fd, o, w); }
+static int n_close(void *c, int fd) { (void)c; return close(fd); }
+static int n_fstat(void *c, int fd, struct stat *s) { (void)c; return fstat(fd, s); }
+static int n_statat(void *c, int d, const char *p, struct stat *s, int fl) {
+  (void)c; return fstatat(d, p, s, fl);
+}
+static int n_accessat(void *c, int d, const char *p, int a, int fl) {
+  (void)c; return faccessat(d, p, a, fl);
+}
+static const wasm_io_ops native_io_ops = {
+    n_openat, n_read, n_write, n_lseek, n_close, n_fstat, n_statat, n_accessat};
+
+static const wasm_io_ops *g_io = &native_io_ops;
+static void *g_io_ctx;
+void wasm_host_set_io(const wasm_io_ops *ops, void *ctx) {
+  g_io = ops;
+  g_io_ctx = ctx;
+}
+
 /* ------------------------- WASI imports ------------------------- */
 
 /* iovec in wasm memory: { u32 buf; u32 buf_len } */
@@ -131,7 +157,7 @@ u32 w2c_wasi__snapshot__preview1_fd_read(struct w2c_wasi__snapshot__preview1 *w,
     uint32_t base = rd_u32(m, iovs + i * 8);
     uint32_t len = rd_u32(m, iovs + i * 8 + 4);
     if (!mem_ok(m, base, len)) return WASI_EINVAL;
-    ssize_t n = read((int)fd, mem_base(m) + base, len);
+    ssize_t n = g_io->read(g_io_ctx, (int)fd, mem_base(m) + base, len);
     if (n < 0) return WASI_EIO;
     total += (uint32_t)n;
     if ((uint32_t)n < len) break; /* short read: stop */
@@ -155,7 +181,7 @@ u32 w2c_wasi__snapshot__preview1_fd_write(struct w2c_wasi__snapshot__preview1 *w
       g_run_hash ^= p[k];
       g_run_hash *= 0x100000001b3ull;
     }
-    ssize_t n = write((int)fd, p, len);
+    ssize_t n = g_io->write(g_io_ctx, (int)fd, p, len);
     if (n < 0) return WASI_EIO;
     total += (uint32_t)n;
     if ((uint32_t)n < len) break;
@@ -169,7 +195,7 @@ u32 w2c_wasi__snapshot__preview1_fd_seek(struct w2c_wasi__snapshot__preview1 *w,
                                          u32 newoff_ptr) {
   w2c_engine *m = w->mod;
   /* WASI whence: 0=SET,1=CUR,2=END — matches POSIX SEEK_* values. */
-  off_t r = lseek((int)fd, (off_t)offset, (int)whence);
+  off_t r = g_io->lseek(g_io_ctx, (int)fd, (off_t)offset, (int)whence);
   if (r < 0) return WASI_EBADF;
   wr_u64(m, newoff_ptr, (uint64_t)r);
   return WASI_ESUCCESS;
@@ -179,7 +205,7 @@ u32 w2c_wasi__snapshot__preview1_fd_close(struct w2c_wasi__snapshot__preview1 *w
                                           u32 fd) {
   (void)w;
   if (g_defer_close) return WASI_ESUCCESS; /* rollback needs the fd alive */
-  return close((int)fd) < 0 ? WASI_EBADF : WASI_ESUCCESS;
+  return g_io->close(g_io_ctx, (int)fd) < 0 ? WASI_EBADF : WASI_ESUCCESS;
 }
 
 u32 w2c_wasi__snapshot__preview1_args_sizes_get(
@@ -312,7 +338,7 @@ u32 w2c_env_0x5F_syscall_dup3(struct w2c_env *e, u32 oldfd, u32 newfd, u32 flags
 u32 w2c_env_0x5F_syscall_fstat64(struct w2c_env *e, u32 fd, u32 buf) {
   w2c_engine *m = e->mod;
   struct stat st;
-  if (fstat((int)fd, &st) < 0) return neg_errno(errno);
+  if (g_io->fstat(g_io_ctx, (int)fd, &st) < 0) return neg_errno(errno);
   write_estat(m, buf, &st);
   return 0;
 }
@@ -405,7 +431,7 @@ u32 w2c_env_0x5F_syscall_faccessat(struct w2c_env *e, u32 dirfd, u32 path,
                                    u32 amode, u32 flags) {
   w2c_engine *m = e->mod;
   const char *p = (const char *)mem_base(m) + path;
-  int r = faccessat(xlate_dirfd(dirfd), p, (int)amode, (int)flags);
+  int r = g_io->accessat(g_io_ctx, xlate_dirfd(dirfd), p, (int)amode, (int)flags);
   return r < 0 ? neg_errno(errno) : 0;
 }
 
@@ -523,7 +549,7 @@ u32 w2c_env_0x5F_syscall_openat(struct w2c_env *e, u32 dirfd, u32 path,
   const char *p = (const char *)mem_base(m) + path;
   mode_t cmode = 0;
   if ((flags & L_O_CREAT) && mem_ok(m, varargs, 4)) cmode = (mode_t)rd_u32(m, varargs);
-  int r = openat(xlate_dirfd(dirfd), p, xlate_open_flags(flags), cmode);
+  int r = g_io->openat(g_io_ctx, xlate_dirfd(dirfd), p, xlate_open_flags(flags), cmode);
   if (g_trace) fprintf(stderr, "[openat] '%s' flags=%#x -> %d (%s)\n", p, flags, r,
                        r < 0 ? strerror(errno) : "ok");
   return r < 0 ? neg_errno(errno) : (uint32_t)r;
@@ -532,7 +558,8 @@ u32 w2c_env_0x5F_syscall_openat(struct w2c_env *e, u32 dirfd, u32 path,
 u32 w2c_env_0x5F_syscall_stat64(struct w2c_env *e, u32 path, u32 buf) {
   w2c_engine *m = e->mod;
   struct stat s;
-  if (stat((const char *)mem_base(m) + path, &s) < 0) return neg_errno(errno);
+  if (g_io->statat(g_io_ctx, AT_FDCWD, (const char *)mem_base(m) + path, &s, 0) < 0)
+    return neg_errno(errno);
   write_estat(m, buf, &s);
   return 0;
 }
@@ -540,7 +567,9 @@ u32 w2c_env_0x5F_syscall_stat64(struct w2c_env *e, u32 path, u32 buf) {
 u32 w2c_env_0x5F_syscall_lstat64(struct w2c_env *e, u32 path, u32 buf) {
   w2c_engine *m = e->mod;
   struct stat s;
-  if (lstat((const char *)mem_base(m) + path, &s) < 0) return neg_errno(errno);
+  if (g_io->statat(g_io_ctx, AT_FDCWD, (const char *)mem_base(m) + path, &s,
+                   AT_SYMLINK_NOFOLLOW) < 0)
+    return neg_errno(errno);
   write_estat(m, buf, &s);
   return 0;
 }
@@ -552,7 +581,8 @@ u32 w2c_env_0x5F_syscall_newfstatat(struct w2c_env *e, u32 dirfd, u32 path,
   if (flags & 0x100 /* AT_SYMLINK_NOFOLLOW (Linux) */) hf |= AT_SYMLINK_NOFOLLOW;
   if (flags & 0x1000 /* AT_EMPTY_PATH */) hf |= AT_SYMLINK_NOFOLLOW; /* best effort */
   struct stat s;
-  if (fstatat(xlate_dirfd(dirfd), (const char *)mem_base(m) + path, &s, hf) < 0)
+  if (g_io->statat(g_io_ctx, xlate_dirfd(dirfd), (const char *)mem_base(m) + path,
+                   &s, hf) < 0)
     return neg_errno(errno);
   write_estat(m, buf, &s);
   return 0;
