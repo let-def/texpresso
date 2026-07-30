@@ -1237,7 +1237,7 @@ bool texpresso_main(struct persistent_state *ps)
     else if (getenv("TEXPRESSO_WASM"))
     {
       fprintf(stderr, "[info] using in-process wasm engine\n");
-      ui->eng = txp_create_wasm_engine(ps->ctx, ps->doc_name, hooks);
+      ui->eng = txp_create_wasm_engine(ps->ctx, engine_path, ps->doc_name, hooks);
     }
 #endif
     else

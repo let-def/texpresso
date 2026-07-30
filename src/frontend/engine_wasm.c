@@ -38,6 +38,7 @@ struct wasm_engine
   struct txp_engine_class *_class;
 
   char *name;
+  char *prog;
   int argc;
   char *argv[8];
 
@@ -446,18 +447,32 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
   filesystem_free(ctx, self->fs);
   log_free(ctx, self->log);
   fz_free(ctx, self->name);
+  fz_free(ctx, self->prog);
   fz_free(ctx, self);
 }
 
-txp_engine *txp_create_wasm_engine(fz_context *ctx, const char *tex_name,
-                                   dvi_reshooks hooks)
+txp_engine *txp_create_wasm_engine(fz_context *ctx, const char *engine_path,
+                                   const char *tex_name, dvi_reshooks hooks)
 {
   struct wasm_engine *self = fz_malloc_struct(ctx, struct wasm_engine);
   self->_class = &_class;
-  self->name = fz_strdup(ctx, tex_name);
+  /* Give the main file an explicit "./" so the engine's kpathsea opens it
+   * directly (a bare relative name isn't found without a texmf.cnf "." path). */
+  if (tex_name[0] != '/' && !(tex_name[0] == '.' && tex_name[1] == '/'))
+  {
+    self->name = fz_malloc(ctx, strlen(tex_name) + 3);
+    self->name[0] = '.'; self->name[1] = '/'; strcpy(self->name + 2, tex_name);
+  }
+  else
+    self->name = fz_strdup(ctx, tex_name);
+  /* argv[0] must be a real, existing path: kpathsea lstat()s it to find its
+   * SELFAUTOLOC (the engine has no real binary, so borrow the host's path). */
+  self->prog = fz_strdup(ctx, engine_path);
 
   int a = 0;
-  self->argv[a++] = "texengine";
+  self->argv[a++] = self->prog;
+  self->argv[a++] = "-ini";    /* build from primitives; no preloaded .fmt */
+  self->argv[a++] = "-no-pdf"; /* xetex: emit XDV for incdvi (not PDF) */
   self->argv[a++] = "-interaction=nonstopmode";
   self->argv[a++] = self->name;
   self->argv[a] = NULL;
