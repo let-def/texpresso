@@ -981,6 +981,7 @@ static void snapshot_restore(void) {
 }
 
 /* ---- engine lifecycle API (see wasm_host.h) ---- */
+static int g_rt_inited;
 int wasm_engine_init(int argc, char **argv) {
   g_argc = argc;
   g_argv = argv;
@@ -988,7 +989,11 @@ int wasm_engine_init(int argc, char **argv) {
   const char *sde = getenv("SOURCE_DATE_EPOCH");
   g_epoch = sde ? atoll(sde) : (long long)time(NULL);
 
-  wasm_rt_init();
+  if (g_mod) wasm2c_engine_free(&g_module); /* re-init: drop the old instance */
+  g_engine_done = 0;
+  g_suspended = 0;
+  g_yield_next_read = 0;
+  if (!g_rt_inited) { wasm_rt_init(); g_rt_inited = 1; }
   g_env.mod = &g_module;
   g_wasi.mod = &g_module;
   wasm2c_engine_instantiate(&g_module, &g_env, &g_wasi);
@@ -1012,9 +1017,11 @@ int wasm_engine_init(int argc, char **argv) {
   g_mod = &g_module;
   g_entry_argc = argc;
   g_entry_argv = base;
-  g_engine_stack = mmap(NULL, ENGINE_STACK_SIZE, PROT_READ | PROT_WRITE,
-                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (g_engine_stack == MAP_FAILED) { perror("mmap engine stack"); return -1; }
+  if (!g_engine_stack || g_engine_stack == MAP_FAILED) {
+    g_engine_stack = mmap(NULL, ENGINE_STACK_SIZE, PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (g_engine_stack == MAP_FAILED) { perror("mmap engine stack"); return -1; }
+  }
   getcontext(&g_engine_ctx);
   g_engine_ctx.uc_stack.ss_sp = g_engine_stack;
   g_engine_ctx.uc_stack.ss_size = ENGINE_STACK_SIZE;

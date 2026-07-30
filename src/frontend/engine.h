@@ -47,6 +47,9 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
 
 txp_engine *txp_create_pdf_engine(fz_context *ctx, const char *pdf_path);
 
+txp_engine *txp_create_wasm_engine(fz_context *ctx, const char *tex_name,
+                                   dvi_reshooks hooks);
+
 txp_engine *txp_create_dvi_engine(fz_context *ctx,
                                   const char *dvi_path,
                                   dvi_reshooks hooks);
