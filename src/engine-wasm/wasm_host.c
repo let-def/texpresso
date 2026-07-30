@@ -138,6 +138,164 @@ void wasm_host_set_io(const wasm_io_ops *ops, void *ctx) {
   g_io_ctx = ctx;
 }
 
+/* ---- in-memory io backend (TEXPRESSO_MEMFS test) ------------------------
+ * Proves the io_ops seam fully replaces the native FS — exactly what the
+ * texpresso state.c backend will do. Opened files (fd>=3) are served from
+ * memory: input files are lazily read from disk once, then all reads come from
+ * the buffer; writes are captured to memory and NEVER hit disk. fds 0/1/2 pass
+ * through to native so engine messages still appear. */
+typedef struct {
+  char *path;
+  uint8_t *data;
+  size_t len, cap;
+  int output; /* was written to (captured, not on disk) */
+} memfile;
+typedef struct {
+  memfile f[512];
+  int nf;
+  struct { int fi, open; size_t pos; } fd[512];
+} memfs_t;
+
+static memfile *memfs_find(memfs_t *fs, const char *path) {
+  for (int i = 0; i < fs->nf; i++)
+    if (strcmp(fs->f[i].path, path) == 0) return &fs->f[i];
+  return NULL;
+}
+static memfile *memfs_load(memfs_t *fs, const char *path, int for_write) {
+  memfile *mf = memfs_find(fs, path);
+  if (mf) return mf;
+  if (fs->nf >= 512) return NULL;
+  mf = &fs->f[fs->nf];
+  memset(mf, 0, sizeof *mf);
+  mf->path = strdup(path);
+  if (!for_write) { /* lazily read the disk file into memory */
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return NULL;
+    fseek(fp, 0, SEEK_END);
+    long n = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    mf->cap = n > 0 ? (size_t)n : 1;
+    mf->data = malloc(mf->cap);
+    mf->len = fread(mf->data, 1, n > 0 ? (size_t)n : 0, fp);
+    fclose(fp);
+  } else {
+    mf->output = 1;
+  }
+  fs->nf++;
+  return mf;
+}
+static int mem_openat(void *c, int d, const char *p, int fl, mode_t m) {
+  (void)d; (void)m;
+  memfs_t *fs = c;
+  int wr = (fl & (O_WRONLY | O_RDWR | O_CREAT)) != 0;
+  memfile *mf = memfs_find(fs, p);
+  if (!mf) mf = memfs_load(fs, p, wr);
+  if (!mf) { errno = ENOENT; return -1; }
+  if (fl & O_TRUNC) { mf->len = 0; mf->output = 1; }
+  for (int fd = 3; fd < 512; fd++)
+    if (!fs->fd[fd].open) {
+      fs->fd[fd].open = 1;
+      fs->fd[fd].fi = (int)(mf - fs->f);
+      fs->fd[fd].pos = 0;
+      return fd;
+    }
+  errno = EMFILE;
+  return -1;
+}
+static ssize_t mem_read(void *c, int fd, void *buf, size_t n) {
+  memfs_t *fs = c;
+  if (fd < 3) return read(fd, buf, n);
+  if (fd >= 512 || !fs->fd[fd].open) { errno = EBADF; return -1; }
+  memfile *mf = &fs->f[fs->fd[fd].fi];
+  size_t pos = fs->fd[fd].pos;
+  if (pos > mf->len) pos = mf->len;
+  size_t k = mf->len - pos;
+  if (k > n) k = n;
+  memcpy(buf, mf->data + pos, k);
+  fs->fd[fd].pos = pos + k;
+  return (ssize_t)k;
+}
+static ssize_t mem_write(void *c, int fd, const void *buf, size_t n) {
+  memfs_t *fs = c;
+  if (fd < 3) return write(fd, buf, n);
+  if (fd >= 512 || !fs->fd[fd].open) { errno = EBADF; return -1; }
+  memfile *mf = &fs->f[fs->fd[fd].fi];
+  size_t pos = fs->fd[fd].pos;
+  if (pos + n > mf->cap) {
+    size_t nc = (pos + n) * 2 + 64;
+    mf->data = realloc(mf->data, nc);
+    mf->cap = nc;
+  }
+  memcpy(mf->data + pos, buf, n);
+  if (pos + n > mf->len) mf->len = pos + n;
+  fs->fd[fd].pos = pos + n;
+  mf->output = 1;
+  return (ssize_t)n;
+}
+static off_t mem_lseek(void *c, int fd, off_t off, int w) {
+  memfs_t *fs = c;
+  if (fd < 3) return lseek(fd, off, w);
+  if (fd >= 512 || !fs->fd[fd].open) { errno = EBADF; return -1; }
+  memfile *mf = &fs->f[fs->fd[fd].fi];
+  off_t base = (w == SEEK_SET) ? 0 : (w == SEEK_CUR) ? (off_t)fs->fd[fd].pos
+                                                     : (off_t)mf->len;
+  off_t np = base + off;
+  if (np < 0) { errno = EINVAL; return -1; }
+  fs->fd[fd].pos = (size_t)np;
+  return np;
+}
+static int mem_close(void *c, int fd) {
+  memfs_t *fs = c;
+  if (fd < 3) return close(fd);
+  if (fd < 512) fs->fd[fd].open = 0;
+  return 0;
+}
+static void memfs_fill_stat(memfile *mf, struct stat *s) {
+  memset(s, 0, sizeof *s);
+  s->st_mode = S_IFREG | 0644;
+  s->st_nlink = 1;
+  s->st_size = (off_t)mf->len;
+  s->st_blksize = 4096;
+  s->st_blocks = (mf->len + 511) / 512;
+}
+static int mem_fstat(void *c, int fd, struct stat *s) {
+  memfs_t *fs = c;
+  if (fd < 3) return fstat(fd, s);
+  if (fd >= 512 || !fs->fd[fd].open) { errno = EBADF; return -1; }
+  memfs_fill_stat(&fs->f[fs->fd[fd].fi], s);
+  return 0;
+}
+static int mem_statat(void *c, int d, const char *p, struct stat *s, int fl) {
+  memfs_t *fs = c;
+  memfile *mf = memfs_find(fs, p);
+  if (mf) { memfs_fill_stat(mf, s); return 0; }
+  return fstatat(d, p, s, fl); /* existence probe (read-only) hits disk */
+}
+static int mem_accessat(void *c, int d, const char *p, int a, int fl) {
+  memfs_t *fs = c;
+  if (memfs_find(fs, p)) return 0;
+  return faccessat(d, p, a, fl);
+}
+static const wasm_io_ops mem_io_ops = {mem_openat, mem_read,   mem_write,
+                                       mem_lseek,  mem_close,  mem_fstat,
+                                       mem_statat, mem_accessat};
+
+/* Write captured (in-memory) outputs to <path>.memout for verification. */
+static void memfs_dump(memfs_t *fs) {
+  for (int i = 0; i < fs->nf; i++) {
+    if (!fs->f[i].output) continue;
+    char out[2048];
+    snprintf(out, sizeof out, "%s.memout", fs->f[i].path);
+    FILE *fp = fopen(out, "wb");
+    if (fp) {
+      fwrite(fs->f[i].data, 1, fs->f[i].len, fp);
+      fclose(fp);
+    }
+    fprintf(stderr, "[memfs] captured %s (%zu bytes) -> %s\n", fs->f[i].path,
+            fs->f[i].len, out);
+  }
+}
+
 /* ------------------------- WASI imports ------------------------- */
 
 /* iovec in wasm memory: { u32 buf; u32 buf_len } */
@@ -697,7 +855,11 @@ u32 w2c_env_0x5Fmmap_js(struct w2c_env *e, u32 len, u32 prot, u32 flags, u32 fd,
   if ((int)fd < 0) return (uint32_t)(-38); /* -ENOSYS: let musl do anon */
   uint32_t ptr = w2c_engine_emscripten_builtin_memalign(m, 65536, len);
   if (!ptr) return (uint32_t)(-12); /* -ENOMEM */
-  ssize_t n = pread((int)fd, mem_base(m) + ptr, len, (off_t)offset);
+  /* pread via the io backend (fd may be a VFS handle, not a native fd). */
+  off_t save = g_io->lseek(g_io_ctx, (int)fd, 0, SEEK_CUR);
+  g_io->lseek(g_io_ctx, (int)fd, (off_t)offset, SEEK_SET);
+  ssize_t n = g_io->read(g_io_ctx, (int)fd, mem_base(m) + ptr, len);
+  if (save >= 0) g_io->lseek(g_io_ctx, (int)fd, save, SEEK_SET);
   if (n < 0) return (uint32_t)(-5); /* -EIO */
   if ((uint32_t)n < len) memset(mem_base(m) + ptr + (uint32_t)n, 0, len - (uint32_t)n);
   wr_u32(m, addr_ptr, ptr);
@@ -815,6 +977,11 @@ int main(int argc, char **argv) {
   g_trace = getenv("TEXPRESSO_TRACE") != NULL;
   const char *sde = getenv("SOURCE_DATE_EPOCH");
   g_epoch = sde ? atoll(sde) : (long long)time(NULL); /* fixed for the process */
+  memfs_t *memfs = NULL;
+  if (getenv("TEXPRESSO_MEMFS")) {
+    memfs = calloc(1, sizeof *memfs);
+    wasm_host_set_io(&mem_io_ops, memfs); /* serve everything from memory */
+  }
 
   wasm_rt_init();
 
@@ -892,6 +1059,8 @@ int main(int argc, char **argv) {
   } else {
     fprintf(stderr, "[host] engine done=%d\n", g_engine_done);
   }
+
+  if (memfs) memfs_dump(memfs); /* prove output was captured in memory */
 
   wasm2c_engine_free(&mod);
   wasm_rt_free();
