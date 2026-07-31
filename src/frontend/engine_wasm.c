@@ -155,12 +155,10 @@ static int wio_openat(void *vctx, int dirfd, const char *path, int flags,
 
   /* Snapshot point: the main document has just been opened. Arm a yield on the
    * next read, which fires *before* that read returns data (see fd_read) — so the
-   * snapshot precedes any of the document's bytes entering TeX's line buffer.
-   * On an edit we restore here and the engine re-reads the (edited) document from
-   * the start, re-running the whole preamble+body with the format still loaded.
-   * Re-running the preamble also reproduces kpathsea's directory state, so the
-   * .aux read-back at \enddocument resolves. The expensive prefix skipped is the
-   * module init + format undump. */
+   * snapshot precedes any of the document's bytes entering TeX's line buffer. On
+   * an edit we restore here and re-read the (edited) document, re-running the
+   * whole preamble+body with the format still loaded (skipping module init +
+   * format undump). */
   if (!write && !self->have_snapshot && !self->snap_armed &&
       strcmp(path, self->name) == 0)
   {
@@ -323,7 +321,7 @@ static void engine_notify_file_changes(txp_engine *_self, fz_context *ctx,
                                        fileentry_t *entry, int offset);
 
 /* First run of the session: fresh module, run to completion, snapshotting once
- * the format is loaded + the main doc is open (armed in wio_openat). */
+ * the main document is first read (armed in wio_openat). */
 static void do_run(fz_context *ctx, struct wasm_engine *self)
 {
   self->ctx = ctx;

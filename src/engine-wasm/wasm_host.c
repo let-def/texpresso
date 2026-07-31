@@ -891,6 +891,8 @@ static wasm_rt_memory_t g_snap_meminfo;
 static uint8_t *g_snap_stack;
 static ucontext_t g_snap_ctx;
 static off_t g_snap_fdpos[64];
+static u32 g_snap_g0; /* wasm global 0 = shadow-stack pointer (lives outside
+                       * linear memory, so COW does not capture it) */
 
 /* mprotect COW state for the linear memory */
 static long g_pg;              /* system page size */
@@ -951,6 +953,7 @@ static void snapshot_take(void) {
   snapshot_discard(); /* drop any previous snapshot */
   cow_install_handler();
   g_snap_meminfo = m->w2c_memory;
+  g_snap_g0 = m->w2c_g0;
   g_snap_stack = malloc(ENGINE_STACK_SIZE);
   memcpy(g_snap_stack, g_engine_stack, ENGINE_STACK_SIZE);
   g_snap_ctx = g_engine_ctx;
@@ -982,6 +985,7 @@ static void snapshot_restore(void) {
   if (cur > g_cow_size) /* zero pages the run grew into */
     memset(g_cow_base + g_cow_size, 0, cur - g_cow_size);
   m->w2c_memory = g_snap_meminfo; /* data base is fixed (mmap) */
+  m->w2c_g0 = g_snap_g0;          /* shadow-stack pointer (outside memory) */
 
   memcpy(g_engine_stack, g_snap_stack, ENGINE_STACK_SIZE);
   g_engine_ctx = g_snap_ctx;
