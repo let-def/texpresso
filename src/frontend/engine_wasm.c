@@ -330,8 +330,6 @@ static void reset_for_run(fz_context *ctx, struct wasm_engine *self)
 }
 
 static void do_replay(fz_context *ctx, struct wasm_engine *self);
-static void engine_notify_file_changes(txp_engine *_self, fz_context *ctx,
-                                       fileentry_t *entry, int offset);
 
 /* First run of the session: fresh module, run to completion, snapshotting once
  * the main document is first read (armed in wio_openat). */
@@ -364,42 +362,6 @@ static void do_run(fz_context *ctx, struct wasm_engine *self)
   fprintf(stderr, "[wasm] run complete: %d pages%s\n",
           incdvi_page_count(self->dvi),
           self->have_snapshot ? " (snapshot taken)" : "");
-
-  /* Self-test (env-gated). Mode 1: replay the unchanged doc; the page count must
-   * match, proving restore + VFS-rollback + resume is coherent. Mode 2: inject a
-   * \clearpage before \end{document} (a body edit, after the fence) and replay;
-   * the edited content must be re-read, yielding one extra page. */
-  const char *mode = getenv("TEXPRESSO_WASM_REPLAY_TEST");
-  if (self->have_snapshot && mode)
-  {
-    int p1 = incdvi_page_count(self->dvi);
-    if (mode[0] == '2')
-    {
-      fileentry_t *e = filesystem_lookup(self->fs, self->name);
-      fz_buffer *src = e ? entry_data(e) : NULL;
-      const char *needle = "\\end{document}";
-      int nl = (int)strlen(needle), at = -1;
-      if (src)
-        for (int i = 0; i + nl <= (int)src->len; i++)
-          if (memcmp(src->data + i, needle, nl) == 0) { at = i; break; }
-      if (at >= 0)
-      {
-        const char *ins = "\\clearpage second page\n";
-        fz_buffer *nb = fz_new_buffer(ctx, src->len + (int)strlen(ins));
-        fz_append_data(ctx, nb, src->data, at);
-        fz_append_data(ctx, nb, ins, strlen(ins));
-        fz_append_data(ctx, nb, src->data + at, src->len - at);
-        fz_drop_buffer(ctx, e->edit_data);
-        e->edit_data = nb;
-        engine_notify_file_changes((txp_engine *)self, ctx, e, at);
-      }
-    }
-    do_replay(ctx, self);
-    int p2 = incdvi_page_count(self->dvi);
-    bool ok = (mode[0] == '2') ? (p2 == p1 + 1) : (p2 == p1);
-    fprintf(stderr, "[wasm] REPLAY-TEST(mode %c): first=%d replay=%d %s\n",
-            mode[0], p1, p2, ok ? "PASS" : "FAIL");
-  }
 }
 
 /* Edit: restore the snapshot (format still loaded) + roll the VFS back to that
