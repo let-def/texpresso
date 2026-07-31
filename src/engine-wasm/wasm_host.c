@@ -1,20 +1,22 @@
 /*
- * Native host for a wasm2c-compiled TeX engine (pdftex or xetex).
+ * Native host for a wasm2c-compiled TeX engine (any engine: xetex, pdftex, ...).
  *
  * Engine-agnostic: the wasm2c module is generated with `-n engine`, so the
  * exported symbols are w2c_engine_* and this one host drives any engine. Import
  * symbols (w2c_env_*, w2c_wasi_*) are keyed on the import module, not the engine.
  *
  * Implements the wasm imports (WASI subset + the Linux syscalls emscripten
- * leaves as env.__syscall_*) against native POSIX, and runs the engine on a
- * dedicated fixed-address stack (ucontext coroutine) so its full execution
- * state can be snapshotted by copy-on-write of the linear memory + that stack —
- * no JS, no node, no fork, no asyncify.
+ * leaves as env.__syscall_*) and runs the engine on a dedicated fixed-address
+ * stack (ucontext coroutine) so its full execution state can be snapshotted by
+ * copy-on-write of the linear memory + that stack — no JS, no node, no fork, no
+ * asyncify.
  *
- * File operations (openat/stat/lstat/newfstatat) are imports here — that is the
- * hook texpresso's VFS will replace. For now they map to the native FS. Two
- * cross-ABI translations are required: the engine passes Linux O_* flag values
- * (openat), and stat results are written in emscripten's struct-stat layout.
+ * File operations (openat/read/write/stat/...) go through the wasm_io_ops seam
+ * (wasm_host.h): the default backend is native POSIX (used by the standalone
+ * harness below), and texpresso installs a backend answering from its VFS via
+ * wasm_host_set_io(). Two cross-ABI translations are required regardless: the
+ * engine passes Linux O_* flag values (openat), and stat results are written in
+ * emscripten's struct-stat layout.
  */
 #define _XOPEN_SOURCE 700 /* ucontext on macOS/glibc */
 #define _DARWIN_C_SOURCE 1 /* re-expose MAP_ANON etc. under _XOPEN_SOURCE */
