@@ -19,6 +19,7 @@
  */
 
 #include <mupdf/fitz/buffer.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -451,9 +452,51 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
   fz_free(ctx, self);
 }
 
+/* Point the in-process engine's kpathsea at the system TeX Live. Its SELFAUTO*
+ * derivation lands on our binary, not the tree, so override the tree vars from
+ * kpsewhich (env vars beat texmf.cnf definitions). Done once; the engine reads
+ * them via the host's environ passthrough. */
+static void setenv_kpse(const char *var, const char *kpsevar)
+{
+  if (getenv(var)) return;
+  char cmd[256];
+  snprintf(cmd, sizeof cmd, "kpsewhich -var-value=%s 2>/dev/null", kpsevar);
+  FILE *p = popen(cmd, "r");
+  if (!p) return;
+  char buf[2048];
+  if (fgets(buf, sizeof buf, p))
+  {
+    buf[strcspn(buf, "\n")] = 0;
+    if (buf[0]) setenv(var, buf, 1);
+  }
+  pclose(p);
+}
+
+static void wasm_setup_texmf(void)
+{
+  setenv_kpse("TEXMFROOT", "TEXMFROOT");
+  setenv_kpse("TEXMFDIST", "TEXMFDIST");
+  setenv_kpse("TEXMFLOCAL", "TEXMFLOCAL");
+  setenv_kpse("TEXMFSYSVAR", "TEXMFSYSVAR");
+  setenv_kpse("TEXMFSYSCONFIG", "TEXMFSYSCONFIG");
+  const char *v = getenv("TEXMFSYSVAR");
+  if (v && !getenv("TEXMFVAR")) setenv("TEXMFVAR", v, 1);
+  const char *r = getenv("TEXMFROOT"), *d = getenv("TEXMFDIST");
+  if (r && d && !getenv("TEXMFCNF"))
+  {
+    char c[4096];
+    snprintf(c, sizeof c, "%s:%s/web2c", r, d);
+    setenv("TEXMFCNF", c, 1);
+  }
+  /* Where our built xelatex.fmt lives (see scripts/build-wasm-fmt.sh). */
+  const char *fmt = getenv("TEXPRESSO_WASM_FMT");
+  if (fmt && !getenv("TEXFORMATS")) setenv("TEXFORMATS", fmt, 1);
+}
+
 txp_engine *txp_create_wasm_engine(fz_context *ctx, const char *engine_path,
                                    const char *tex_name, dvi_reshooks hooks)
 {
+  wasm_setup_texmf();
   struct wasm_engine *self = fz_malloc_struct(ctx, struct wasm_engine);
   self->_class = &_class;
   /* Give the main file an explicit "./" so the engine's kpathsea opens it
@@ -471,8 +514,11 @@ txp_engine *txp_create_wasm_engine(fz_context *ctx, const char *engine_path,
 
   int a = 0;
   self->argv[a++] = self->prog;
-  self->argv[a++] = "-ini";    /* build from primitives; no preloaded .fmt */
   self->argv[a++] = "-no-pdf"; /* xetex: emit XDV for incdvi (not PDF) */
+  if (getenv("TEXFORMATS")) /* our xelatex.fmt is available -> real LaTeX */
+    self->argv[a++] = "-fmt=xelatex";
+  else /* no format: raw primitives only */
+    self->argv[a++] = "-ini";
   self->argv[a++] = "-interaction=nonstopmode";
   self->argv[a++] = self->name;
   self->argv[a] = NULL;
