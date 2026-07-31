@@ -60,6 +60,15 @@ struct wasm_engine
   bool dirty; /* a watched input changed -> replay needed */
   bool aux_dirty;
   bool finishing;
+
+  /* per-session snapshot: taken once (format loaded, main doc opened) and
+   * restored on every edit, so replay skips module init + format undump. */
+  bool have_snapshot;
+  bool snap_armed; /* wio_openat armed the snapshot yield this run */
+  mark_t snap_log_mark;
+  struct { fileentry_t *entry; int pos; } snap_fds[MAX_FILES];
+  fileentry_t *snap_doc;  /* main .tex entry as of the snapshot */
+  int snap_doc_seen;      /* bytes of it consumed before the fence (preamble) */
 };
 
 TXP_ENGINE_DEF_CLASS;
@@ -142,6 +151,21 @@ static int wio_openat(void *vctx, int dirfd, const char *path, int flags,
       log_filecell(ctx, self->log, &self->st.log);
       self->st.log.entry = e;
     }
+  }
+
+  /* Snapshot point: the main document has just been opened. Arm a yield on the
+   * next read, which fires *before* that read returns data (see fd_read) — so the
+   * snapshot precedes any of the document's bytes entering TeX's line buffer.
+   * On an edit we restore here and the engine re-reads the (edited) document from
+   * the start, re-running the whole preamble+body with the format still loaded.
+   * Re-running the preamble also reproduces kpathsea's directory state, so the
+   * .aux read-back at \enddocument resolves. The expensive prefix skipped is the
+   * module init + format undump. */
+  if (!write && !self->have_snapshot && !self->snap_armed &&
+      strcmp(path, self->name) == 0)
+  {
+    self->snap_armed = true;
+    wasm_engine_request_yield();
   }
 
   for (int fd = 3; fd < MAX_FILES; fd++)
@@ -294,21 +318,103 @@ static void reset_for_run(fz_context *ctx, struct wasm_engine *self)
     e->seen = -1;
 }
 
+static void do_replay(fz_context *ctx, struct wasm_engine *self);
+static void engine_notify_file_changes(txp_engine *_self, fz_context *ctx,
+                                       fileentry_t *entry, int offset);
+
+/* First run of the session: fresh module, run to completion, snapshotting once
+ * the format is loaded + the main doc is open (armed in wio_openat). */
 static void do_run(fz_context *ctx, struct wasm_engine *self)
 {
   self->ctx = ctx;
   wasm_host_set_io(&wasm_state_io_ops, self);
   reset_for_run(ctx, self);
+  self->have_snapshot = false;
+  self->snap_armed = false;
   if (wasm_engine_init(self->argc, self->argv) != 0)
   {
     fprintf(stderr, "[wasm] engine init failed\n");
     return;
   }
-  while (wasm_engine_run()) /* run to completion (reads are direct) */
+  int suspended = wasm_engine_run(); /* runs until the armed yield or exit */
+  if (suspended && self->snap_armed)
+  {
+    self->snap_log_mark = log_snapshot(ctx, self->log);
+    memcpy(self->snap_fds, self->fds, sizeof self->fds);
+    wasm_engine_snapshot();
+    self->have_snapshot = true;
+    self->snap_doc = filesystem_lookup(self->fs, self->name);
+    self->snap_doc_seen = self->snap_doc ? self->snap_doc->seen : 0;
+  }
+  while (wasm_engine_run()) /* resume to completion */
     ;
   self->ran = true;
   self->dirty = false;
-  fprintf(stderr, "[wasm] run complete: %d pages\n", incdvi_page_count(self->dvi));
+  fprintf(stderr, "[wasm] run complete: %d pages%s\n",
+          incdvi_page_count(self->dvi),
+          self->have_snapshot ? " (snapshot taken)" : "");
+
+  /* Self-test (env-gated). Mode 1: replay the unchanged doc; the page count must
+   * match, proving restore + VFS-rollback + resume is coherent. Mode 2: inject a
+   * \clearpage before \end{document} (a body edit, after the fence) and replay;
+   * the edited content must be re-read, yielding one extra page. */
+  const char *mode = getenv("TEXPRESSO_WASM_REPLAY_TEST");
+  if (self->have_snapshot && mode)
+  {
+    int p1 = incdvi_page_count(self->dvi);
+    if (mode[0] == '2')
+    {
+      fileentry_t *e = filesystem_lookup(self->fs, self->name);
+      fz_buffer *src = e ? entry_data(e) : NULL;
+      const char *needle = "\\end{document}";
+      int nl = (int)strlen(needle), at = -1;
+      if (src)
+        for (int i = 0; i + nl <= (int)src->len; i++)
+          if (memcmp(src->data + i, needle, nl) == 0) { at = i; break; }
+      if (at >= 0)
+      {
+        const char *ins = "\\clearpage second page\n";
+        fz_buffer *nb = fz_new_buffer(ctx, src->len + (int)strlen(ins));
+        fz_append_data(ctx, nb, src->data, at);
+        fz_append_data(ctx, nb, ins, strlen(ins));
+        fz_append_data(ctx, nb, src->data + at, src->len - at);
+        fz_drop_buffer(ctx, e->edit_data);
+        e->edit_data = nb;
+        engine_notify_file_changes((txp_engine *)self, ctx, e, at);
+      }
+    }
+    do_replay(ctx, self);
+    int p2 = incdvi_page_count(self->dvi);
+    bool ok = (mode[0] == '2') ? (p2 == p1 + 1) : (p2 == p1);
+    fprintf(stderr, "[wasm] REPLAY-TEST(mode %c): first=%d replay=%d %s\n",
+            mode[0], p1, p2, ok ? "PASS" : "FAIL");
+  }
+}
+
+/* Edit: restore the snapshot (format still loaded) + roll the VFS back to that
+ * point, then replay only the document from there. */
+static void do_replay(fz_context *ctx, struct wasm_engine *self)
+{
+  if (!self->have_snapshot)
+  {
+    do_run(ctx, self);
+    return;
+  }
+  self->ctx = ctx;
+  wasm_host_set_io(&wasm_state_io_ops, self);
+  log_rollback(ctx, self->log, self->snap_log_mark);
+  incdvi_reset(self->dvi);
+  synctex_rollback(ctx, self->stex, 0);
+  editor_truncate(BUF_OUT, output_data(self->st.stdout.entry));
+  editor_truncate(BUF_LOG, output_data(self->st.log.entry));
+  self->aux_dirty = false;
+  wasm_engine_restore();
+  memcpy(self->fds, self->snap_fds, sizeof self->fds); /* authoritative fd state */
+  while (wasm_engine_run()) /* re-read the edited doc from the snapshot point */
+    ;
+  self->dirty = false;
+  fprintf(stderr, "[wasm] replay complete: %d pages\n",
+          incdvi_page_count(self->dvi));
 }
 
 /* ---------------- vtable ---------------- */
@@ -324,7 +430,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
   }
   if (self->dirty)
   {
-    do_run(ctx, self);
+    do_replay(ctx, self); /* incremental: restore snapshot + replay the doc */
     return true;
   }
   return false; /* nothing pending: the run is atomic */
@@ -365,8 +471,14 @@ static void engine_notify_file_changes(txp_engine *_self, fz_context *ctx,
                                        fileentry_t *entry, int offset)
 {
   SELF;
-  (void)ctx; (void)entry; (void)offset;
-  self->dirty = true; /* any edit -> full replay (incremental is Phase 3) */
+  (void)ctx;
+  self->dirty = true;
+  /* If the edit lands in the stable prefix (the preamble consumed before the
+   * fence), the snapshot baked in the old bytes -> it can't be replayed from.
+   * Invalidate it so the next step does a full run and re-snapshots. */
+  if (self->have_snapshot && entry == self->snap_doc &&
+      offset < self->snap_doc_seen)
+    self->have_snapshot = false;
 }
 
 static bool engine_end_changes(txp_engine *_self, fz_context *ctx)

@@ -934,8 +934,21 @@ static void cow_install_handler(void) {
   sigaction(SIGBUS, &sa, NULL); /* macOS raises SIGBUS on protected writes */
 }
 
+static int g_have_cow; /* a reusable snapshot is currently held */
+
+static void snapshot_discard(void) {
+  if (!g_have_cow) return;
+  if (g_cow_active) mprotect(g_cow_base, g_cow_size, PROT_READ | PROT_WRITE);
+  g_cow_active = 0;
+  free(g_cow_shadow); g_cow_shadow = NULL;
+  free(g_cow_saved); g_cow_saved = NULL;
+  free(g_snap_stack); g_snap_stack = NULL;
+  g_have_cow = 0;
+}
+
 static void snapshot_take(void) {
   w2c_engine *m = g_mod;
+  snapshot_discard(); /* drop any previous snapshot */
   cow_install_handler();
   g_snap_meminfo = m->w2c_memory;
   g_snap_stack = malloc(ENGINE_STACK_SIZE);
@@ -953,6 +966,7 @@ static void snapshot_take(void) {
   g_cow_dirty = 0;
   mprotect(g_cow_base, g_cow_size, PROT_READ);
   g_cow_active = 1;
+  g_have_cow = 1;
 }
 
 static void snapshot_restore(void) {
@@ -975,9 +989,13 @@ static void snapshot_restore(void) {
     if (g_snap_fdpos[fd] != (off_t)-1)
       g_io->lseek(g_io_ctx, fd, g_snap_fdpos[fd], SEEK_SET);
 
-  free(g_cow_shadow); g_cow_shadow = NULL;
-  free(g_cow_saved); g_cow_saved = NULL;
-  free(g_snap_stack); g_snap_stack = NULL;
+  /* Re-arm so the snapshot can be restored again (incremental editing restores
+   * on every edit): keep the shadow, clear dirty tracking, re-protect. */
+  memset(g_cow_saved, 0, (g_cow_size / (uint64_t)g_pg + 7) / 8);
+  g_cow_dirty = 0;
+  g_engine_done = 0;
+  mprotect(g_cow_base, g_cow_size, PROT_READ);
+  g_cow_active = 1;
 }
 
 /* ---- engine lifecycle API (see wasm_host.h) ---- */
@@ -989,6 +1007,7 @@ int wasm_engine_init(int argc, char **argv) {
   const char *sde = getenv("SOURCE_DATE_EPOCH");
   g_epoch = sde ? atoll(sde) : (long long)time(NULL);
 
+  snapshot_discard();                       /* any snapshot belongs to the old instance */
   if (g_mod) wasm2c_engine_free(&g_module); /* re-init: drop the old instance */
   g_engine_done = 0;
   g_suspended = 0;
@@ -1043,6 +1062,7 @@ void wasm_engine_restore(void) {
 }
 void wasm_engine_defer_close(int on) { g_defer_close = on; }
 void wasm_engine_shutdown(void) {
+  snapshot_discard();
   wasm2c_engine_free(&g_module);
   wasm_rt_free();
   if (g_engine_stack && g_engine_stack != MAP_FAILED) {
