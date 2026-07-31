@@ -880,42 +880,50 @@ u32 w2c_env_0x5Fmunmap_js(struct w2c_env *e, u32 addr, u32 len, u32 prot,
   return 0; /* free not exported by the module; mappings are few and long-lived */
 }
 
-/* ---------------- snapshot / rollback (userland COW) ----------------
- * The linear memory is snapshotted by mprotect dirty-tracking: at snapshot the
- * region is marked read-only; a SIGSEGV/SIGBUS handler saves each page's
- * original bytes on first write and re-marks it writable. Rollback copies the
- * saved (dirty) pages back — cost is O(pages written), not O(heap size). The
- * engine stack (small) + register context + open-fd positions are full-copy.
- * The memory base is fixed (WASM_RT_USE_MMAP), so the protected region is stable
- * across grows. */
+/* ---------------- snapshot / rollback (userland COW, layered) ----------------
+ * A stack of fence snapshots, mirroring the fork engine's fork stack. Only the
+ * top layer collects writes: at each fence the whole linear-memory region is
+ * re-marked read-only, and a SIGSEGV/SIGBUS handler saves a page's original
+ * bytes into the top layer the first time the current window writes it.
+ * Restoring to fence k copies the saved pages of layers top..k back — each page
+ * ends at its state as of fence k — then pops the deeper layers. Cost is O(pages
+ * written since the fence), not O(heap). Each layer's shadow is mmap'd
+ * demand-zero, so physical memory tracks only pages actually dirtied, not
+ * layers x heap. The engine stack, registers, wasm global g0 (the shadow-stack
+ * pointer, which lives outside linear memory) and fd positions are full-copied
+ * per layer (all small). Base is fixed (WASM_RT_USE_MMAP); growth past the base
+ * fence's size is zeroed on restore (TeX preallocates after the format loads). */
 #define FNV_INIT 1469598103934665603ull
-static wasm_rt_memory_t g_snap_meminfo;
-static uint8_t *g_snap_stack;
-static ucontext_t g_snap_ctx;
-static off_t g_snap_fdpos[64];
-static u32 g_snap_g0; /* wasm global 0 = shadow-stack pointer (lives outside
-                       * linear memory, so COW does not capture it) */
+#define MAX_SNAP_LAYERS 32
 
-/* mprotect COW state for the linear memory */
-static long g_pg;              /* system page size */
-static uint8_t *g_cow_base;    /* = w2c_memory.data (fixed) */
-static uint64_t g_cow_size;    /* protected region size (snapshot size) */
-static uint8_t *g_cow_shadow;  /* saved original pages (size g_cow_size) */
-static uint8_t *g_cow_saved;   /* bitmap: page saved this snapshot */
-static volatile sig_atomic_t g_cow_active;
-static volatile sig_atomic_t g_cow_dirty; /* pages copied this snapshot */
+typedef struct {
+  uint8_t *shadow; /* mmap(g_cow_size) demand-zero: original pages this window */
+  uint8_t *saved;  /* bitmap: page saved in this layer's window */
+  wasm_rt_memory_t meminfo;
+  u32 g0;
+  uint8_t *stack; /* copy of the coroutine stack */
+  ucontext_t ctx;
+  off_t fdpos[64];
+} snap_layer;
+
+static long g_pg;           /* system page size */
+static uint8_t *g_cow_base; /* = w2c_memory.data (fixed) */
+static uint64_t g_cow_size; /* protected region size (base fence size) */
+static snap_layer g_layers[MAX_SNAP_LAYERS];
+static int g_nlayers;                      /* live fence layers */
+static volatile sig_atomic_t g_cow_active; /* top layer is collecting writes */
 
 static void cow_fault(int sig, siginfo_t *si, void *uctx) {
   (void)uctx;
   uintptr_t a = (uintptr_t)si->si_addr;
   uintptr_t b = (uintptr_t)g_cow_base;
-  if (g_cow_active && a >= b && a < b + g_cow_size) {
+  if (g_cow_active && g_nlayers > 0 && a >= b && a < b + g_cow_size) {
+    snap_layer *L = &g_layers[g_nlayers - 1]; /* the top (collecting) layer */
     uintptr_t off = (a - b) & ~(uintptr_t)(g_pg - 1);
     uint64_t pi = off / (uint64_t)g_pg;
-    if (!(g_cow_saved[pi >> 3] & (1u << (pi & 7)))) {
-      memcpy(g_cow_shadow + off, g_cow_base + off, (size_t)g_pg); /* save */
-      g_cow_saved[pi >> 3] |= (uint8_t)(1u << (pi & 7));
-      g_cow_dirty++;
+    if (!(L->saved[pi >> 3] & (1u << (pi & 7)))) {
+      memcpy(L->shadow + off, g_cow_base + off, (size_t)g_pg); /* save original */
+      L->saved[pi >> 3] |= (uint8_t)(1u << (pi & 7));
     }
     mprotect(g_cow_base + off, (size_t)g_pg, PROT_READ | PROT_WRITE);
     return; /* retry the faulting write */
@@ -938,67 +946,98 @@ static void cow_install_handler(void) {
   sigaction(SIGBUS, &sa, NULL); /* macOS raises SIGBUS on protected writes */
 }
 
-static int g_have_cow; /* a reusable snapshot is currently held */
-
-static void snapshot_discard(void) {
-  if (!g_have_cow) return;
-  if (g_cow_active) mprotect(g_cow_base, g_cow_size, PROT_READ | PROT_WRITE);
-  g_cow_active = 0;
-  free(g_cow_shadow); g_cow_shadow = NULL;
-  free(g_cow_saved); g_cow_saved = NULL;
-  free(g_snap_stack); g_snap_stack = NULL;
-  g_have_cow = 0;
+static uint64_t cow_bitmap_bytes(void) {
+  return (g_cow_size / (uint64_t)g_pg + 7) / 8;
 }
 
-static void snapshot_take(void) {
+/* FNV of the whole protected region; used by the standalone fence self-test to
+ * check that each fence's memory is reconstructed exactly. */
+static unsigned long long cow_mem_hash(void) {
+  unsigned long long h = FNV_INIT;
+  int reprot = g_cow_active;
+  if (reprot) mprotect(g_cow_base, g_cow_size, PROT_READ | PROT_WRITE);
+  for (uint64_t i = 0; i < g_cow_size; i++) { h ^= g_cow_base[i]; h *= 0x100000001b3ull; }
+  if (reprot) mprotect(g_cow_base, g_cow_size, PROT_READ);
+  return h;
+}
+
+static void layer_free(snap_layer *L) {
+  if (L->shadow) munmap(L->shadow, g_cow_size);
+  free(L->saved);
+  free(L->stack);
+  memset(L, 0, sizeof *L);
+}
+
+static void layer_capture(snap_layer *L) {
   w2c_engine *m = g_mod;
-  snapshot_discard(); /* drop any previous snapshot */
-  cow_install_handler();
-  g_snap_meminfo = m->w2c_memory;
-  g_snap_g0 = m->w2c_g0;
-  g_snap_stack = malloc(ENGINE_STACK_SIZE);
-  memcpy(g_snap_stack, g_engine_stack, ENGINE_STACK_SIZE);
-  g_snap_ctx = g_engine_ctx;
+  L->shadow = mmap(NULL, g_cow_size, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  L->saved = calloc(cow_bitmap_bytes(), 1);
+  L->meminfo = m->w2c_memory;
+  L->g0 = m->w2c_g0;
+  L->stack = malloc(ENGINE_STACK_SIZE);
+  memcpy(L->stack, g_engine_stack, ENGINE_STACK_SIZE);
+  L->ctx = g_engine_ctx;
   /* fd positions via the io backend (native fds for standalone; texpresso's
    * log owns positions for the state.c backend, whose lseek is harmless here). */
   for (int fd = 0; fd < 64; fd++)
-    g_snap_fdpos[fd] = g_io->lseek(g_io_ctx, fd, 0, SEEK_CUR);
-
-  g_cow_base = m->w2c_memory.data;
-  g_cow_size = m->w2c_memory.size; /* multiple of the 64K wasm page */
-  g_cow_shadow = malloc(g_cow_size);
-  g_cow_saved = calloc((g_cow_size / (uint64_t)g_pg + 7) / 8, 1);
-  g_cow_dirty = 0;
-  mprotect(g_cow_base, g_cow_size, PROT_READ);
-  g_cow_active = 1;
-  g_have_cow = 1;
+    L->fdpos[fd] = g_io->lseek(g_io_ctx, fd, 0, SEEK_CUR);
 }
 
-static void snapshot_restore(void) {
+static void snapshot_discard(void) {
+  if (g_nlayers > 0 && g_cow_active)
+    mprotect(g_cow_base, g_cow_size, PROT_READ | PROT_WRITE);
+  g_cow_active = 0;
+  for (int i = 0; i < g_nlayers; i++) layer_free(&g_layers[i]);
+  g_nlayers = 0;
+}
+
+/* Push a new fence layer; returns its index. The first push fixes the COW
+ * region (base + size). */
+static int snapshot_push(void) {
   w2c_engine *m = g_mod;
+  if (g_nlayers >= MAX_SNAP_LAYERS) return g_nlayers - 1; /* cap: keep the top */
+  cow_install_handler();
+  if (g_nlayers == 0) {
+    g_cow_base = m->w2c_memory.data;
+    g_cow_size = m->w2c_memory.size; /* multiple of the 64K wasm page */
+  }
+  layer_capture(&g_layers[g_nlayers++]);
+  mprotect(g_cow_base, g_cow_size, PROT_READ); /* new window catches writes */
+  g_cow_active = 1;
+  return g_nlayers - 1;
+}
+
+/* Restore memory + engine state to fence k, popping deeper fences. Layer k stays
+ * (re-armed) so it can be restored again. */
+static void snapshot_restore_to(int k) {
+  w2c_engine *m = g_mod;
+  if (k < 0 || k >= g_nlayers) return;
   g_cow_active = 0;
   mprotect(g_cow_base, g_cow_size, PROT_READ | PROT_WRITE);
   uint64_t npages = g_cow_size / (uint64_t)g_pg;
-  for (uint64_t pi = 0; pi < npages; pi++) /* restore dirtied pages */
-    if (g_cow_saved[pi >> 3] & (1u << (pi & 7)))
-      memcpy(g_cow_base + pi * (uint64_t)g_pg, g_cow_shadow + pi * (uint64_t)g_pg,
-             (size_t)g_pg);
+  for (int i = g_nlayers - 1; i >= k; i--) { /* undo windows top..k */
+    snap_layer *L = &g_layers[i];
+    for (uint64_t pi = 0; pi < npages; pi++)
+      if (L->saved[pi >> 3] & (1u << (pi & 7)))
+        memcpy(g_cow_base + pi * (uint64_t)g_pg, L->shadow + pi * (uint64_t)g_pg,
+               (size_t)g_pg);
+  }
+  snap_layer *K = &g_layers[k];
   uint64_t cur = m->w2c_memory.size;
-  if (cur > g_cow_size) /* zero pages the run grew into */
+  if (cur > g_cow_size) /* zero pages the run grew into past the base fence */
     memset(g_cow_base + g_cow_size, 0, cur - g_cow_size);
-  m->w2c_memory = g_snap_meminfo; /* data base is fixed (mmap) */
-  m->w2c_g0 = g_snap_g0;          /* shadow-stack pointer (outside memory) */
-
-  memcpy(g_engine_stack, g_snap_stack, ENGINE_STACK_SIZE);
-  g_engine_ctx = g_snap_ctx;
+  m->w2c_memory = K->meminfo;
+  m->w2c_g0 = K->g0;
+  memcpy(g_engine_stack, K->stack, ENGINE_STACK_SIZE);
+  g_engine_ctx = K->ctx;
   for (int fd = 0; fd < 64; fd++)
-    if (g_snap_fdpos[fd] != (off_t)-1)
-      g_io->lseek(g_io_ctx, fd, g_snap_fdpos[fd], SEEK_SET);
+    if (K->fdpos[fd] != (off_t)-1)
+      g_io->lseek(g_io_ctx, fd, K->fdpos[fd], SEEK_SET);
 
-  /* Re-arm so the snapshot can be restored again (incremental editing restores
-   * on every edit): keep the shadow, clear dirty tracking, re-protect. */
-  memset(g_cow_saved, 0, (g_cow_size / (uint64_t)g_pg + 7) / 8);
-  g_cow_dirty = 0;
+  for (int i = g_nlayers - 1; i > k; i--) layer_free(&g_layers[i]); /* pop deeper */
+  g_nlayers = k + 1;
+  memset(K->saved, 0, cow_bitmap_bytes()); /* re-arm layer k's window */
   g_engine_done = 0;
   mprotect(g_cow_base, g_cow_size, PROT_READ);
   g_cow_active = 1;
@@ -1061,11 +1100,11 @@ int wasm_engine_run(void) {
 }
 int wasm_engine_exited(void) { return g_engine_done; }
 void wasm_engine_request_yield(void) { g_yield_next_read = 1; }
-void wasm_engine_snapshot(void) { snapshot_take(); }
-void wasm_engine_restore(void) {
-  snapshot_restore();
-  g_engine_done = 0;
-}
+void wasm_engine_snapshot(void) { snapshot_discard(); snapshot_push(); }
+void wasm_engine_restore(void) { snapshot_restore_to(0); }
+int wasm_engine_snapshot_push(void) { return snapshot_push(); }
+void wasm_engine_restore_to(int fence) { snapshot_restore_to(fence); }
+int wasm_engine_snapshot_count(void) { return g_nlayers; }
 void wasm_engine_defer_close(int on) { g_defer_close = on; }
 void wasm_engine_shutdown(void) {
   snapshot_discard();
@@ -1090,20 +1129,47 @@ int main(int argc, char **argv) {
   if (wasm_engine_init(argc, argv) != 0) return 1;
 
   int snap_test = getenv("TEXPRESSO_SNAPSHOT_TEST") != NULL;
-  if (snap_test || getenv("TEXPRESSO_SUSPEND_TEST")) wasm_engine_request_yield();
+  int fence_test = getenv("TEXPRESSO_FENCE_TEST") != NULL;
+  if (snap_test || fence_test || getenv("TEXPRESSO_SUSPEND_TEST"))
+    wasm_engine_request_yield();
 
   int suspended = wasm_engine_run(); /* run until first yield or done */
 
-  if (suspended && snap_test) {
+  if (suspended && fence_test) {
+    /* Two fences: push at read #1 and read #2, run to the end, then verify that
+     * the layer stack reconstructs each fence's linear memory exactly. Memory is
+     * hashed (not output) because the standalone's native fds are not rolled
+     * back — that determinism belongs to texpresso's VFS backend, not here. */
+    wasm_engine_defer_close(1);
+    wasm_engine_snapshot_push();          /* fence 0 (read #1) */
+    unsigned long long m0 = cow_mem_hash();
+    wasm_engine_request_yield();
+    if (wasm_engine_run())                /* advance to read #2 */
+      wasm_engine_snapshot_push();        /* fence 1 */
+    unsigned long long m1 = cow_mem_hash();
+    wasm_engine_run();                    /* run to completion */
+    int nf = wasm_engine_snapshot_count();
+
+    wasm_engine_restore_to(1);            /* rewind one layer */
+    unsigned long long m1r = cow_mem_hash();
+    wasm_engine_run();                    /* dirty the top window again */
+    wasm_engine_restore_to(0);            /* rewind two layers */
+    unsigned long long m0r = cow_mem_hash();
+
+    int ok = (nf == 2) && (m1 == m1r) && (m0 == m0r);
+    fprintf(stderr,
+            "[host] FENCE STACK %s (%d fences; fence1 %016llx/%016llx %s; "
+            "fence0 %016llx/%016llx %s)\n",
+            ok ? "PASS" : "FAIL", nf, m1, m1r, m1 == m1r ? "ok" : "DIFF",
+            m0, m0r, m0 == m0r ? "ok" : "DIFF");
+  } else if (suspended && snap_test) {
     wasm_engine_defer_close(1);
     wasm_engine_snapshot();
     g_run_hash = FNV_INIT;
     wasm_engine_run(); /* run A -> completion */
     unsigned long long hashA = g_run_hash;
-    fprintf(stderr,
-            "[host] run A done=%d out-hash=%016llx (COW: %d/%llu pages dirtied)\n",
-            wasm_engine_exited(), hashA, (int)g_cow_dirty,
-            (unsigned long long)(g_cow_size / (uint64_t)g_pg));
+    fprintf(stderr, "[host] run A done=%d out-hash=%016llx\n",
+            wasm_engine_exited(), hashA);
 
     wasm_engine_restore();
     g_run_hash = FNV_INIT;

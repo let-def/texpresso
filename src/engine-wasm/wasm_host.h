@@ -57,9 +57,16 @@ int wasm_engine_exited(void); /* nonzero once the engine has returned/exited */
 /* Request that the engine suspend on its next input read (a snapshot point). */
 void wasm_engine_request_yield(void);
 
-/* Single copy-on-write snapshot of the whole execution state, and restore. */
+/* Copy-on-write snapshot of the whole execution state.
+ * Snapshots form a stack (fences): snapshot()/restore() are the single-layer
+ * shortcut (reset to one base fence and restore to it). For the fence stack,
+ * snapshot_push() adds a fence and returns its index; restore_to(k) rewinds to
+ * fence k, discarding deeper ones; snapshot_count() is the number of fences. */
 void wasm_engine_snapshot(void);
 void wasm_engine_restore(void);
+int wasm_engine_snapshot_push(void);
+void wasm_engine_restore_to(int fence);
+int wasm_engine_snapshot_count(void);
 
 /* Keep fds open across close() until the next restore (so a rollback can reset
  * their positions rather than them being gone). */
