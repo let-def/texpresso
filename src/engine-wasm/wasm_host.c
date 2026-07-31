@@ -832,13 +832,18 @@ f64 w2c_env_emscripten_get_now(struct w2c_env *e) {
 }
 
 /* Grow the linear memory to at least `requested` bytes. */
+static void cow_on_grow(uint64_t old_size, uint64_t new_size);
+
 u32 w2c_env_emscripten_resize_heap(struct w2c_env *e, u32 requested) {
   w2c_engine *m = e->mod;
   wasm_rt_memory_t *mem = &m->w2c_memory;
   if ((uint64_t)requested <= mem->size) return 1;
+  uint64_t old_size = mem->size;
   uint64_t need_pages = ((uint64_t)requested - mem->size + 65535) / 65536;
   uint64_t r = wasm_rt_grow_memory(mem, need_pages);
-  return (r == (uint64_t)-1) ? 0 : 1;
+  if (r == (uint64_t)-1) return 0;
+  cow_on_grow(old_size, mem->size); /* keep the COW layer covering the new region */
+  return 1;
 }
 
 /* Engines that never mmap (pdftex) don't export memalign. Provide a weak
@@ -897,8 +902,9 @@ u32 w2c_env_0x5Fmunmap_js(struct w2c_env *e, u32 addr, u32 len, u32 prot,
 #define MAX_SNAP_LAYERS 32
 
 typedef struct {
-  uint8_t *shadow; /* mmap(g_cow_size) demand-zero: original pages this window */
+  uint8_t *shadow; /* mmap(cap) demand-zero: original pages of this window */
   uint8_t *saved;  /* bitmap: page saved in this layer's window */
+  uint64_t cap;    /* bytes the shadow/bitmap cover (grows with the memory) */
   wasm_rt_memory_t meminfo;
   u32 g0;
   uint8_t *stack; /* copy of the coroutine stack */
@@ -908,10 +914,12 @@ typedef struct {
 
 static long g_pg;           /* system page size */
 static uint8_t *g_cow_base; /* = w2c_memory.data (fixed) */
-static uint64_t g_cow_size; /* protected region size (base fence size) */
+static uint64_t g_cow_size; /* protected region size = current linear-memory size */
 static snap_layer g_layers[MAX_SNAP_LAYERS];
 static int g_nlayers;                      /* live fence layers */
 static volatile sig_atomic_t g_cow_active; /* top layer is collecting writes */
+
+static uint64_t bits_for(uint64_t size) { return (size / (uint64_t)g_pg + 7) / 8; }
 
 static void cow_fault(int sig, siginfo_t *si, void *uctx) {
   (void)uctx;
@@ -946,10 +954,6 @@ static void cow_install_handler(void) {
   sigaction(SIGBUS, &sa, NULL); /* macOS raises SIGBUS on protected writes */
 }
 
-static uint64_t cow_bitmap_bytes(void) {
-  return (g_cow_size / (uint64_t)g_pg + 7) / 8;
-}
-
 /* FNV of the whole protected region; used by the standalone fence self-test to
  * check that each fence's memory is reconstructed exactly. */
 static unsigned long long cow_mem_hash(void) {
@@ -962,7 +966,7 @@ static unsigned long long cow_mem_hash(void) {
 }
 
 static void layer_free(snap_layer *L) {
-  if (L->shadow) munmap(L->shadow, g_cow_size);
+  if (L->shadow) munmap(L->shadow, L->cap);
   free(L->saved);
   free(L->stack);
   memset(L, 0, sizeof *L);
@@ -970,9 +974,10 @@ static void layer_free(snap_layer *L) {
 
 static void layer_capture(snap_layer *L) {
   w2c_engine *m = g_mod;
-  L->shadow = mmap(NULL, g_cow_size, PROT_READ | PROT_WRITE,
+  L->cap = g_cow_size;
+  L->shadow = mmap(NULL, L->cap, PROT_READ | PROT_WRITE,
                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  L->saved = calloc(cow_bitmap_bytes(), 1);
+  L->saved = calloc(bits_for(L->cap), 1);
   L->meminfo = m->w2c_memory;
   L->g0 = m->w2c_g0;
   L->stack = malloc(ENGINE_STACK_SIZE);
@@ -984,6 +989,31 @@ static void layer_capture(snap_layer *L) {
     L->fdpos[fd] = g_io->lseek(g_io_ctx, fd, 0, SEEK_CUR);
 }
 
+/* The linear memory grew: re-protect the new region into the top layer (the
+ * runtime just made it writable) and, if it grew past the top layer's shadow,
+ * extend that shadow/bitmap — keeping only the sparse saved pages. */
+static void cow_on_grow(uint64_t old_size, uint64_t new_size) {
+  if (g_nlayers == 0 || !g_cow_active || new_size <= old_size) return;
+  snap_layer *L = &g_layers[g_nlayers - 1];
+  if (new_size > L->cap) {
+    uint8_t *ns = mmap(NULL, new_size, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    uint64_t opages = L->cap / (uint64_t)g_pg; /* copy only saved pages (sparse) */
+    for (uint64_t pi = 0; pi < opages; pi++)
+      if (L->saved[pi >> 3] & (1u << (pi & 7)))
+        memcpy(ns + pi * (uint64_t)g_pg, L->shadow + pi * (uint64_t)g_pg, (size_t)g_pg);
+    munmap(L->shadow, L->cap);
+    L->shadow = ns;
+    uint8_t *nb = calloc(bits_for(new_size), 1);
+    memcpy(nb, L->saved, bits_for(L->cap));
+    free(L->saved);
+    L->saved = nb;
+    L->cap = new_size;
+  }
+  if (new_size > g_cow_size) g_cow_size = new_size;
+  mprotect(g_cow_base + old_size, new_size - old_size, PROT_READ);
+}
+
 static void snapshot_discard(void) {
   if (g_nlayers > 0 && g_cow_active)
     mprotect(g_cow_base, g_cow_size, PROT_READ | PROT_WRITE);
@@ -992,16 +1022,13 @@ static void snapshot_discard(void) {
   g_nlayers = 0;
 }
 
-/* Push a new fence layer; returns its index. The first push fixes the COW
- * region (base + size). */
+/* Push a new fence layer; returns its index. */
 static int snapshot_push(void) {
   w2c_engine *m = g_mod;
   if (g_nlayers >= MAX_SNAP_LAYERS) return g_nlayers - 1; /* cap: keep the top */
   cow_install_handler();
-  if (g_nlayers == 0) {
-    g_cow_base = m->w2c_memory.data;
-    g_cow_size = m->w2c_memory.size; /* multiple of the 64K wasm page */
-  }
+  if (g_nlayers == 0) g_cow_base = m->w2c_memory.data;
+  g_cow_size = m->w2c_memory.size; /* current live size (monotonic within a run) */
   layer_capture(&g_layers[g_nlayers++]);
   mprotect(g_cow_base, g_cow_size, PROT_READ); /* new window catches writes */
   g_cow_active = 1;
@@ -1015,18 +1042,17 @@ static void snapshot_restore_to(int k) {
   if (k < 0 || k >= g_nlayers) return;
   g_cow_active = 0;
   mprotect(g_cow_base, g_cow_size, PROT_READ | PROT_WRITE);
-  uint64_t npages = g_cow_size / (uint64_t)g_pg;
   for (int i = g_nlayers - 1; i >= k; i--) { /* undo windows top..k */
     snap_layer *L = &g_layers[i];
+    uint64_t npages = L->cap / (uint64_t)g_pg;
     for (uint64_t pi = 0; pi < npages; pi++)
       if (L->saved[pi >> 3] & (1u << (pi & 7)))
         memcpy(g_cow_base + pi * (uint64_t)g_pg, L->shadow + pi * (uint64_t)g_pg,
                (size_t)g_pg);
   }
   snap_layer *K = &g_layers[k];
-  uint64_t cur = m->w2c_memory.size;
-  if (cur > g_cow_size) /* zero pages the run grew into past the base fence */
-    memset(g_cow_base + g_cow_size, 0, cur - g_cow_size);
+  if (g_cow_size > K->meminfo.size) /* zero what grew past fence k's live size */
+    memset(g_cow_base + K->meminfo.size, 0, g_cow_size - K->meminfo.size);
   m->w2c_memory = K->meminfo;
   m->w2c_g0 = K->g0;
   memcpy(g_engine_stack, K->stack, ENGINE_STACK_SIZE);
@@ -1037,7 +1063,8 @@ static void snapshot_restore_to(int k) {
 
   for (int i = g_nlayers - 1; i > k; i--) layer_free(&g_layers[i]); /* pop deeper */
   g_nlayers = k + 1;
-  memset(K->saved, 0, cow_bitmap_bytes()); /* re-arm layer k's window */
+  memset(K->saved, 0, bits_for(K->cap)); /* re-arm layer k's window */
+  g_cow_size = K->cap;
   g_engine_done = 0;
   mprotect(g_cow_base, g_cow_size, PROT_READ);
   g_cow_active = 1;

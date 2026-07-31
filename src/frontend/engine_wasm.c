@@ -11,12 +11,13 @@
  * routed here through the wasm_io_ops seam and answered from texpresso's VFS
  * (state.c fileentry buffers) — no native filesystem, no IPC, no fork.
  *
- * Editing is incremental: the engine is snapshotted once per session (at the
- * document's first read, after the format is loaded) via the coroutine+COW
- * machinery in wasm_host.c, and each edit restores that snapshot and re-reads
- * the document — skipping module init and format undump. A full re-instantiate
- * (do_run) is the recovery path. Engine-specific configuration lives in
- * wasm_engine_profile (engine_wasm_<name>.c); this file is engine-agnostic.
+ * Editing is incremental: the engine is fenced (snapshotted) every ~stride bytes
+ * of the document via the coroutine + layered-COW machinery in wasm_host.c. On
+ * an edit we restore the deepest fence taken before it and replay only from
+ * there — skipping module init, format undump and the unedited prefix. A full
+ * re-instantiate (do_run) is the recovery path. Engine-specific configuration
+ * lives in wasm_engine_profile (engine_wasm_<name>.c); this file is
+ * engine-agnostic.
  */
 
 #include <mupdf/fitz/buffer.h>
@@ -35,6 +36,11 @@
 #include "editor.h"
 #include "engine_wasm.h"
 #include "../engine-wasm/wasm_host.h"
+
+/* Fence stack: at most this many checkpoints (must fit the host's COW layer
+ * cap), spaced by roughly this many bytes of main-document progress. */
+#define WASM_MAX_FENCES 32
+#define FENCE_STRIDE (32 * 1024)
 
 struct wasm_engine
 {
@@ -64,14 +70,20 @@ struct wasm_engine
   bool aux_dirty;
   bool finishing;
 
-  /* per-session snapshot: taken once (format loaded, main doc opened) and
-   * restored on every edit, so replay skips module init + format undump. */
-  bool have_snapshot;
-  bool snap_armed; /* wio_openat armed the snapshot yield this run */
-  mark_t snap_log_mark;
-  struct { fileentry_t *entry; int pos; } snap_fds[MAX_FILES];
-  fileentry_t *snap_doc;  /* main .tex entry as of the snapshot */
-  int snap_doc_seen;      /* bytes of it consumed before the fence (preamble) */
+  /* Fence stack: a checkpoint every ~FENCE_STRIDE bytes of the main document,
+   * layered over the host's COW snapshot stack. fences[i] uses COW layer i. On
+   * an edit we restore the deepest fence taken before the edit and replay only
+   * from there. */
+  struct wasm_fence {
+    mark_t mark;    /* VFS log mark at this fence */
+    int doc_pos;    /* main-document bytes consumed at this fence */
+    struct { fileentry_t *entry; int pos; } fds[MAX_FILES];
+  } fences[WASM_MAX_FENCES];
+  int n_fences;
+  bool want_fence;        /* push a fence at the next read (armed in wio_*) */
+  int last_fence_pos;     /* doc_pos of the most recent fence (for stride) */
+  fileentry_t *doc_entry; /* the main .tex entry, once opened */
+  int edit_pos;           /* earliest edited offset in the main doc (-1 = none) */
 };
 
 TXP_ENGINE_DEF_CLASS;
@@ -156,16 +168,14 @@ static int wio_openat(void *vctx, int dirfd, const char *path, int flags,
     }
   }
 
-  /* Snapshot point: the main document has just been opened. Arm a yield on the
+  /* Base fence (0): the main document has just been opened. Arm a yield on the
    * next read, which fires *before* that read returns data (see fd_read) — so the
-   * snapshot precedes any of the document's bytes entering TeX's line buffer. On
-   * an edit we restore here and re-read the (edited) document, re-running the
-   * whole preamble+body with the format still loaded (skipping module init +
-   * format undump). */
-  if (!write && !self->have_snapshot && !self->snap_armed &&
+   * fence precedes any of the document's bytes entering TeX's line buffer. */
+  if (!write && self->n_fences == 0 && !self->want_fence &&
       strcmp(path, self->name) == 0)
   {
-    self->snap_armed = true;
+    self->doc_entry = e;
+    self->want_fence = true;
     wasm_engine_request_yield();
   }
 
@@ -194,6 +204,16 @@ static ssize_t wio_read(void *vctx, int fd, void *buf, size_t n)
   memcpy(buf, data->data + pos, k);
   self->fds[fd].pos = pos + (int)k;
   if (self->fds[fd].pos > e->seen) e->seen = self->fds[fd].pos;
+
+  /* Arm the next fence once the main document has advanced by a stride. The push
+   * happens at the following read (see do_run), while the engine is suspended. */
+  if (e == self->doc_entry && !self->want_fence &&
+      self->n_fences > 0 && self->n_fences < WASM_MAX_FENCES &&
+      e->seen - self->last_fence_pos >= FENCE_STRIDE)
+  {
+    self->want_fence = true;
+    wasm_engine_request_yield();
+  }
   return (ssize_t)k;
 }
 
@@ -327,70 +347,101 @@ static void reset_for_run(fz_context *ctx, struct wasm_engine *self)
   editor_truncate(BUF_OUT, output_data(self->st.stdout.entry));
   editor_truncate(BUF_LOG, output_data(self->st.log.entry));
   self->aux_dirty = false;
+  self->n_fences = 0;
+  self->want_fence = false;
+  self->last_fence_pos = 0;
+  self->doc_entry = NULL;
+  self->edit_pos = -1;
   fileentry_t *e;
   for (int i = 0; (e = filesystem_scan(self->fs, &i));)
     e->seen = -1;
 }
 
-static void do_replay(fz_context *ctx, struct wasm_engine *self);
+/* Record a fence over the current engine state: a COW layer + the VFS log mark,
+ * the document read position, and the fd table. */
+static void push_fence(fz_context *ctx, struct wasm_engine *self)
+{
+  if (self->n_fences >= WASM_MAX_FENCES) return;
+  wasm_engine_snapshot_push(); /* COW layer index == fence index */
+  struct wasm_fence *f = &self->fences[self->n_fences++];
+  f->mark = log_snapshot(ctx, self->log);
+  f->doc_pos = self->doc_entry ? self->doc_entry->seen : 0;
+  memcpy(f->fds, self->fds, sizeof f->fds);
+  self->last_fence_pos = f->doc_pos;
+}
 
-/* First run of the session: fresh module, run to completion, snapshotting once
- * the main document is first read (armed in wio_openat). */
+/* Resume to completion, pushing a fence whenever one was armed (wio_openat for
+ * the base fence, wio_read for the stride fences). */
+static void run_to_end(fz_context *ctx, struct wasm_engine *self)
+{
+  while (wasm_engine_run())
+    if (self->want_fence)
+    {
+      self->want_fence = false;
+      push_fence(ctx, self);
+    }
+}
+
+/* First run of the session: fresh module instance, run to completion, laying
+ * down fences as the document is consumed. */
 static void do_run(fz_context *ctx, struct wasm_engine *self)
 {
   self->ctx = ctx;
   wasm_host_set_io(&wasm_state_io_ops, self);
   reset_for_run(ctx, self);
-  self->have_snapshot = false;
-  self->snap_armed = false;
   if (wasm_engine_init(self->argc, self->argv) != 0)
   {
     fprintf(stderr, "[wasm] engine init failed\n");
     return;
   }
-  int suspended = wasm_engine_run(); /* runs until the armed yield or exit */
-  if (suspended && self->snap_armed)
-  {
-    self->snap_log_mark = log_snapshot(ctx, self->log);
-    memcpy(self->snap_fds, self->fds, sizeof self->fds);
-    wasm_engine_snapshot();
-    self->have_snapshot = true;
-    self->snap_doc = filesystem_lookup(self->fs, self->name);
-    self->snap_doc_seen = self->snap_doc ? self->snap_doc->seen : 0;
-  }
-  while (wasm_engine_run()) /* resume to completion */
-    ;
+  run_to_end(ctx, self);
   self->ran = true;
   self->dirty = false;
-  fprintf(stderr, "[wasm] run complete: %d pages%s\n",
-          incdvi_page_count(self->dvi),
-          self->have_snapshot ? " (snapshot taken)" : "");
+  fprintf(stderr, "[wasm] run complete: %d pages (%d fences)\n",
+          incdvi_page_count(self->dvi), self->n_fences);
 }
 
-/* Edit: restore the snapshot (format still loaded) + roll the VFS back to that
- * point, then replay only the document from there. */
+/* Edit: restore the deepest fence taken before the edit, roll the VFS back to
+ * it, and replay only from there — re-reading the edited document while the
+ * format stays loaded. */
 static void do_replay(fz_context *ctx, struct wasm_engine *self)
 {
-  if (!self->have_snapshot)
+  if (self->n_fences == 0) /* nothing to restore: full re-instantiate */
   {
     do_run(ctx, self);
     return;
   }
   self->ctx = ctx;
   wasm_host_set_io(&wasm_state_io_ops, self);
-  log_rollback(ctx, self->log, self->snap_log_mark);
-  incdvi_reset(self->dvi);
-  synctex_rollback(ctx, self->stex, 0);
+
+  int k = 0; /* deepest fence taken at or before the edit (fence 0 = whole body) */
+  for (int i = self->n_fences - 1; i >= 0; i--)
+    if (self->fences[i].doc_pos <= self->edit_pos) { k = i; break; }
+  struct wasm_fence *f = &self->fences[k];
+
+  wasm_engine_restore_to(k);
+  log_rollback(ctx, self->log, f->mark);
+  if (self->st.document.entry && self->st.document.entry->saved.data)
+    incdvi_update(ctx, self->dvi, self->st.document.entry->saved.data);
+  else
+    incdvi_reset(self->dvi);
+  if (self->st.synctex.entry && self->st.synctex.entry->saved.data)
+    synctex_update(ctx, self->stex, self->st.synctex.entry->saved.data);
+  else
+    synctex_rollback(ctx, self->stex, 0);
   editor_truncate(BUF_OUT, output_data(self->st.stdout.entry));
   editor_truncate(BUF_LOG, output_data(self->st.log.entry));
   self->aux_dirty = false;
-  wasm_engine_restore();
-  memcpy(self->fds, self->snap_fds, sizeof self->fds); /* authoritative fd state */
-  while (wasm_engine_run()) /* re-read the edited doc from the snapshot point */
-    ;
+  memcpy(self->fds, f->fds, sizeof self->fds); /* authoritative fd state */
+  self->n_fences = k + 1;                       /* deeper fences popped by restore_to */
+  self->last_fence_pos = f->doc_pos;
+  self->want_fence = false;
+  self->edit_pos = -1;
+
+  run_to_end(ctx, self); /* re-read from the fence, re-establishing fences forward */
   self->dirty = false;
-  fprintf(stderr, "[wasm] replay complete: %d pages\n",
-          incdvi_page_count(self->dvi));
+  fprintf(stderr, "[wasm] replay from fence %d: %d pages (%d fences)\n",
+          k, incdvi_page_count(self->dvi), self->n_fences);
 }
 
 /* ---------------- vtable ---------------- */
@@ -406,7 +457,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
   }
   if (self->dirty)
   {
-    do_replay(ctx, self); /* incremental: restore snapshot + replay the doc */
+    do_replay(ctx, self); /* incremental: restore the fence before the edit */
     return true;
   }
   return false; /* nothing pending: the run is atomic */
@@ -449,12 +500,16 @@ static void engine_notify_file_changes(txp_engine *_self, fz_context *ctx,
   SELF;
   (void)ctx;
   self->dirty = true;
-  /* If the edit lands in the stable prefix (the preamble consumed before the
-   * fence), the snapshot baked in the old bytes -> it can't be replayed from.
-   * Invalidate it so the next step does a full run and re-snapshots. */
-  if (self->have_snapshot && entry == self->snap_doc &&
-      offset < self->snap_doc_seen)
-    self->have_snapshot = false;
+  /* Track the earliest edited byte of the main document so do_replay can pick
+   * the fence just before it. An edit to any other file (e.g. an \input) can't
+   * be located on the main-document axis, so fall back to the base fence. */
+  if (entry == self->doc_entry)
+  {
+    if (self->edit_pos < 0 || offset < self->edit_pos)
+      self->edit_pos = offset;
+  }
+  else
+    self->edit_pos = 0;
 }
 
 static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
