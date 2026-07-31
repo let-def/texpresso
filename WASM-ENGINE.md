@@ -138,6 +138,8 @@ snapshot+replay correctness.
 | 2 | Coroutine-stack + mprotect-COW snapshot on linear memory; validate rollback == re-run | snapshot correctness — **done (mprotect COW; PASS, 18/1084 pages)** |
 | 3 | Wire behind `txp_engine` vtable alongside fork engine; xetex next | **xetex renders via wasm2c (glyphs in XDV)** |
 | 3.1 | In-process incremental replay via COW snapshot (per session) | **done — edits re-read + re-render correctly; format kept loaded. Clean completion + `.aux` read-back / cross-ref convergence work.** Root causes fixed: snapshot missed the wasm shadow-stack global (`w2c_g0`); the VFS stat shim returned `st_ino=0`, breaking the engine's kpathsea directory search on replay. Restore is byte-identical; re-instantiate (recovery) also works |
+| 3.2 | Per-engine profiles + code cleanup | **done — `engine_wasm.c` is the generic driver; each engine is one file (`engine_wasm_<name>.c`) over a `wasm_engine_profile` contract. Debug/self-test scaffolding removed.** |
+| 3.3 | Fence stack (fork-engine-equivalent incremental) | **done — layered userland COW (`snapshot_push`/`restore_to`, growth-aware, demand-zero shadows) + a fence every ~32KB of document driven from engine_wasm.c. An edit replays from the deepest fence before it, matching a full re-run page-for-page. Standalone A/B + fence memory self-tests pass.** |
 | 4 | luatex (PUC Lua) | **luatex runs via wasm2c + executes Lua 5.3** (bare `--ini` shipout: WIP) |
 
 ### luatex (Phase 4 notes)
