@@ -9,7 +9,7 @@ DIR=$(BUILD)/frontend
 # scripts/build-wasm2c-<engine>.sh). WASM_DEF is threaded into every compile so
 # main.c picks the wasm engine; WASM_LINK adds the engine to the texpresso link.
 ifdef WASM_ENGINE_DIR
-OBJECTS += engine_wasm.o
+OBJECTS += engine_wasm.o engine_wasm_xetex.o engine_wasm_pdftex.o engine_wasm_luatex.o
 WASM_DEF = -DHAVE_WASM_ENGINE
 WABT_INC = $(shell brew --prefix wabt)/include
 WASM_LINK = $(WASM_ENGINE_DIR)/engine.o \

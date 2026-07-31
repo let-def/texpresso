@@ -11,11 +11,12 @@
  * routed here through the wasm_io_ops seam and answered from texpresso's VFS
  * (state.c fileentry buffers) — no native filesystem, no IPC, no fork.
  *
- * This first version is correct-but-simple: on any edit it rolls the VFS back to
- * the start and replays the whole document from a fresh module instance. The
- * incremental coroutine+COW snapshot/rollback (matching the fork engine's fence
- * machinery) is a later optimization; the mechanism is already proven in the
- * host (TEXPRESSO_SNAPSHOT_TEST).
+ * Editing is incremental: the engine is snapshotted once per session (at the
+ * document's first read, after the format is loaded) via the coroutine+COW
+ * machinery in wasm_host.c, and each edit restores that snapshot and re-reads
+ * the document — skipping module init and format undump. A full re-instantiate
+ * (do_run) is the recovery path. Engine-specific configuration lives in
+ * wasm_engine_profile (engine_wasm_<name>.c); this file is engine-agnostic.
  */
 
 #include <mupdf/fitz/buffer.h>
@@ -32,6 +33,7 @@
 #include "state.h"
 #include "synctex.h"
 #include "editor.h"
+#include "engine_wasm.h"
 #include "../engine-wasm/wasm_host.h"
 
 struct wasm_engine
@@ -40,6 +42,7 @@ struct wasm_engine
 
   char *name;
   char *prog;
+  char *fmtarg; /* "-fmt=<format>" (owned) or NULL */
   int argc;
   char *argv[8];
 
@@ -534,6 +537,7 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
   log_free(ctx, self->log);
   fz_free(ctx, self->name);
   fz_free(ctx, self->prog);
+  fz_free(ctx, self->fmtarg);
   fz_free(ctx, self);
 }
 
@@ -557,7 +561,7 @@ static void setenv_kpse(const char *var, const char *kpsevar)
   pclose(p);
 }
 
-static void wasm_setup_texmf(void)
+static void wasm_setup_texmf(bool needs_icu)
 {
   setenv_kpse("TEXMFROOT", "TEXMFROOT");
   setenv_kpse("TEXMFDIST", "TEXMFDIST");
@@ -573,15 +577,19 @@ static void wasm_setup_texmf(void)
     snprintf(c, sizeof c, "%s:%s/web2c", r, d);
     setenv("TEXMFCNF", c, 1);
   }
-  /* Where our built xelatex.fmt lives (see scripts/build-wasm-fmt.sh). */
+  /* Where our built <fmt>.fmt lives (see scripts/build-wasm-fmt.sh). */
   const char *fmt = getenv("TEXPRESSO_WASM_FMT");
   if (fmt && !getenv("TEXFORMATS")) setenv("TEXFORMATS", fmt, 1);
+  /* xetex reads its ICU data (icudt*.dat) from the same directory. */
+  if (needs_icu && fmt && !getenv("ICU_DATA")) setenv("ICU_DATA", fmt, 1);
 }
 
-txp_engine *txp_create_wasm_engine(fz_context *ctx, const char *engine_path,
+txp_engine *txp_wasm_engine_create(fz_context *ctx,
+                                   const wasm_engine_profile *prof,
+                                   const char *engine_path,
                                    const char *tex_name, dvi_reshooks hooks)
 {
-  wasm_setup_texmf();
+  wasm_setup_texmf(prof->needs_icu);
   struct wasm_engine *self = fz_malloc_struct(ctx, struct wasm_engine);
   self->_class = &_class;
   /* Give the main file an explicit "./" so the engine's kpathsea opens it
@@ -599,9 +607,14 @@ txp_engine *txp_create_wasm_engine(fz_context *ctx, const char *engine_path,
 
   int a = 0;
   self->argv[a++] = self->prog;
-  self->argv[a++] = "-no-pdf"; /* xetex: emit XDV for incdvi (not PDF) */
-  if (getenv("TEXFORMATS")) /* our xelatex.fmt is available -> real LaTeX */
-    self->argv[a++] = "-fmt=xelatex";
+  for (int i = 0; i < 3 && prof->extra_argv[i]; i++)
+    self->argv[a++] = (char *)prof->extra_argv[i];
+  if (prof->format && getenv("TEXFORMATS")) /* our <format>.fmt -> real LaTeX */
+  {
+    self->fmtarg = fz_malloc(ctx, strlen(prof->format) + 6);
+    sprintf(self->fmtarg, "-fmt=%s", prof->format);
+    self->argv[a++] = self->fmtarg;
+  }
   else /* no format: raw primitives only */
     self->argv[a++] = "-ini";
   self->argv[a++] = "-interaction=nonstopmode";
@@ -616,4 +629,19 @@ txp_engine *txp_create_wasm_engine(fz_context *ctx, const char *engine_path,
   self->dvi = incdvi_new(ctx, hooks);
   self->stex = synctex_new(ctx);
   return (txp_engine *)self;
+}
+
+/* Public entry (see engine.h): pick the profile from the engine path. */
+txp_engine *txp_create_wasm_engine(fz_context *ctx, const char *engine_path,
+                                   const char *tex_name, dvi_reshooks hooks)
+{
+  static const wasm_engine_profile *const profiles[] = {
+      &txp_wasm_profile_xetex,
+      &txp_wasm_profile_pdftex,
+      &txp_wasm_profile_luatex,
+  };
+  const wasm_engine_profile *prof = &txp_wasm_profile_xetex; /* default */
+  for (size_t i = 0; i < sizeof profiles / sizeof *profiles; i++)
+    if (strstr(engine_path, profiles[i]->name)) { prof = profiles[i]; break; }
+  return txp_wasm_engine_create(ctx, prof, engine_path, tex_name, hooks);
 }
