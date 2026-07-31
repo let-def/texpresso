@@ -137,7 +137,7 @@ snapshot+replay correctness.
 | 1 | Import/VFS layer + unified `txp_engine` wasm backend driving pdftex with **zero engine patches** | one full compile, no source edits |
 | 2 | Coroutine-stack + mprotect-COW snapshot on linear memory; validate rollback == re-run | snapshot correctness — **done (mprotect COW; PASS, 18/1084 pages)** |
 | 3 | Wire behind `txp_engine` vtable alongside fork engine; xetex next | **xetex renders via wasm2c (glyphs in XDV)** |
-| 3.1 | In-process incremental replay via COW snapshot (per session) | **done — edits re-read + re-render correctly (self-test modes 1/2 PASS); format kept loaded, no re-instantiate.** Follow-up: `.aux` read-back at `\enddocument` aborts on replay (kpathsea `.`-db not resurfaced); pages correct, cross-ref convergence pending |
+| 3.1 | In-process incremental replay via COW snapshot (per session) | **done — edits re-read + re-render correctly; format kept loaded. Clean completion + `.aux` read-back / cross-ref convergence work.** Root causes fixed: snapshot missed the wasm shadow-stack global (`w2c_g0`); the VFS stat shim returned `st_ino=0`, breaking the engine's kpathsea directory search on replay. Restore is byte-identical; re-instantiate (recovery) also works |
 | 4 | luatex (PUC Lua) | **luatex runs via wasm2c + executes Lua 5.3** (bare `--ini` shipout: WIP) |
 
 ### luatex (Phase 4 notes)
