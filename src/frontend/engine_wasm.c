@@ -260,12 +260,25 @@ static int wio_close(void *vctx, int fd)
 
 static void fill_estat(fileentry_t *e, struct stat *s)
 {
-  memset(s, 0, sizeof *s);
-  s->st_mode = S_IFREG | 0644;
-  s->st_nlink = 1;
+  /* Base on the real cached disk stat when we have one: the engine's kpathsea
+   * keys directory identity on st_ino/st_dev, and the first-run disk stat and
+   * the replay's cached stat must agree or kpathsea drops "." from its search
+   * (then a written-then-read file like .aux is not found). fs_stat carries the
+   * real ino/dev/mode/mtime from the first disk read. VFS-only files (never on
+   * disk) get a stable synthetic inode from the entry pointer. Size is always
+   * the current VFS length. */
+  if (e->fs_stat.st_ino != 0)
+    *s = e->fs_stat;
+  else
+  {
+    memset(s, 0, sizeof *s);
+    s->st_mode = S_IFREG | 0644;
+    s->st_nlink = 1;
+    s->st_blksize = 4096;
+    s->st_dev = 1; /* synthetic device for in-memory-only files */
+    s->st_ino = (ino_t)(uintptr_t)e; /* stable across runs (entries persist) */
+  }
   s->st_size = entry_data(e) ? (off_t)entry_data(e)->len : 0;
-  s->st_blksize = 4096;
-  s->st_mtime = e->fs_stat.st_mtime;
 }
 
 static int wio_fstat(void *vctx, int fd, struct stat *s)
