@@ -1234,7 +1234,10 @@ bool texpresso_main(struct persistent_state *ps)
     if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
       ui->eng = txp_create_dvi_engine(ps->ctx, ps->doc_name, hooks);
 #ifdef HAVE_WASM_ENGINE
-    else if (getenv("TEXPRESSO_WASM"))
+    /* The in-process wasm engine is the default TeX engine. The forked engine is
+     * retained only as a transitional fallback (TEXPRESSO_FORK) until it is
+     * removed. */
+    else if (!getenv("TEXPRESSO_FORK"))
     {
       fprintf(stderr, "[info] using in-process wasm engine\n");
       ui->eng = txp_create_wasm_engine(ps->ctx, engine_path, ps->doc_name, hooks);

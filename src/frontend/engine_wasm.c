@@ -616,6 +616,23 @@ static void setenv_kpse(const char *var, const char *kpsevar)
   pclose(p);
 }
 
+/* Default the format directory to engines/wasm-fmt next to the binary, so the
+ * engine works without TEXPRESSO_WASM_FMT being set explicitly. */
+static void locate_wasm_fmt(const char *engine_path)
+{
+  if (getenv("TEXPRESSO_WASM_FMT")) return;
+  char dir[4096];
+  snprintf(dir, sizeof dir, "%s", engine_path);
+  char *slash = strrchr(dir, '/');
+  if (!slash) return;
+  *slash = 0;
+  char cand[4096];
+  snprintf(cand, sizeof cand, "%s/../engines/wasm-fmt", dir);
+  struct stat st;
+  if (stat(cand, &st) == 0 && S_ISDIR(st.st_mode))
+    setenv("TEXPRESSO_WASM_FMT", cand, 1);
+}
+
 static void wasm_setup_texmf(bool needs_icu)
 {
   setenv_kpse("TEXMFROOT", "TEXMFROOT");
@@ -644,6 +661,7 @@ txp_engine *txp_wasm_engine_create(fz_context *ctx,
                                    const char *engine_path,
                                    const char *tex_name, dvi_reshooks hooks)
 {
+  locate_wasm_fmt(engine_path);
   wasm_setup_texmf(prof->needs_icu);
   struct wasm_engine *self = fz_malloc_struct(ctx, struct wasm_engine);
   self->_class = &_class;
