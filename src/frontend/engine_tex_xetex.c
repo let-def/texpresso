@@ -1,7 +1,7 @@
 /* xetex profile for the in-process wasm backend. Validated. */
-#include "engine_wasm.h"
+#include "engine_tex.h"
 
-const wasm_engine_profile txp_wasm_profile_xetex = {
+const tex_engine_profile txp_tex_profile_xetex = {
     .name = "xetex",
     .format = "xelatex",
     .extra_argv = {"-no-pdf", NULL}, /* emit XDV for incdvi, not PDF */

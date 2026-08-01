@@ -1,23 +1,23 @@
-OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o renderer.o engine_tex.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o
+OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o renderer.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o
 
 BUILD=../../build
 DIR=$(BUILD)/frontend
 
-# Optional in-process wasm engine backend. Enable with e.g.:
+# The TeX engine (engine_tex.c) runs in-process via a wasm2c-compiled engine, so
+# building texpresso requires the wasm engine objects. Point WASM_ENGINE_DIR at
+# the wasm2c build dir (from scripts/build-wasm2c-<engine>.sh); it must hold the
+# wasm2c engine.o + wabt runtime .o.
 #   make WASM_ENGINE_DIR=../../engines/build-wasm2c-xetex
-# That dir must hold the wasm2c engine.o + wabt runtime .o (from
-# scripts/build-wasm2c-<engine>.sh). WASM_DEF is threaded into every compile so
-# main.c picks the wasm engine; WASM_LINK adds the engine to the texpresso link.
-ifdef WASM_ENGINE_DIR
-OBJECTS += engine_wasm.o engine_wasm_xetex.o engine_wasm_pdftex.o engine_wasm_luatex.o
-WASM_DEF = -DHAVE_WASM_ENGINE
+ifndef WASM_ENGINE_DIR
+$(error WASM_ENGINE_DIR is required (the wasm2c engine build dir))
+endif
+OBJECTS += engine_tex.o engine_tex_xetex.o engine_tex_pdftex.o engine_tex_luatex.o
 WABT_INC = $(shell brew --prefix wabt)/include
 WASM_LINK = $(WASM_ENGINE_DIR)/engine.o \
             $(WASM_ENGINE_DIR)/wasm-rt-impl.o \
             $(WASM_ENGINE_DIR)/wasm-rt-mem-impl.o \
             $(WASM_ENGINE_DIR)/wasm-rt-exceptions-impl.o \
             $(DIR)/wasm_host_txp.o
-endif
 
 DIR_OBJECTS=$(foreach OBJ,$(OBJECTS),$(DIR)/$(OBJ))
 TARGETS=texpresso texpresso-dev texpresso-debug-proxy texpresso.so
@@ -58,7 +58,7 @@ re2c:
 	$(MAKE) -C ../dvi $@
 
 $(DIR)/%.o: %.c | $(DIR)
-	$(CC) -c -o $@ -I../dvi/ -I../include $(WASM_DEF) $<
+	$(CC) -c -o $@ -I../dvi/ -I../include $<
 
 $(DIR)/libmydvi.a:
 	$(MAKE) -C ../dvi $(DIR)/libmydvi.a
