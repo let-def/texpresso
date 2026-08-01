@@ -75,22 +75,6 @@ static void set_more_recent(uint64_t *time, char **result, char *candidate)
     *result = candidate;
 }
 
-static void find_engine(char engine_path[4096], const char *exec_path)
-{
-  strcpy(engine_path, exec_path);
-  char *basename = NULL;
-  for (int i = 0; i < 4096 && engine_path[i]; ++i)
-    if (engine_path[i] == '/')
-      basename = engine_path + i + 1;
-  uint64_t time = 0;
-  if (basename)
-  {
-    strcpy(basename, "texpresso-xetex");
-    if (!is_more_recent(&time, engine_path))
-      strcpy(engine_path, "texpresso-xetex");
-  }
-}
-
 /* UI state */
 
 enum ui_mouse_status {
@@ -1217,9 +1201,9 @@ bool texpresso_main(struct persistent_state *ps)
     if (*ptr == '.')
       doc_ext = ptr + 1;
 
-  char engine_path[4096];
-  find_engine(engine_path, ps->exe_path);
-  fprintf(stderr, "[info] engine path: %s\n", engine_path);
+  /* The wasm engine uses this only as argv[0] for its kpathsea lstat + to locate
+   * the format dir beside the binary; the texpresso executable itself serves. */
+  const char *engine_path = ps->exe_path;
 
   if (doc_ext && strcmp(doc_ext, "pdf") == 0)
     ui->eng = txp_create_pdf_engine(ps->ctx, ps->doc_name);

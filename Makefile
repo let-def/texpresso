@@ -1,5 +1,9 @@
+# The TeX engine runs in-process from a wasm2c build; point this at it (built by
+# scripts/build-wasm-<eng>.sh + scripts/build-wasm2c-<eng>.sh).
+WASM_ENGINE_DIR ?= engines/build-wasm2c-xetex
+
 all: | Makefile.config
-	$(MAKE) common texpresso texpresso-xetex
+	$(MAKE) common texpresso
 	@echo "# Build succeeded."
 	@echo "# TeXpresso detects package providers (TeXlive or Tectonic) by looking in PATH:"
 	@echo "# - it defaults to Tectonic if the 'tectonic' command is available"
@@ -21,7 +25,7 @@ common: | Makefile.config
 	$(MAKE) -C src/common
 
 texpresso: | Makefile.config
-	$(MAKE) -C src/frontend texpresso
+	$(MAKE) -C src/frontend texpresso WASM_ENGINE_DIR=$(abspath $(WASM_ENGINE_DIR))
 
 dev: | Makefile.config
 	$(MAKE) -C src texpresso-dev
@@ -70,23 +74,12 @@ config:
 	echo >>Makefile.config "LIBS=-L$(BREW)/lib -lmupdf -lm `CC=gcc ./mupdf-config.sh -L$(BREW)/lib` -lz -ljpeg -lharfbuzz -lfreetype -lSDL2"
 endif
 
-texpresso-xetex:
-	$(MAKE) -C src/engine
-
 compile_commands.json:
 	bear -- $(MAKE) -B -k all
 
 fill-tectonic-cache:
 	tectonic --outfmt fmt test/format.tex
 	tectonic --outfmt xdv test/simple.tex
-
-test-texlive:
-	build/texpresso-xetex -texlive test/simple.tex
-	rm simple.aux simple.log simple.xdv
-
-test-tectonic:
-	build/texpresso-xetex -tectonic test/simple.tex
-	rm simple.aux simple.log simple.xdv
 
 test-open-base64:
 	printf '(open-base64 "test/simple.tex" "%s")\n' "$$(base64 < test/simple.tex | tr -d '\n')" | \
