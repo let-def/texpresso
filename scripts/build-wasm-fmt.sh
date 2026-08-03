@@ -1,19 +1,33 @@
 #!/bin/bash
-# Build a LaTeX format (xelatex.fmt) with the wasm xetex engine, using the
-# system TeX Live tree, into engines/wasm-fmt/. This is a one-time artifact
-# (like the wasm binaries): the in-process engine loads it to run real LaTeX
+# Build a LaTeX format (<format>.fmt) with a wasm TeX engine, using the system
+# TeX Live tree, into engines/wasm-fmt/. This is a one-time artifact (like the
+# wasm binaries): the in-process engine loads it per session to run real LaTeX
 # documents instead of re-parsing the kernel every run.
 #
-# Needs: engines/build-wasm2c-xetex/xetex-native (scripts/build-wasm2c-xetex.sh)
+# The format is NOT baked into any binary — texpresso locates engines/wasm-fmt/
+# at startup and passes -fmt=<format> (see locate_wasm_fmt in engine_tex.c).
+#
+# Needs: engines/build-wasm2c-<eng>/<eng>-native (scripts/build-wasm2c-<eng>.sh)
 #        a system TeX Live (found via kpsewhich).
+#
+# Usage: scripts/build-wasm-fmt.sh [xetex|pdftex|luatex]   (default: xetex)
 set -euo pipefail
 
+ENG="${1:-xetex}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/engines/build-wasm2c-xetex/xetex-native"
-DAT="$ROOT/engines/build-wasm-xetex/libs/icu/icu-build/data/out/icudt78l.dat"
+BIN="$ROOT/engines/build-wasm2c-$ENG/$ENG-native"
 FMTDIR="$ROOT/engines/wasm-fmt"
 
-[ -x "$BIN" ] || { echo "missing $BIN — run build-wasm2c-xetex.sh first" >&2; exit 1; }
+# Per-engine: the format to dump and the engine flags INITEX needs. Keep the
+# format names in sync with the profiles in src/frontend/engine_tex_<eng>.c.
+case "$ENG" in
+  xetex)  FMT=xelatex;  INIFLAGS=(-no-pdf) ;;
+  pdftex) FMT=pdflatex; INIFLAGS=() ;;
+  luatex) FMT=lualatex; INIFLAGS=() ;;
+  *) echo "unknown engine: $ENG (expected xetex|pdftex|luatex)" >&2; exit 1 ;;
+esac
+
+[ -x "$BIN" ] || { echo "missing $BIN — run build-wasm2c-$ENG.sh first" >&2; exit 1; }
 command -v kpsewhich >/dev/null || { echo "kpsewhich not found (need a TeX Live install)" >&2; exit 1; }
 
 # Locate the system TeX Live tree. The wasm engine's kpathsea derives the tree
@@ -29,12 +43,21 @@ export TEXMFCNF="$R:$TEXMFDIST/web2c"
 echo "system TeX Live: $R"
 
 mkdir -p "$FMTDIR"
-cp -f "$DAT" "$FMTDIR/"
+
+# xetex needs its ICU data next to the format (ICU_DATA); the others don't.
+if [ "$ENG" = xetex ]; then
+  DAT="$ROOT/engines/build-wasm-xetex/libs/icu/icu-build/data/out/icudt78l.dat"
+  [ -f "$DAT" ] || { echo "missing ICU data $DAT" >&2; exit 1; }
+  cp -f "$DAT" "$FMTDIR/"
+fi
+
 cd "$FMTDIR"
 export ICU_DATA="$FMTDIR"
 
-echo "=== building xelatex.fmt (loads the LaTeX kernel; ~1 min) ==="
-"$BIN" -ini -etex -no-pdf xelatex.ini >/dev/null 2>&1 || true
+echo "=== building $FMT.fmt with $ENG (loads the LaTeX kernel; ~1 min) ==="
+# -etex is required: latex.ltx aborts with "LaTeX requires e-TeX" without it.
+"$BIN" -ini -etex "${INIFLAGS[@]}" -jobname="$FMT" -progname="$FMT" "$FMT.ini" \
+  >/dev/null 2>&1 || true
 
-[ -f "$FMTDIR/xelatex.fmt" ] || { echo "xelatex.fmt NOT produced" >&2; exit 1; }
-echo "built: $FMTDIR/xelatex.fmt ($(wc -c < "$FMTDIR/xelatex.fmt") bytes)"
+[ -f "$FMTDIR/$FMT.fmt" ] || { echo "$FMT.fmt NOT produced" >&2; exit 1; }
+echo "built: $FMTDIR/$FMT.fmt ($(wc -c < "$FMTDIR/$FMT.fmt") bytes)"

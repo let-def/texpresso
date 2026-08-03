@@ -13,24 +13,33 @@ $(error WASM_ENGINE_DIR is required (the wasm2c engine build dir))
 endif
 OBJECTS += engine_tex.o engine_tex_xetex.o engine_tex_pdftex.o engine_tex_luatex.o
 WABT_INC = $(shell brew --prefix wabt)/include
+
+# Model A: one binary per engine. The frontend objects are engine-independent
+# and shared; only the host shim is engine-specific (it is compiled against
+# that engine's wasm2c engine.h), so it gets a per-engine object name.
+# The profile is selected at runtime from the binary's name — see
+# txp_create_tex_engine — so TEX_ENGINE must match the binary suffix.
+TEX_ENGINE ?= xetex
+TEXPRESSO_BIN ?= $(BUILD)/texpresso
+
 WASM_LINK = $(WASM_ENGINE_DIR)/engine.o \
             $(WASM_ENGINE_DIR)/wasm-rt-impl.o \
             $(WASM_ENGINE_DIR)/wasm-rt-mem-impl.o \
             $(WASM_ENGINE_DIR)/wasm-rt-exceptions-impl.o \
-            $(DIR)/wasm_host_txp.o
+            $(DIR)/wasm_host_txp-$(TEX_ENGINE).o
 
 DIR_OBJECTS=$(foreach OBJ,$(OBJECTS),$(DIR)/$(OBJ))
 TARGETS=texpresso texpresso-dev texpresso-debug-proxy texpresso.so
 
 all: $(TARGETS)
 
-texpresso: $(BUILD)/texpresso
-$(BUILD)/texpresso: $(DIR)/driver.o $(DIR)/main.o $(DIR)/logo.o $(DIR_OBJECTS) $(WASM_LINK) $(DIR)/libmydvi.a $(BUILD)/common/libcommon.a
+texpresso: $(TEXPRESSO_BIN)
+$(TEXPRESSO_BIN): $(DIR)/driver.o $(DIR)/main.o $(DIR)/logo.o $(DIR_OBJECTS) $(WASM_LINK) $(DIR)/libmydvi.a $(BUILD)/common/libcommon.a
 	$(LDCC) -o $@ $^ $(LIBS)
 
 # host shim for texpresso: library mode (no main), against the chosen engine.
 # Plain cc (not $(CC)) so the frontend's -I. doesn't shadow the wasm2c engine.h.
-$(DIR)/wasm_host_txp.o: ../engine-wasm/wasm_host.c | $(DIR)
+$(DIR)/wasm_host_txp-$(TEX_ENGINE).o: ../engine-wasm/wasm_host.c | $(DIR)
 	cc -O2 -c -o $@ -DWASM_HOST_NO_MAIN -I$(WABT_INC) -I$(WASM_ENGINE_DIR) $<
 
 texpresso-dev: $(BUILD)/texpresso-dev

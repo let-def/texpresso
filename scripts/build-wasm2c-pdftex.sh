@@ -5,12 +5,12 @@
 # host (src/engine-wasm/wasm_host.c) drives pdftex and xetex unchanged.
 #
 # Prerequisite: scripts/build-wasm-pdftex.sh.
-# Output: engines/build-wasm2c/pdftex-native
+# Output: engines/build-wasm2c-pdftex/pdftex-native
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WASM="$ROOT/engines/build-wasm/texk/web2c/pdftex.wasm"
-OUT="$ROOT/engines/build-wasm2c"
+WASM="$ROOT/engines/build-wasm-pdftex/texk/web2c/pdftex.wasm"
+OUT="$ROOT/engines/build-wasm2c-pdftex"
 HOST="$ROOT/src/engine-wasm/wasm_host.c"
 
 [ -f "$WASM" ] || { echo "missing $WASM — run build-wasm-pdftex.sh first" >&2; exit 1; }

@@ -27,6 +27,23 @@ common: | Makefile.config
 texpresso: | Makefile.config
 	$(MAKE) -C src/frontend texpresso WASM_ENGINE_DIR=$(abspath $(WASM_ENGINE_DIR))
 
+# Model A: one binary per engine (build/texpresso-<eng>), each linking only its
+# own wasm2c engine. The engine profile is picked at runtime from the binary
+# name, so the suffix is load-bearing. Each needs engines/build-wasm2c-<eng>
+# (scripts/build-wasm2c-<eng>.sh) and its format (scripts/build-wasm-fmt.sh <eng>).
+TEX_ENGINES = xetex pdftex luatex
+ENGINE_BINS = $(addprefix texpresso-,$(TEX_ENGINES))
+
+$(ENGINE_BINS): texpresso-%: | Makefile.config
+	$(MAKE) common
+	$(MAKE) -C src/frontend texpresso \
+	  TEX_ENGINE=$* \
+	  WASM_ENGINE_DIR=$(abspath engines/build-wasm2c-$*) \
+	  TEXPRESSO_BIN=../../build/texpresso-$*
+
+engines: $(ENGINE_BINS)
+	@echo "# Built: $(addprefix build/texpresso-,$(TEX_ENGINES))"
+
 dev: | Makefile.config
 	$(MAKE) -C src texpresso-dev
 
@@ -110,4 +127,4 @@ macos-app: texpresso
 	@[ "$$(uname)" = "Darwin" ] || { echo "macos-app requires macOS"; exit 1; }
 	bash scripts/build-macos-app.sh
 
-.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file test-rerun macos-app
+.PHONY: all dev clean config texpresso common engines $(ENGINE_BINS) re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file test-rerun macos-app

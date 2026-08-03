@@ -9,17 +9,19 @@
 # the ~4 "_js" imports (time/abort) are implemented in C by the host.
 #
 # Prerequisites: scripts/fetch-engines.sh (source), and emcc on PATH.
-# Output: engines/build-wasm/texk/web2c/pdftex.wasm
+# Output: engines/build-wasm-pdftex/texk/web2c/pdftex.wasm
 set -euo pipefail
 
 export EMCC_SKIP_SANITY_CHECK=1
 
 WASMFLAGS="-O2 -sSUPPORT_LONGJMP=wasm -fwasm-exceptions"
-LINKFLAGS="-sSUPPORT_LONGJMP=wasm -fwasm-exceptions"
+# ALLOW_MEMORY_GROWTH: pdftex xmallocs ~40 MB while dumping a format; the
+# default fixed 16 MB heap aborts with "fatal: memory exhausted".
+LINKFLAGS="-sSUPPORT_LONGJMP=wasm -fwasm-exceptions -sALLOW_MEMORY_GROWTH=1"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/engines/texlive-source"
-BUILD="$ROOT/engines/build-wasm"
+BUILD="$ROOT/engines/build-wasm-pdftex"
 
 [ -d "$SRC" ] || { echo "run scripts/fetch-engines.sh first" >&2; exit 1; }
 command -v emcc >/dev/null || { echo "emcc not on PATH (install emscripten)" >&2; exit 1; }
