@@ -27,6 +27,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <time.h>
 #include <sys/stat.h>
 #include "engine.h"
 #include "incdvi.h"
@@ -37,12 +38,17 @@
 #include "engine_tex.h"
 #include "../engine-wasm/wasm_host.h"
 
-/* Fence stack: a checkpoint every FENCE_STRIDE bytes of main-document progress,
- * up to WASM_MAX_FENCES (must fit the host's COW layer cap). Fences are cheap
- * (~tens of KB each — only the used stack top + dirtied pages are copied), so
- * the stride can be fine; the cap bounds total coverage (STRIDE * MAX). */
-#define WASM_MAX_FENCES 256
-#define FENCE_STRIDE (4 * 1024)
+/* Incremental replay via a checkpoint stack + a time-stamped read trace, ported
+ * from the fork engine (compute_fences). Checkpoints are COW layers laid down as
+ * the document is consumed, spaced by elapsed *time* (SNAP_INTERVAL_MS) so they
+ * cluster where the engine actually spends compute. On an edit, compute_fences()
+ * walks the trace backward from the edit with exponentially growing time gaps
+ * and selects target positions (dense in time near the edit); the replay lays
+ * checkpoints there, so each rollback re-runs roughly equal time. Checkpoints
+ * are cheap (~tens of KB each), so the cap can be generous. */
+#define WASM_MAX_FENCES 256   /* checkpoint (COW layer) cap; must fit the host's */
+#define WASM_MAX_TARGETS 16   /* fences compute_fences may place per edit */
+#define SNAP_INTERVAL_MS 20   /* min elapsed time between time-based checkpoints */
 
 struct wasm_engine
 {
@@ -72,18 +78,27 @@ struct wasm_engine
   bool aux_dirty;
   bool finishing;
 
-  /* Fence stack: a checkpoint every ~FENCE_STRIDE bytes of the main document,
-   * layered over the host's COW snapshot stack. fences[i] uses COW layer i. On
-   * an edit we restore the deepest fence taken before the edit and replay only
-   * from there. */
-  struct wasm_fence {
-    mark_t mark;    /* VFS log mark at this fence */
-    int doc_pos;    /* main-document bytes consumed at this fence */
+  /* Checkpoint stack: ckpts[i] uses the host's COW layer i. Each snapshots the
+   * VFS mark, the document read position, the trace length, and the fd table. */
+  struct wasm_ckpt {
+    mark_t mark;
+    int doc_pos;   /* main-document bytes consumed at this checkpoint */
+    int trace_len; /* trace length at this checkpoint */
     struct { fileentry_t *entry; int pos; } fds[MAX_FILES];
-  } fences[WASM_MAX_FENCES];
-  int n_fences;
-  bool want_fence;        /* push a fence at the next read (armed in wio_*) */
-  int last_fence_pos;     /* doc_pos of the most recent fence (for stride) */
+  } ckpts[WASM_MAX_FENCES];
+  int n_ckpts;
+
+  /* Read trace: (position, time) per document read; fed by wio_read. */
+  struct wasm_trace_ent { int seen; int time; } *trace;
+  int trace_len, trace_cap;
+
+  /* Targets computed by compute_fences for the current replay (ascending
+   * positions to lay checkpoints at). */
+  int targets[WASM_MAX_TARGETS];
+  int n_targets, target_idx;
+
+  bool want_ckpt;         /* lay a checkpoint at the next read (armed in wio_*) */
+  int last_ckpt_ms;       /* wall time of the last checkpoint (time spacing) */
   fileentry_t *doc_entry; /* the main .tex entry, once opened */
   int edit_pos;           /* earliest edited offset in the main doc (-1 = none) */
 };
@@ -109,6 +124,29 @@ static char *last_ext(const char *path)
 {
   const char *dot = strrchr(path, '.');
   return (char *)(dot ? dot : "");
+}
+
+/* Monotonic wall time in ms — used only to space checkpoints (does not affect
+ * engine output, which runs on the virtualized clock). */
+static int now_ms(void)
+{
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (int)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
+/* Append a (document position, time) point to the read trace. */
+static void record_trace(struct wasm_engine *self, int seen, int time)
+{
+  if (self->trace_len == self->trace_cap)
+  {
+    int cap = self->trace_cap ? self->trace_cap * 2 : 256;
+    self->trace = realloc(self->trace, cap * sizeof *self->trace);
+    self->trace_cap = cap;
+  }
+  self->trace[self->trace_len].seen = seen;
+  self->trace[self->trace_len].time = time;
+  self->trace_len++;
 }
 
 /* ---------------- io_ops: the VFS seam, backed by state.c ---------------- */
@@ -170,14 +208,14 @@ static int wio_openat(void *vctx, int dirfd, const char *path, int flags,
     }
   }
 
-  /* Base fence (0): the main document has just been opened. Arm a yield on the
-   * next read, which fires *before* that read returns data (see fd_read) — so the
-   * fence precedes any of the document's bytes entering TeX's line buffer. */
-  if (!write && self->n_fences == 0 && !self->want_fence &&
+  /* Base checkpoint (0): the main document has just been opened. Arm a yield on
+   * the next read (fires before it returns data; see fd_read) so the checkpoint
+   * precedes any of the document's bytes entering TeX's line buffer. */
+  if (!write && self->n_ckpts == 0 && !self->want_ckpt &&
       strcmp(path, self->name) == 0)
   {
     self->doc_entry = e;
-    self->want_fence = true;
+    self->want_ckpt = true;
     wasm_engine_request_yield();
   }
 
@@ -207,14 +245,31 @@ static ssize_t wio_read(void *vctx, int fd, void *buf, size_t n)
   self->fds[fd].pos = pos + (int)k;
   if (self->fds[fd].pos > e->seen) e->seen = self->fds[fd].pos;
 
-  /* Arm the next fence once the main document has advanced by a stride. The push
-   * happens at the following read (see do_run), while the engine is suspended. */
-  if (e == self->doc_entry && !self->want_fence &&
-      self->n_fences > 0 && self->n_fences < WASM_MAX_FENCES &&
-      e->seen - self->last_fence_pos >= FENCE_STRIDE)
+  /* Record the read in the trace and decide whether to lay a checkpoint here.
+   * During a replay we checkpoint at each compute_fences target (dense, in time,
+   * near the edit); otherwise we checkpoint by elapsed time (coarse coverage).
+   * The push happens at the next read (see run_to_end), engine suspended. */
+  if (e == self->doc_entry)
   {
-    self->want_fence = true;
-    wasm_engine_request_yield();
+    int t = now_ms();
+    record_trace(self, e->seen, t);
+    if (!self->want_ckpt && self->n_ckpts > 0 && self->n_ckpts < WASM_MAX_FENCES)
+    {
+      int hit_target = self->target_idx < self->n_targets &&
+                       e->seen >= self->targets[self->target_idx];
+      int by_time = t - self->last_ckpt_ms >= SNAP_INTERVAL_MS;
+      if (hit_target)
+      {
+        while (self->target_idx < self->n_targets &&
+               e->seen >= self->targets[self->target_idx])
+          self->target_idx++;
+      }
+      if (hit_target || by_time)
+      {
+        self->want_ckpt = true;
+        wasm_engine_request_yield();
+      }
+    }
   }
   return (ssize_t)k;
 }
@@ -349,9 +404,11 @@ static void reset_for_run(fz_context *ctx, struct wasm_engine *self)
   editor_truncate(BUF_OUT, output_data(self->st.stdout.entry));
   editor_truncate(BUF_LOG, output_data(self->st.log.entry));
   self->aux_dirty = false;
-  self->n_fences = 0;
-  self->want_fence = false;
-  self->last_fence_pos = 0;
+  self->n_ckpts = 0;
+  self->trace_len = 0;
+  self->n_targets = self->target_idx = 0;
+  self->want_ckpt = false;
+  self->last_ckpt_ms = now_ms();
   self->doc_entry = NULL;
   self->edit_pos = -1;
   fileentry_t *e;
@@ -359,33 +416,68 @@ static void reset_for_run(fz_context *ctx, struct wasm_engine *self)
     e->seen = -1;
 }
 
-/* Record a fence over the current engine state: a COW layer + the VFS log mark,
- * the document read position, and the fd table. */
-static void push_fence(fz_context *ctx, struct wasm_engine *self)
+/* Snapshot the current engine state as a checkpoint (COW layer + VFS mark +
+ * document position + trace length + fd table). */
+static void push_ckpt(fz_context *ctx, struct wasm_engine *self)
 {
-  if (self->n_fences >= WASM_MAX_FENCES) return;
-  wasm_engine_snapshot_push(); /* COW layer index == fence index */
-  struct wasm_fence *f = &self->fences[self->n_fences++];
-  f->mark = log_snapshot(ctx, self->log);
-  f->doc_pos = self->doc_entry ? self->doc_entry->seen : 0;
-  memcpy(f->fds, self->fds, sizeof f->fds);
-  self->last_fence_pos = f->doc_pos;
+  if (self->n_ckpts >= WASM_MAX_FENCES) return;
+  wasm_engine_snapshot_push(); /* COW layer index == checkpoint index */
+  struct wasm_ckpt *c = &self->ckpts[self->n_ckpts++];
+  c->mark = log_snapshot(ctx, self->log);
+  c->doc_pos = self->doc_entry ? self->doc_entry->seen : 0;
+  c->trace_len = self->trace_len;
+  memcpy(c->fds, self->fds, sizeof c->fds);
+  self->last_ckpt_ms = now_ms();
 }
 
-/* Resume to completion, pushing a fence whenever one was armed (wio_openat for
- * the base fence, wio_read for the stride fences). */
+/* Resume to completion, laying a checkpoint whenever one was armed. */
 static void run_to_end(fz_context *ctx, struct wasm_engine *self)
 {
   while (wasm_engine_run())
-    if (self->want_fence)
+    if (self->want_ckpt)
     {
-      self->want_fence = false;
-      push_fence(ctx, self);
+      self->want_ckpt = false;
+      push_ckpt(ctx, self);
     }
 }
 
+/* compute_fences (ported from the fork engine): choose the checkpoint to restore
+ * to for an edit at `edit_pos`, and fill self->targets[] (ascending positions)
+ * with fences spaced exponentially in *time* backward from the edit — dense
+ * where the engine spent compute. Returns the restore checkpoint index. */
+static int compute_fences(struct wasm_engine *self, int edit_pos)
+{
+  self->n_targets = self->target_idx = 0;
+  int tl = self->trace_len;
+  if (tl == 0) return 0;
+
+  int ti = tl - 1; /* last read boundary at or before the edit */
+  while (ti > 0 && self->trace[ti].seen > edit_pos) ti--;
+
+  int k = 0; /* deepest checkpoint taken at or before that trace point */
+  for (int i = self->n_ckpts - 1; i >= 0; i--)
+    if (self->ckpts[i].trace_len <= ti) { k = i; break; }
+  int stop = self->ckpts[k].trace_len;
+
+  int tmp[WASM_MAX_TARGETS], n = 0;
+  tmp[n++] = self->trace[ti].seen; /* nearest read boundary to the edit */
+  int delta = SNAP_INTERVAL_MS;
+  int thresh = self->trace[ti].time - delta;
+  for (int t = ti - 1; t >= stop && n < WASM_MAX_TARGETS; t--)
+    if (self->trace[t].time <= thresh)
+    {
+      tmp[n++] = self->trace[t].seen;
+      thresh -= delta;
+      delta *= 2;
+    }
+  for (int i = 0; i < n; i++) /* reverse into ascending order */
+    self->targets[i] = tmp[n - 1 - i];
+  self->n_targets = n;
+  return k;
+}
+
 /* First run of the session: fresh module instance, run to completion, laying
- * down fences as the document is consumed. */
+ * time-spaced checkpoints as the document is consumed. */
 static void do_run(fz_context *ctx, struct wasm_engine *self)
 {
   self->ctx = ctx;
@@ -399,16 +491,16 @@ static void do_run(fz_context *ctx, struct wasm_engine *self)
   run_to_end(ctx, self);
   self->ran = true;
   self->dirty = false;
-  fprintf(stderr, "[wasm] run complete: %d pages (%d fences)\n",
-          incdvi_page_count(self->dvi), self->n_fences);
+  fprintf(stderr, "[wasm] run complete: %d pages (%d checkpoints)\n",
+          incdvi_page_count(self->dvi), self->n_ckpts);
 }
 
-/* Edit: restore the deepest fence taken before the edit, roll the VFS back to
- * it, and replay only from there — re-reading the edited document while the
- * format stays loaded. */
+/* Edit: restore the checkpoint compute_fences selects, roll the VFS back to it,
+ * and replay from there — laying the computed (time-exponential) fences and
+ * re-reading the edited document while the format stays loaded. */
 static void do_replay(fz_context *ctx, struct wasm_engine *self)
 {
-  if (self->n_fences == 0) /* nothing to restore: full re-instantiate */
+  if (self->n_ckpts == 0) /* nothing to restore: full re-instantiate */
   {
     do_run(ctx, self);
     return;
@@ -416,13 +508,11 @@ static void do_replay(fz_context *ctx, struct wasm_engine *self)
   self->ctx = ctx;
   wasm_host_set_io(&wasm_state_io_ops, self);
 
-  int k = 0; /* deepest fence taken at or before the edit (fence 0 = whole body) */
-  for (int i = self->n_fences - 1; i >= 0; i--)
-    if (self->fences[i].doc_pos <= self->edit_pos) { k = i; break; }
-  struct wasm_fence *f = &self->fences[k];
+  int k = compute_fences(self, self->edit_pos);
+  struct wasm_ckpt *c = &self->ckpts[k];
 
   wasm_engine_restore_to(k);
-  log_rollback(ctx, self->log, f->mark);
+  log_rollback(ctx, self->log, c->mark);
   if (self->st.document.entry && self->st.document.entry->saved.data)
     incdvi_update(ctx, self->dvi, self->st.document.entry->saved.data);
   else
@@ -434,16 +524,17 @@ static void do_replay(fz_context *ctx, struct wasm_engine *self)
   editor_truncate(BUF_OUT, output_data(self->st.stdout.entry));
   editor_truncate(BUF_LOG, output_data(self->st.log.entry));
   self->aux_dirty = false;
-  memcpy(self->fds, f->fds, sizeof self->fds); /* authoritative fd state */
-  self->n_fences = k + 1;                       /* deeper fences popped by restore_to */
-  self->last_fence_pos = f->doc_pos;
-  self->want_fence = false;
+  memcpy(self->fds, c->fds, sizeof self->fds); /* authoritative fd state */
+  self->n_ckpts = k + 1;                        /* deeper checkpoints popped by restore_to */
+  self->trace_len = c->trace_len;               /* trace back to the checkpoint */
+  self->want_ckpt = false;
+  self->last_ckpt_ms = now_ms();
   self->edit_pos = -1;
 
-  run_to_end(ctx, self); /* re-read from the fence, re-establishing fences forward */
+  run_to_end(ctx, self);
   self->dirty = false;
-  fprintf(stderr, "[wasm] replay from fence %d: %d pages (%d fences)\n",
-          k, incdvi_page_count(self->dvi), self->n_fences);
+  fprintf(stderr, "[wasm] replay from checkpoint %d: %d pages (%d checkpoints)\n",
+          k, incdvi_page_count(self->dvi), self->n_ckpts);
 }
 
 /* ---------------- vtable ---------------- */
@@ -595,6 +686,7 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
   fz_free(ctx, self->name);
   fz_free(ctx, self->prog);
   fz_free(ctx, self->fmtarg);
+  free(self->trace);
   fz_free(ctx, self);
 }
 
