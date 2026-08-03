@@ -395,6 +395,8 @@ static const wasm_io_ops wasm_state_io_ops = {
 
 /* ---------------- run / replay ---------------- */
 
+static void clear_convergence_stash(fz_context *ctx, struct wasm_engine *self);
+
 static void reset_for_run(fz_context *ctx, struct wasm_engine *self)
 {
   memset(self->fds, 0, sizeof self->fds);
@@ -500,6 +502,7 @@ static void do_run(fz_context *ctx, struct wasm_engine *self)
  * re-reading the edited document while the format stays loaded. */
 static void do_replay(fz_context *ctx, struct wasm_engine *self)
 {
+  clear_convergence_stash(ctx, self); /* a real edit invalidates prior convergence */
   if (self->n_ckpts == 0) /* nothing to restore: full re-instantiate */
   {
     do_run(ctx, self);
@@ -667,12 +670,79 @@ static bool engine_aux_dirty(txp_engine *_self) { SELF; return self->aux_dirty; 
 static bool engine_is_finishing(txp_engine *_self) { SELF; return self->finishing; }
 static void engine_start_finishing(txp_engine *_self) { SELF; self->finishing = true; }
 
+/* Files TeX writes that are outputs, not inputs to a later pass: excluded from
+ * convergence stashing/comparison (only .aux/.toc/.out/... feed the next pass). */
+static bool is_system_output(const char *path)
+{
+  if (strcmp(path, "stdout") == 0) return true;
+  const char *dot = strrchr(path, '.');
+  if (!dot) return false;
+  return strcmp(dot, ".log") == 0 || strcmp(dot, ".xdv") == 0 ||
+         strcmp(dot, ".dvi") == 0 || strcmp(dot, ".pdf") == 0 ||
+         strcmp(dot, ".synctex") == 0;
+}
+
+/* Drop convergence stashes (edit_data planted by finish_convergence). Called on
+ * a genuine user edit so the next pass regenerates aux from scratch rather than
+ * reading a stale stash. */
+static void clear_convergence_stash(fz_context *ctx, struct wasm_engine *self)
+{
+  fileentry_t *e;
+  for (int i = 0; (e = filesystem_scan(self->fs, &i));)
+    if (e->edit_data_from_convergence && e->edit_data)
+    {
+      fz_drop_buffer(ctx, e->edit_data);
+      e->edit_data = NULL;
+      e->edit_data_from_convergence = false;
+    }
+}
+
+/* One convergence pass. The editor requests a rerun (start_finishing); once the
+ * current pass has terminated we compare each written aux-type file against the
+ * stash left by the previous rerun. If all match, LaTeX has converged and the
+ * displayed pass is final. Otherwise we stash the fresh aux into edit_data (so
+ * the read path serves it once do_run rolls saved.data back to NULL) and do a
+ * full re-run — which reads the stashed aux and typesets TOC/refs. */
 static void engine_finish_convergence(txp_engine *_self, fz_context *ctx)
 {
   SELF;
-  (void)ctx;
-  /* Reruns/convergence: Phase 3 (needs the aux-stash logic from engine_tex.c). */
+  if (!self->finishing) return;
+  if (engine_get_status(_self) != DOC_TERMINATED) return;
   self->finishing = false;
+
+  bool converged = true;
+  fileentry_t *e;
+  for (int i = 0; (e = filesystem_scan(self->fs, &i));)
+  {
+    if (e->saved.level != FILE_WRITE || !e->saved.data) continue;
+    if (is_system_output(e->path)) continue;
+    bool match = e->edit_data && e->edit_data_from_convergence &&
+                 e->saved.data->len == e->edit_data->len &&
+                 memcmp(e->saved.data->data, e->edit_data->data,
+                        e->saved.data->len) == 0;
+    if (!match) { converged = false; break; }
+  }
+
+  if (converged)
+  {
+    fprintf(stderr, "[rerun] aux byte-stable, convergence reached\n");
+    self->aux_dirty = false;
+    return;
+  }
+
+  /* Stash current aux outputs, then full re-run to read them. */
+  for (int i = 0; (e = filesystem_scan(self->fs, &i));)
+  {
+    if (e->saved.level != FILE_WRITE || !e->saved.data) continue;
+    if (is_system_output(e->path)) continue;
+    if (e->edit_data && !e->edit_data_from_convergence) continue; /* editor-owned */
+    if (e->edit_data) fz_drop_buffer(ctx, e->edit_data);
+    e->edit_data = fz_new_buffer_from_copied_data(ctx, e->saved.data->data,
+                                                  e->saved.data->len);
+    e->edit_data_from_convergence = true;
+  }
+
+  do_run(ctx, self); /* fresh instance reads the stashed aux -> builds TOC/refs */
 }
 
 static void engine_destroy(txp_engine *_self, fz_context *ctx)
