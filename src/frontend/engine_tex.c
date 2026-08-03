@@ -37,10 +37,12 @@
 #include "engine_tex.h"
 #include "../engine-wasm/wasm_host.h"
 
-/* Fence stack: at most this many checkpoints (must fit the host's COW layer
- * cap), spaced by roughly this many bytes of main-document progress. */
-#define WASM_MAX_FENCES 32
-#define FENCE_STRIDE (32 * 1024)
+/* Fence stack: a checkpoint every FENCE_STRIDE bytes of main-document progress,
+ * up to WASM_MAX_FENCES (must fit the host's COW layer cap). Fences are cheap
+ * (~tens of KB each — only the used stack top + dirtied pages are copied), so
+ * the stride can be fine; the cap bounds total coverage (STRIDE * MAX). */
+#define WASM_MAX_FENCES 256
+#define FENCE_STRIDE (4 * 1024)
 
 struct wasm_engine
 {

@@ -56,9 +56,13 @@ static char **g_argv;
 
 /* ---- coroutine: run the engine on a dedicated fixed-address stack ---- */
 #define ENGINE_STACK_SIZE (32u * 1024u * 1024u)
+/* Slack copied below the yield frame so swapcontext's own frame + red zone are
+ * included in a fence's stack snapshot. */
+#define STACK_MARGIN (64u * 1024u)
 static ucontext_t g_host_ctx;   /* where the engine yields back to */
 static ucontext_t g_engine_ctx; /* the engine's suspended state */
 static void *g_engine_stack;
+static uint8_t *g_engine_sp;    /* approx stack pointer at the last yield */
 static w2c_engine g_module; /* the single engine instance */
 static struct w2c_env g_env;
 static struct w2c_wasi__snapshot__preview1 g_wasi;
@@ -78,8 +82,13 @@ static long long g_epoch;
 static int g_defer_close; /* snapshot test: keep fds open so rollback can reset
                              their positions instead of them being closed */
 
-/* Switch from engine back to host (called from imports on the engine stack). */
-static void engine_yield(void) { swapcontext(&g_engine_ctx, &g_host_ctx); }
+/* Switch from engine back to host (called from imports on the engine stack).
+ * Record the frame address so a fence copies only the *used* top of the stack
+ * (it grows down; everything below is dead), not the whole 32 MB. */
+static void engine_yield(void) {
+  g_engine_sp = (uint8_t *)__builtin_frame_address(0);
+  swapcontext(&g_engine_ctx, &g_host_ctx);
+}
 
 static void engine_trampoline(void) {
   w2c_engine_0x5F_main_argc_argv(g_mod, (u32)g_entry_argc, g_entry_argv);
@@ -899,7 +908,7 @@ u32 w2c_env_0x5Fmunmap_js(struct w2c_env *e, u32 addr, u32 len, u32 prot,
  * per layer (all small). Base is fixed (WASM_RT_USE_MMAP); growth past the base
  * fence's size is zeroed on restore (TeX preallocates after the format loads). */
 #define FNV_INIT 1469598103934665603ull
-#define MAX_SNAP_LAYERS 32
+#define MAX_SNAP_LAYERS 256
 
 typedef struct {
   uint8_t *shadow; /* mmap(cap) demand-zero: original pages of this window */
@@ -907,7 +916,8 @@ typedef struct {
   uint64_t cap;    /* bytes the shadow/bitmap cover (grows with the memory) */
   wasm_rt_memory_t meminfo;
   u32 g0;
-  uint8_t *stack; /* copy of the coroutine stack */
+  uint8_t *stack;         /* copy of the used top of the coroutine stack */
+  uint64_t stack_off, stack_len; /* region copied: [g_engine_stack+off, +off+len) */
   ucontext_t ctx;
   off_t fdpos[64];
 } snap_layer;
@@ -980,8 +990,16 @@ static void layer_capture(snap_layer *L) {
   L->saved = calloc(bits_for(L->cap), 1);
   L->meminfo = m->w2c_memory;
   L->g0 = m->w2c_g0;
-  L->stack = malloc(ENGINE_STACK_SIZE);
-  memcpy(L->stack, g_engine_stack, ENGINE_STACK_SIZE);
+  /* copy only the used top of the stack (it grows down from the end; the yield
+   * SP marks the live boundary, minus a margin for swapcontext's own frame). */
+  uint8_t *base = (uint8_t *)g_engine_stack;
+  uint8_t *top = base + ENGINE_STACK_SIZE;
+  uint8_t *lo = g_engine_sp ? g_engine_sp - STACK_MARGIN : base;
+  if (lo < base) lo = base;
+  L->stack_off = (uint64_t)(lo - base);
+  L->stack_len = (uint64_t)(top - lo);
+  L->stack = malloc(L->stack_len);
+  memcpy(L->stack, lo, L->stack_len);
   L->ctx = g_engine_ctx;
   /* fd positions via the io backend (native fds for standalone; texpresso's
    * log owns positions for the state.c backend, whose lseek is harmless here). */
@@ -1055,7 +1073,7 @@ static void snapshot_restore_to(int k) {
     memset(g_cow_base + K->meminfo.size, 0, g_cow_size - K->meminfo.size);
   m->w2c_memory = K->meminfo;
   m->w2c_g0 = K->g0;
-  memcpy(g_engine_stack, K->stack, ENGINE_STACK_SIZE);
+  memcpy((uint8_t *)g_engine_stack + K->stack_off, K->stack, K->stack_len);
   g_engine_ctx = K->ctx;
   for (int fd = 0; fd < 64; fd++)
     if (K->fdpos[fd] != (off_t)-1)
