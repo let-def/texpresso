@@ -17,7 +17,12 @@ export EMCC_SKIP_SANITY_CHECK=1
 WASMFLAGS="-O2 -sSUPPORT_LONGJMP=wasm -fwasm-exceptions"
 # ALLOW_MEMORY_GROWTH: pdftex xmallocs ~40 MB while dumping a format; the
 # default fixed 16 MB heap aborts with "fatal: memory exhausted".
-LINKFLAGS="-sSUPPORT_LONGJMP=wasm -fwasm-exceptions -sALLOW_MEMORY_GROWTH=1"
+# STACK_SIZE: emscripten defaults the wasm shadow stack to 64 KB. TeX's
+# recursive typesetting (line_break and friends) overruns that, and the
+# overflow is SILENT: the shadow stack grows down out of its region and
+# overwrites the data segment, zeroing C globals. That surfaced as bogus
+# "node" errors in luatex, far from the real cause. Keep this generous.
+LINKFLAGS="-sSUPPORT_LONGJMP=wasm -fwasm-exceptions -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=16MB"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/engines/texlive-source"

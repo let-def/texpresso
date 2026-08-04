@@ -19,7 +19,12 @@ export EMCC_SKIP_SANITY_CHECK=1
 WASMFLAGS="-O2 -sSUPPORT_LONGJMP=wasm -fwasm-exceptions"
 # ALLOW_MEMORY_GROWTH: xetex xmallocs ~72 MB at startup; the default 16 MB
 # non-growable heap exhausts. wasm2c (mmap-reserved) grows fine.
-LINKFLAGS="-sSUPPORT_LONGJMP=wasm -fwasm-exceptions -sALLOW_MEMORY_GROWTH=1"
+# STACK_SIZE: emscripten defaults the wasm shadow stack to 64 KB. TeX's
+# recursive typesetting (line_break and friends) overruns that, and the
+# overflow is SILENT: the shadow stack grows down out of its region and
+# overwrites the data segment, zeroing C globals. That surfaced as bogus
+# "node" errors in luatex, far from the real cause. Keep this generous.
+LINKFLAGS="-sSUPPORT_LONGJMP=wasm -fwasm-exceptions -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=16MB"
 # harfbuzz promotes warnings to errors via in-source #pragma GCC diagnostic;
 # emscripten's newer clang fires some (e.g. -Wunused-template). Its own opt-out:
 CXXWASMFLAGS="$WASMFLAGS -DHB_NO_PRAGMA_GCC_DIAGNOSTIC_ERROR"

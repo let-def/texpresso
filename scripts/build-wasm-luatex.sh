@@ -14,7 +14,12 @@ set -euo pipefail
 export EMCC_SKIP_SANITY_CHECK=1
 
 WASMFLAGS="-O2 -sSUPPORT_LONGJMP=wasm -fwasm-exceptions"
-LINKFLAGS="-sSUPPORT_LONGJMP=wasm -fwasm-exceptions -sALLOW_MEMORY_GROWTH=1"
+# STACK_SIZE: emscripten defaults the wasm shadow stack to 64 KB. TeX's
+# recursive typesetting (line_break and friends) overruns that, and the
+# overflow is SILENT: the shadow stack grows down out of its region and
+# overwrites the data segment, zeroing C globals. That surfaced as bogus
+# "node" errors in luatex, far from the real cause. Keep this generous.
+LINKFLAGS="-sSUPPORT_LONGJMP=wasm -fwasm-exceptions -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=16MB"
 CXXWASMFLAGS="$WASMFLAGS -DHB_NO_PRAGMA_GCC_DIAGNOSTIC_ERROR"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

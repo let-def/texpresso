@@ -903,10 +903,18 @@ u32 w2c_env_0x5Fmunmap_js(struct w2c_env *e, u32 addr, u32 len, u32 prot,
  * ends at its state as of fence k — then pops the deeper layers. Cost is O(pages
  * written since the fence), not O(heap). Each layer's shadow is mmap'd
  * demand-zero, so physical memory tracks only pages actually dirtied, not
- * layers x heap. The engine stack, registers, wasm global g0 (the shadow-stack
- * pointer, which lives outside linear memory) and fd positions are full-copied
- * per layer (all small). Base is fixed (WASM_RT_USE_MMAP); growth past the base
- * fence's size is zeroed on restore (TeX preallocates after the format loads). */
+ * layers x heap. The engine stack, registers, the module's wasm globals (the
+ * shadow-stack pointer and friends, which live outside linear memory) and fd
+ * positions are full-copied per layer (all small). Base is fixed
+ * (WASM_RT_USE_MMAP); growth past the base fence's size is zeroed on restore
+ * (TeX preallocates after the format loads).
+ *
+ * The globals are snapshotted by copying the whole w2c_engine struct rather than
+ * naming them: how many there are and what they are called differs per engine
+ * and per build (xetex exposes one, `w2c_g0`; luatex exposes three, and a wasm
+ * that kept its name section spells them `w2c_0x5F_stack_pointer` etc.). The
+ * struct also holds the memory/table descriptors, which restore overwrites from
+ * the layer anyway, so copying it wholesale is both complete and engine-agnostic. */
 #define FNV_INIT 1469598103934665603ull
 #define MAX_SNAP_LAYERS 256
 
@@ -915,7 +923,7 @@ typedef struct {
   uint8_t *saved;  /* bitmap: page saved in this layer's window */
   uint64_t cap;    /* bytes the shadow/bitmap cover (grows with the memory) */
   wasm_rt_memory_t meminfo;
-  u32 g0;
+  w2c_engine mod; /* module struct: all wasm globals (+ memory/table descriptors) */
   uint8_t *stack;         /* copy of the used top of the coroutine stack */
   uint64_t stack_off, stack_len; /* region copied: [g_engine_stack+off, +off+len) */
   ucontext_t ctx;
@@ -989,7 +997,7 @@ static void layer_capture(snap_layer *L) {
                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   L->saved = calloc(bits_for(L->cap), 1);
   L->meminfo = m->w2c_memory;
-  L->g0 = m->w2c_g0;
+  L->mod = *m;
   /* copy only the used top of the stack (it grows down from the end; the yield
    * SP marks the live boundary, minus a margin for swapcontext's own frame). */
   uint8_t *base = (uint8_t *)g_engine_stack;
@@ -1071,8 +1079,8 @@ static void snapshot_restore_to(int k) {
   snap_layer *K = &g_layers[k];
   if (g_cow_size > K->meminfo.size) /* zero what grew past fence k's live size */
     memset(g_cow_base + K->meminfo.size, 0, g_cow_size - K->meminfo.size);
-  m->w2c_memory = K->meminfo;
-  m->w2c_g0 = K->g0;
+  *m = K->mod;              /* wasm globals (shadow-stack pointer et al.) */
+  m->w2c_memory = K->meminfo; /* authoritative: base fixed, size as of fence k */
   memcpy((uint8_t *)g_engine_stack + K->stack_off, K->stack, K->stack_len);
   g_engine_ctx = K->ctx;
   for (int fd = 0; fd < 64; fd++)
