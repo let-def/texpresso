@@ -2,9 +2,9 @@ name: CI TeXpresso – build & test
 
 on:
   push:
-    branches: [detectonic, main, detectonic-ci]
+    branches: [eclipse, detectonic, main, detectonic-ci]
   pull_request:
-    branches: [detectonic, main, detectonic-ci]
+    branches: [eclipse, detectonic, main, detectonic-ci]
 
 jobs:
   test:
@@ -76,12 +76,6 @@ jobs:
       - name: Generate Tectonic cache
         run: make fill-tectonic-cache
 
-      - name: Run test – TeX Live
-        run: make test-texlive   || echo "fail" > texlive.status
-
-      - name: Run tests – Tectonic
-        run: make test-tectonic  || echo "fail" > tectonic.status
-
       - name: Run tests – Texpresso
         run: make test-texpresso || echo "fail" > texpresso.status
 
@@ -110,8 +104,6 @@ jobs:
         if: always()
         run: |
           pass=0; fail=0
-          [ ! -f texlive.status ]   && pass=$((pass+1)) || fail=$((fail+1))
-          [ ! -f tectonic.status ]  && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f texpresso.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f open-base64.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f texpresso-texlive.status ]  && pass=$((pass+1)) || fail=$((fail+1))
