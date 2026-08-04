@@ -469,7 +469,22 @@ void w2c_wasi__snapshot__preview1_proc_exit(struct w2c_wasi__snapshot__preview1 
  * Return the syscall result; negative -errno on failure (emscripten's musl
  * translates that into errno). Stubs return -ENOSYS. */
 
-static uint32_t neg_errno(int e) { return (uint32_t)(-e); }
+/* The engine's musl expects Linux errno numbers. Most agree with the host's,
+ * but a few do not (macOS ENOSYS is 78 vs 38; EAGAIN/EDEADLK are swapped), so
+ * a stub returning -ENOSYS would report something else entirely. Map those;
+ * on Linux every case assigns its own value and this is a no-op. */
+static uint32_t neg_errno(int e) {
+  switch (e) {
+    case EAGAIN:        e = 11; break;
+    case EDEADLK:       e = 35; break;
+    case ENAMETOOLONG:  e = 36; break;
+    case ENOSYS:        e = 38; break;
+    case ENOTEMPTY:     e = 39; break;
+    case ELOOP:         e = 40; break;
+    default: break;
+  }
+  return (uint32_t)(-e);
+}
 
 /* Linux AT_FDCWD is -100; the host's differs (macOS -2). Translate. */
 #define L_AT_FDCWD ((uint32_t)-100)
@@ -873,7 +888,7 @@ u32 w2c_env_0x5Fmmap_js(struct w2c_env *e, u32 len, u32 prot, u32 flags, u32 fd,
   (void)prot; (void)flags;
   if (g_trace) fprintf(stderr, "[mmap_js] fd=%d len=%u off=%llu\n", (int)fd, len,
                        (unsigned long long)offset);
-  if ((int)fd < 0) return (uint32_t)(-38); /* -ENOSYS: let musl do anon */
+  if ((int)fd < 0) return neg_errno(ENOSYS); /* let musl do anon */
   uint32_t ptr = w2c_engine_emscripten_builtin_memalign(m, 65536, len);
   if (!ptr) return (uint32_t)(-12); /* -ENOMEM */
   /* pread via the io backend (fd may be a VFS handle, not a native fd). */
