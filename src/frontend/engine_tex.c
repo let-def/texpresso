@@ -102,6 +102,8 @@ struct wasm_engine
   /* Missing-file reports, resolved at end of run (see notify_missing). */
   struct { char path[WASM_MISS_PATH]; unsigned bhash; } miss[WASM_MISS_MAX];
   int n_miss;
+  fileentry_t *deferred; /* awaiting the editor for this entry */
+  bool suspended;        /* run stopped mid-way on a deferred query */
   unsigned resolved[WASM_MISS_MAX * 2]; /* basenames opened successfully */
   bool want_ckpt;         /* lay a checkpoint at the next read (armed in wio_*) */
   int last_ckpt_ms;       /* wall time of the last checkpoint (time spacing) */
@@ -159,6 +161,7 @@ static void record_trace(struct wasm_engine *self, int seen, int time)
 
 static void notify_missing(struct wasm_engine *self, const char *path);
 static void mark_resolved(struct wasm_engine *self, const char *path);
+static bool defer_if_promised(struct wasm_engine *self, const char *path);
 
 static int wio_openat(void *vctx, int dirfd, const char *path, int flags,
                       mode_t mode)
@@ -181,6 +184,12 @@ static int wio_openat(void *vctx, int dirfd, const char *path, int flags,
         struct stat st;
         if (stat(path, &st) != 0)
         {
+          if (defer_if_promised(self, path))
+          {
+            e->saved.level = FILE_READ;
+            if (e->seen < 0) e->seen = 0;
+            goto opened;
+          }
           notify_missing(self, path);
           errno = ENOENT;
           return -1;
@@ -236,6 +245,7 @@ static int wio_openat(void *vctx, int dirfd, const char *path, int flags,
     wasm_engine_request_yield();
   }
 
+opened:
   mark_resolved(self, path);
   editor_notify_lookup(path, strlen(path), !write, LOOKUP_SUCCESSFUL);
 
@@ -429,6 +439,24 @@ static void notify_missing(struct wasm_engine *self, const char *path)
   self->n_miss++;
 }
 
+/* The editor can pre-register a file it will supply ((register) -> promised).
+ * When the engine asks for one that is not there yet, tell the editor and
+ * suspend; the main loop keeps pumping commands, and the (open) that follows
+ * resumes us right here with the content in place. */
+static bool defer_if_promised(struct wasm_engine *self, const char *path)
+{
+  while (path[0] == '.' && path[1] == '/') path += 2;
+  fileentry_t *e = filesystem_lookup(self->fs, path);
+  if (!e || !e->promised || entry_data(e) || self->deferred) return false;
+
+  editor_notify_lookup(path, strlen(path), true, LOOKUP_PROMISED);
+  editor_flush();
+  self->deferred = e;
+  wasm_engine_yield_now();
+  self->deferred = NULL;
+  return entry_data(e) != NULL;
+}
+
 /* Report the candidates nothing ever resolved. */
 static void flush_missing(struct wasm_engine *self)
 {
@@ -458,6 +486,7 @@ static int wio_statat(void *vctx, int dirfd, const char *path, struct stat *s,
   fileentry_t *e = filesystem_lookup(self->fs, path);
   if (e && entry_data(e)) { fill_estat(e, s); mark_resolved(self, path); return 0; }
   int r = stat(path, s); /* existence probe hits disk (read-only) */
+  if (r < 0 && defer_if_promised(self, path)) { fill_estat(e ? e : filesystem_lookup(self->fs, path), s); return 0; }
   if (r < 0) notify_missing(self, path); else mark_resolved(self, path);
   return r;
 }
@@ -470,6 +499,7 @@ static int wio_accessat(void *vctx, int dirfd, const char *path, int amode,
   fileentry_t *e = filesystem_lookup(self->fs, path);
   if (e && entry_data(e)) { mark_resolved(self, path); return 0; }
   int r = access(path, amode);
+  if (r < 0 && defer_if_promised(self, path)) return 0;
   if (r < 0) notify_missing(self, path); else mark_resolved(self, path);
   return r;
 }
@@ -498,6 +528,8 @@ static void reset_for_run(fz_context *ctx, struct wasm_engine *self)
   self->last_ckpt_ms = now_ms();
   self->n_miss = 0;
   memset(self->resolved, 0, sizeof self->resolved);
+  self->deferred = NULL;
+  self->suspended = false;
   self->doc_entry = NULL;
   self->edit_pos = -1;
   fileentry_t *e;
@@ -523,11 +555,29 @@ static void push_ckpt(fz_context *ctx, struct wasm_engine *self)
 static void run_to_end(fz_context *ctx, struct wasm_engine *self)
 {
   while (wasm_engine_run())
+  {
+    if (self->deferred) { self->suspended = true; return; }
     if (self->want_ckpt)
     {
       self->want_ckpt = false;
       push_ckpt(ctx, self);
     }
+  }
+  self->suspended = false;
+}
+
+/* Shared tail of a completed run. */
+static void finish_run(struct wasm_engine *self, const char *what, int k)
+{
+  flush_missing(self);
+  self->ran = true;
+  self->dirty = false;
+  if (k < 0)
+    fprintf(stderr, "[wasm] %s: %d pages (%d checkpoints)\n", what,
+            incdvi_page_count(self->dvi), self->n_ckpts);
+  else
+    fprintf(stderr, "[wasm] %s %d: %d pages (%d checkpoints)\n", what, k,
+            incdvi_page_count(self->dvi), self->n_ckpts);
 }
 
 /* compute_fences (ported from the fork engine): choose the checkpoint to restore
@@ -578,11 +628,8 @@ static void do_run(fz_context *ctx, struct wasm_engine *self)
     return;
   }
   run_to_end(ctx, self);
-  flush_missing(self);
-  self->ran = true;
-  self->dirty = false;
-  fprintf(stderr, "[wasm] run complete: %d pages (%d checkpoints)\n",
-          incdvi_page_count(self->dvi), self->n_ckpts);
+  if (self->suspended) return;
+  finish_run(self, "run complete", -1);
 }
 
 /* Edit: restore the checkpoint compute_fences selects, roll the VFS back to it,
@@ -623,10 +670,8 @@ static void do_replay(fz_context *ctx, struct wasm_engine *self)
   self->edit_pos = -1;
 
   run_to_end(ctx, self);
-  flush_missing(self);
-  self->dirty = false;
-  fprintf(stderr, "[wasm] replay from checkpoint %d: %d pages (%d checkpoints)\n",
-          k, incdvi_page_count(self->dvi), self->n_ckpts);
+  if (self->suspended) return;
+  finish_run(self, "replay from checkpoint", k);
 }
 
 /* ---------------- vtable ---------------- */
@@ -634,6 +679,14 @@ static void do_replay(fz_context *ctx, struct wasm_engine *self)
 static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_needed)
 {
   SELF;
+  if (self->suspended) /* editor answered a deferred query: carry on */
+  {
+    self->ctx = ctx;
+    wasm_host_set_io(&wasm_state_io_ops, self);
+    run_to_end(ctx, self);
+    if (!self->suspended) finish_run(self, "run complete", -1);
+    return true;
+  }
   if (!self->ran)
   {
     if (!restart_if_needed) return false;
@@ -731,7 +784,8 @@ static txp_engine_status engine_get_status(txp_engine *_self)
 {
   SELF;
   /* atomic run model: RUNNING only until the first (or a replay) run finishes */
-  return (!self->ran || self->dirty) ? DOC_RUNNING : DOC_TERMINATED;
+  return (!self->ran || self->dirty || self->suspended) ? DOC_RUNNING
+                                                       : DOC_TERMINATED;
 }
 
 static float engine_scale_factor(txp_engine *_self)

@@ -1168,6 +1168,7 @@ int wasm_engine_run(void) {
 }
 int wasm_engine_exited(void) { return g_engine_done; }
 void wasm_engine_request_yield(void) { g_yield_next_read = 1; }
+void wasm_engine_yield_now(void) { engine_yield(); }
 void wasm_engine_snapshot(void) { snapshot_discard(); snapshot_push(); }
 void wasm_engine_restore(void) { snapshot_restore_to(0); }
 int wasm_engine_snapshot_push(void) { return snapshot_push(); }

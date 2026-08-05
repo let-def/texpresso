@@ -57,6 +57,10 @@ int wasm_engine_exited(void); /* nonzero once the engine has returned/exited */
 /* Request that the engine suspend on its next input read (a snapshot point). */
 void wasm_engine_request_yield(void);
 
+/* Suspend immediately. Callable only from an io_ops callback (i.e. on the
+ * engine stack); wasm_engine_run() returns and a later call resumes here. */
+void wasm_engine_yield_now(void);
+
 /* Copy-on-write snapshot of the whole execution state.
  * Snapshots form a stack (fences): snapshot()/restore() are the single-layer
  * shortcut (reset to one base fence and restore to it). For the fence stack,
