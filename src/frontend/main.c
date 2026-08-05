@@ -391,14 +391,16 @@ static int SDLCALL poll_stdin_thread_main(void *data)
   }
 }
 
-static bool poll_stdin(void)
+static bool poll_stdin_ms(int timeout)
 {
   struct pollfd fd;
   fd.fd = STDIN_FILENO;
   fd.events = POLLRDNORM;
   fd.revents = 0;
-  return (poll(&fd, 1, 0) == 1) && ((fd.revents & POLLRDNORM) != 0);
+  return (poll(&fd, 1, timeout) == 1) && ((fd.revents & POLLRDNORM) != 0);
 }
+
+static bool poll_stdin(void) { return poll_stdin_ms(0); }
 
 static void wakeup_poll_thread(int poll_stdin_pipe[2], char c)
 {
@@ -1121,6 +1123,54 @@ static void interpret_command(struct persistent_state *ps,
   }
 }
 
+/* Read and interpret whatever the editor has already sent. `timeout` applies to
+ * the first poll only, so a caller can give the editor a moment to speak.
+ * Returns the new stdin-EOF state. */
+static bool pump_stdin(struct persistent_state *ps, ui_state *ui,
+                       prot_parser *cmd_parser, vstack *cmd_stack,
+                       bool stdin_eof, int timeout)
+{
+  char buffer[4096];
+  int n = -1;
+  while (!stdin_eof && poll_stdin_ms(timeout) &&
+         (n = read(STDIN_FILENO, buffer, 4096)) != 0)
+  {
+    timeout = 0;
+    if (n == -1)
+    {
+      if (errno == EINTR)
+        continue;
+      perror("poll stdin");
+      break;
+    }
+
+    fprintf(stderr, "stdin: %.*s\n", n, buffer);
+
+    const char *ptr = buffer, *lim = buffer + n;
+    fz_try(ps->ctx)
+    {
+      while ((ptr = prot_parse(ps->ctx, cmd_parser, cmd_stack, ptr, lim)))
+      {
+        val cmds = vstack_get_values(ps->ctx, cmd_stack);
+        int n_cmds = val_array_length(ps->ctx, cmd_stack, cmds);
+        for (int i = 0; i < n_cmds; i++)
+        {
+          val cmd = val_array_get(ps->ctx, cmd_stack, cmds, i);
+          interpret_command(ps, ui, cmd_stack, cmd);
+        }
+      }
+    }
+    fz_catch(ps->ctx)
+    {
+      fprintf(stderr, "error while reading stdin commands: %s\n",
+              fz_caught_message(ps->ctx));
+      vstack_reset(ps->ctx, cmd_stack);
+      prot_reinitialize(cmd_parser);
+    }
+  }
+  return (n == 0) ? true : stdin_eof;
+}
+
 static void sync_fullscreen_state(struct fullscreen_state *fs,
                                   txp_renderer_config *config,
                                   SDL_Window *win)
@@ -1247,8 +1297,6 @@ bool texpresso_main(struct persistent_state *ps)
   ui->last_click_ticks = SDL_GetTicks() - 200000000;
 
   bool quit = 0, reload = 0;
-  if (!ps->paused)
-    send(step, ui->eng, ps->ctx, true);
   render(ps->ctx, ui);
   schedule_event(RELOAD_EVENT);
 
@@ -1270,6 +1318,17 @@ bool texpresso_main(struct persistent_state *ps)
   SDL_Thread *poll_stdin_thread =
     SDL_CreateThread(poll_stdin_thread_main, "poll_stdin_thread", poll_stdin_pipe);
   bool stdin_eof = 0;
+
+  /* Drain the editor's opening commands before the first compile. That compile
+   * runs to completion, so anything still unread — notably (register), which
+   * says "I will supply this file" — would arrive after the engine had already
+   * looked for it. The forked engine hid this: it spent ~a second on fork, exec
+   * and format load, while in-process we reach the first lookup in ms. */
+  send(begin_changes, ui->eng, ps->ctx);
+  stdin_eof = pump_stdin(ps, ui, &cmd_parser, cmd_stack, stdin_eof, 100);
+  send(end_changes, ui->eng, ps->ctx);
+  if (!ps->paused)
+    send(step, ui->eng, ps->ctx, true);
   int rerun_count = 0;
 
   while (!quit)
@@ -1279,43 +1338,7 @@ bool texpresso_main(struct persistent_state *ps)
 
     // Process stdin
     send(begin_changes, ui->eng, ps->ctx);
-    char buffer[4096];
-    int n = -1;
-    while (!stdin_eof && poll_stdin() && (n = read(STDIN_FILENO, buffer, 4096)) != 0)
-    {
-      if (n == -1)
-      {
-        if (errno == EINTR)
-          continue;
-        perror("poll stdin");
-        break;
-      }
-
-      fprintf(stderr, "stdin: %.*s\n", n, buffer);
-
-      const char *ptr = buffer, *lim = buffer + n;
-      fz_try(ps->ctx)
-      {
-        while ((ptr = prot_parse(ps->ctx, &cmd_parser, cmd_stack, ptr, lim)))
-        {
-          val cmds = vstack_get_values(ps->ctx, cmd_stack);
-          int n_cmds = val_array_length(ps->ctx, cmd_stack, cmds);
-          for (int i = 0; i < n_cmds; i++)
-          {
-            val cmd = val_array_get(ps->ctx, cmd_stack, cmds, i);
-            interpret_command(ps, ui, cmd_stack, cmd);
-          }
-        }
-      }
-      fz_catch(ps->ctx)
-      {
-        fprintf(stderr, "error while reading stdin commands: %s\n",
-                fz_caught_message(ps->ctx));
-        vstack_reset(ps->ctx, cmd_stack);
-        prot_reinitialize(&cmd_parser);
-      }
-    }
-    if (n == 0) stdin_eof = 1;
+    stdin_eof = pump_stdin(ps, ui, &cmd_parser, cmd_stack, stdin_eof, 0);
 
     if (send(end_changes, ui->eng, ps->ctx))
     {
