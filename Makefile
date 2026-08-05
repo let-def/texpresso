@@ -27,6 +27,23 @@ common: | Makefile.config
 texpresso: | Makefile.config
 	$(MAKE) -C src/frontend texpresso WASM_ENGINE_DIR=$(abspath $(WASM_ENGINE_DIR))
 
+# ---- Getting an engine ------------------------------------------------------
+# Tier 1 (engine developers): build from pinned upstream TeX Live sources.
+#   make engine-source ENGINE=xetex     # needs emscripten + wabt; slow
+# Tier 2 (everyone else): download the prebuilt engine.c bundle and compile it.
+#   make fetch-engine ENGINE=xetex      # needs only a C compiler
+# Neither runs as part of `make all`: a build should not reach the network on
+# its own.
+ENGINE ?= xetex
+
+fetch-engine:
+	bash scripts/fetch-wasm-engine.sh $(ENGINE)
+
+engine-source:
+	bash scripts/fetch-engines.sh
+	bash scripts/build-wasm-$(ENGINE).sh
+	bash scripts/build-wasm2c-$(ENGINE).sh
+
 # Model A: one binary per engine (build/texpresso-<eng>), each linking only its
 # own wasm2c engine. The engine profile is picked at runtime from the binary
 # name, so the suffix is load-bearing. Each needs engines/build-wasm2c-<eng>
@@ -127,4 +144,4 @@ macos-app: texpresso
 	@[ "$$(uname)" = "Darwin" ] || { echo "macos-app requires macOS"; exit 1; }
 	bash scripts/build-macos-app.sh
 
-.PHONY: all dev clean config texpresso common engines $(ENGINE_BINS) re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file test-rerun macos-app
+.PHONY: all dev clean config texpresso common engines fetch-engine engine-source $(ENGINE_BINS) re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file test-rerun macos-app

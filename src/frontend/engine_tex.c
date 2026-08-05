@@ -29,6 +29,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include "engine.h"
 #include "incdvi.h"
 #include "mydvi.h"
@@ -894,6 +895,37 @@ static void locate_wasm_fmt(const char *engine_path)
     setenv("TEXPRESSO_WASM_FMT", cand, 1);
 }
 
+static bool dir_has_icu(const char *dir)
+{
+  DIR *d = opendir(dir);
+  if (!d) return false;
+  bool found = false;
+  struct dirent *e;
+  while (!found && (e = readdir(d)))
+    found = !strncmp(e->d_name, "icudt", 5) && strstr(e->d_name, ".dat");
+  closedir(d);
+  return found;
+}
+
+/* ICU data belongs to the engine, not to the TeX tree: it is built from the ICU
+ * inside our wasm, so it must match this engine rather than the user's TeX Live.
+ * Look where the engine bundle unpacks, then beside the binary for a flat
+ * install. Formats are elsewhere — we never ship those. */
+static void locate_icu_data(const char *engine_path, const char *engine_name)
+{
+  if (getenv("ICU_DATA")) return;
+  char dir[4096];
+  snprintf(dir, sizeof dir, "%s", engine_path);
+  char *slash = strrchr(dir, '/');
+  if (!slash) return;
+  *slash = 0;
+
+  char cand[4096];
+  snprintf(cand, sizeof cand, "%s/../engines/build-wasm2c-%s", dir, engine_name);
+  if (dir_has_icu(cand)) { setenv("ICU_DATA", cand, 1); return; }
+  if (dir_has_icu(dir)) setenv("ICU_DATA", dir, 1);
+}
+
 static void wasm_setup_texmf(bool needs_icu)
 {
   setenv_kpse("TEXMFROOT", "TEXMFROOT");
@@ -923,6 +955,7 @@ txp_engine *txp_tex_engine_create(fz_context *ctx,
                                    const char *tex_name, dvi_reshooks hooks)
 {
   locate_wasm_fmt(engine_path);
+  if (prof->needs_icu) locate_icu_data(engine_path, prof->name);
   wasm_setup_texmf(prof->needs_icu);
   struct wasm_engine *self = fz_malloc_struct(ctx, struct wasm_engine);
   self->_class = &_class;

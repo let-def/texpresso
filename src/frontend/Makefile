@@ -11,8 +11,14 @@ DIR=$(BUILD)/frontend
 ifndef WASM_ENGINE_DIR
 $(error WASM_ENGINE_DIR is required (the wasm2c engine build dir))
 endif
+ifeq ($(wildcard $(WASM_ENGINE_DIR)/engine.c)$(wildcard $(WASM_ENGINE_DIR)/engine.o),)
+$(error No engine in $(WASM_ENGINE_DIR). Get one with `make fetch-engine` (prebuilt, needs only a C compiler) or `make engine-source` (builds from TeX Live sources; needs emscripten + wabt))
+endif
 OBJECTS += engine_tex.o engine_tex_xetex.o engine_tex_pdftex.o engine_tex_luatex.o
-WABT_INC = $(shell brew --prefix wabt)/include
+# A fetched engine bundle vendors the wabt runtime headers, so it needs no wabt
+# install — which is what lets Linux/CI build without brew. Fall back to a
+# local wabt only when building against a raw wasm2c output directory.
+WABT_INC = $(if $(wildcard $(WASM_ENGINE_DIR)/wasm-rt.h),$(WASM_ENGINE_DIR),$(shell brew --prefix wabt)/include)
 
 # Model A: one binary per engine. The frontend objects are engine-independent
 # and shared; only the host shim is engine-specific (it is compiled against
@@ -27,6 +33,12 @@ WASM_LINK = $(WASM_ENGINE_DIR)/engine.o \
             $(WASM_ENGINE_DIR)/wasm-rt-mem-impl.o \
             $(WASM_ENGINE_DIR)/wasm-rt-exceptions-impl.o \
             $(DIR)/wasm_host_txp-$(TEX_ENGINE).o
+
+
+# An engine bundle ships portable C, not objects — compile it here. A local
+# wasm2c build already leaves .o beside the .c, so this stays a no-op there.
+$(WASM_ENGINE_DIR)/%.o: $(WASM_ENGINE_DIR)/%.c
+	cc -O2 -I$(WABT_INC) -I$(WASM_ENGINE_DIR) -I../engine-wasm -c -o $@ $<
 
 DIR_OBJECTS=$(foreach OBJ,$(OBJECTS),$(DIR)/$(OBJ))
 TARGETS=texpresso texpresso-dev texpresso-debug-proxy texpresso.so

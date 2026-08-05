@@ -38,4 +38,9 @@ cc -O2 -o xetex-native \
    wasm_host.o engine.o wasm-rt-impl.o wasm-rt-mem-impl.o wasm-rt-exceptions-impl.o \
    -lm
 
+# ICU data belongs with the engine (it is built from the ICU inside this wasm),
+# so keep it beside engine.c rather than with the formats.
+DAT="$ROOT/engines/build-wasm-xetex/libs/icu/icu-build/data/out/icudt78l.dat"
+[ -f "$DAT" ] && cp -f "$DAT" "$OUT/" && echo "icu data: $OUT/$(basename "$DAT")"
+
 echo "built: $OUT/xetex-native"

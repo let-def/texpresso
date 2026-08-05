@@ -44,15 +44,14 @@ echo "system TeX Live: $R"
 
 mkdir -p "$FMTDIR"
 
-# xetex needs its ICU data next to the format (ICU_DATA); the others don't.
+# xetex needs ICU_DATA; it ships with the engine, not with the formats.
 if [ "$ENG" = xetex ]; then
-  DAT="$ROOT/engines/build-wasm-xetex/libs/icu/icu-build/data/out/icudt78l.dat"
-  [ -f "$DAT" ] || { echo "missing ICU data $DAT" >&2; exit 1; }
-  cp -f "$DAT" "$FMTDIR/"
+  DAT="$(ls "$ROOT/engines/build-wasm2c-xetex"/icudt*.dat 2>/dev/null | head -1)"
+  [ -f "$DAT" ] || { echo "missing ICU data in engines/build-wasm2c-xetex" >&2; exit 1; }
+  export ICU_DATA="$(dirname "$DAT")"
 fi
 
 cd "$FMTDIR"
-export ICU_DATA="$FMTDIR"
 
 echo "=== building $FMT.fmt with $ENG (loads the LaTeX kernel; ~1 min) ==="
 # -etex is required: latex.ltx aborts with "LaTeX requires e-TeX" without it.
