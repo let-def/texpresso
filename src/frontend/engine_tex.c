@@ -46,7 +46,8 @@
  * and selects target positions (dense in time near the edit); the replay lays
  * checkpoints there, so each rollback re-runs roughly equal time. Checkpoints
  * are cheap (~tens of KB each), so the cap can be generous. */
-#define WASM_MISS_SEEN 128    /* dedupe set for reported missing files */
+#define WASM_MISS_MAX 64      /* pending missing-file reports per run */
+#define WASM_MISS_PATH 160
 #define WASM_MAX_FENCES 256   /* checkpoint (COW layer) cap; must fit the host's */
 #define WASM_MAX_TARGETS 16   /* fences compute_fences may place per edit */
 #define SNAP_INTERVAL_MS 20   /* min elapsed time between time-based checkpoints */
@@ -98,7 +99,10 @@ struct wasm_engine
   int targets[WASM_MAX_TARGETS];
   int n_targets, target_idx;
 
-  unsigned miss_seen[WASM_MISS_SEEN]; /* hashes of missing files already reported */
+  /* Missing-file reports, resolved at end of run (see notify_missing). */
+  struct { char path[WASM_MISS_PATH]; unsigned bhash; } miss[WASM_MISS_MAX];
+  int n_miss;
+  unsigned resolved[WASM_MISS_MAX * 2]; /* basenames opened successfully */
   bool want_ckpt;         /* lay a checkpoint at the next read (armed in wio_*) */
   int last_ckpt_ms;       /* wall time of the last checkpoint (time spacing) */
   fileentry_t *doc_entry; /* the main .tex entry, once opened */
@@ -154,6 +158,7 @@ static void record_trace(struct wasm_engine *self, int seen, int time)
 /* ---------------- io_ops: the VFS seam, backed by state.c ---------------- */
 
 static void notify_missing(struct wasm_engine *self, const char *path);
+static void mark_resolved(struct wasm_engine *self, const char *path);
 
 static int wio_openat(void *vctx, int dirfd, const char *path, int flags,
                       mode_t mode)
@@ -180,6 +185,9 @@ static int wio_openat(void *vctx, int dirfd, const char *path, int flags,
           errno = ENOENT;
           return -1;
         }
+        /* kpathsea opens directories to scan them, but getdents64 is a stub
+         * (it uses ls-R instead), so a directory fd is never usable. */
+        if (S_ISDIR(st.st_mode)) { errno = EISDIR; return -1; }
         fz_try(ctx) { e->fs_data = fz_read_file(ctx, path); }
         fz_catch(ctx) { errno = EIO; return -1; }
         e->fs_stat = st;
@@ -228,6 +236,7 @@ static int wio_openat(void *vctx, int dirfd, const char *path, int flags,
     wasm_engine_request_yield();
   }
 
+  mark_resolved(self, path);
   editor_notify_lookup(path, strlen(path), !write, LOOKUP_SUCCESSFUL);
 
   for (int fd = 3; fd < MAX_FILES; fd++)
@@ -380,26 +389,65 @@ static int wio_fstat(void *vctx, int fd, struct stat *s)
   return 0;
 }
 
-/* kpathsea searches inside the engine, so a miss shows up as an access/stat
- * probe on a candidate path, not an open of a logical name. Only relative
- * candidates are document-relative and can be supplied by the editor; absolute
- * ones belong to the TeX tree. Deduped: kpathsea probes a candidate twice. */
+static unsigned str_hash(const char *s)
+{
+  unsigned h = 2166136261u; /* FNV-1a; 0 marks a free slot */
+  for (; *s; s++) h = (h ^ (unsigned char)*s) * 16777619u;
+  return h ? h : 1;
+}
+
+static const char *base_name(const char *p)
+{
+  const char *s = strrchr(p, '/');
+  return s ? s + 1 : p;
+}
+
+static void mark_resolved(struct wasm_engine *self, const char *path)
+{
+  unsigned h = str_hash(base_name(path)), n = WASM_MISS_MAX * 2;
+  for (unsigned i = 0; i < n; i++)
+  {
+    unsigned *slot = &self->resolved[(h + i) % n];
+    if (*slot == h || *slot == 0) { *slot = h; return; }
+  }
+}
+
+/* kpathsea searches inside the engine, so a miss is an access/stat probe on a
+ * candidate path, not an open of a logical name. Only relative candidates are
+ * document-relative and could be supplied by the editor. Recorded rather than
+ * reported: most are found moments later under texmf. */
 static void notify_missing(struct wasm_engine *self, const char *path)
 {
   if (!path || path[0] == '/') return;
   while (path[0] == '.' && path[1] == '/') path += 2;
   if (!path[0] || !strcmp(path, ".") || !strcmp(path, "..")) return;
+  if (strlen(path) >= WASM_MISS_PATH || self->n_miss >= WASM_MISS_MAX) return;
+  for (int i = 0; i < self->n_miss; i++)
+    if (!strcmp(self->miss[i].path, path)) return;
+  snprintf(self->miss[self->n_miss].path, WASM_MISS_PATH, "%s", path);
+  self->miss[self->n_miss].bhash = str_hash(base_name(path));
+  self->n_miss++;
+}
 
-  unsigned h = 2166136261u; /* FNV-1a */
-  for (const char *p = path; *p; p++) h = (h ^ (unsigned char)*p) * 16777619u;
-  if (h == 0) h = 1; /* 0 marks a free slot */
-  for (int i = 0; i < WASM_MISS_SEEN; i++)
+/* Report the candidates nothing ever resolved. */
+static void flush_missing(struct wasm_engine *self)
+{
+  unsigned n = WASM_MISS_MAX * 2;
+  for (int i = 0; i < self->n_miss; i++)
   {
-    unsigned *slot = &self->miss_seen[(h + i) % WASM_MISS_SEEN];
-    if (*slot == h) return;
-    if (*slot == 0) { *slot = h; break; }
+    unsigned h = self->miss[i].bhash;
+    bool found = false;
+    for (unsigned j = 0; j < n; j++)
+    {
+      unsigned s = self->resolved[(h + j) % n];
+      if (s == 0) break;
+      if (s == h) { found = true; break; }
+    }
+    if (!found)
+      editor_notify_lookup(self->miss[i].path, strlen(self->miss[i].path), true,
+                           LOOKUP_FAILED);
   }
-  editor_notify_lookup(path, strlen(path), true, LOOKUP_FAILED);
+  self->n_miss = 0;
 }
 
 static int wio_statat(void *vctx, int dirfd, const char *path, struct stat *s,
@@ -408,9 +456,9 @@ static int wio_statat(void *vctx, int dirfd, const char *path, struct stat *s,
   struct wasm_engine *self = vctx;
   (void)dirfd; (void)atflags;
   fileentry_t *e = filesystem_lookup(self->fs, path);
-  if (e && entry_data(e)) { fill_estat(e, s); return 0; }
+  if (e && entry_data(e)) { fill_estat(e, s); mark_resolved(self, path); return 0; }
   int r = stat(path, s); /* existence probe hits disk (read-only) */
-  if (r < 0) notify_missing(self, path);
+  if (r < 0) notify_missing(self, path); else mark_resolved(self, path);
   return r;
 }
 
@@ -420,9 +468,9 @@ static int wio_accessat(void *vctx, int dirfd, const char *path, int amode,
   struct wasm_engine *self = vctx;
   (void)dirfd; (void)atflags;
   fileentry_t *e = filesystem_lookup(self->fs, path);
-  if (e && entry_data(e)) return 0;
+  if (e && entry_data(e)) { mark_resolved(self, path); return 0; }
   int r = access(path, amode);
-  if (r < 0) notify_missing(self, path);
+  if (r < 0) notify_missing(self, path); else mark_resolved(self, path);
   return r;
 }
 
@@ -448,7 +496,8 @@ static void reset_for_run(fz_context *ctx, struct wasm_engine *self)
   self->n_targets = self->target_idx = 0;
   self->want_ckpt = false;
   self->last_ckpt_ms = now_ms();
-  memset(self->miss_seen, 0, sizeof self->miss_seen);
+  self->n_miss = 0;
+  memset(self->resolved, 0, sizeof self->resolved);
   self->doc_entry = NULL;
   self->edit_pos = -1;
   fileentry_t *e;
@@ -529,6 +578,7 @@ static void do_run(fz_context *ctx, struct wasm_engine *self)
     return;
   }
   run_to_end(ctx, self);
+  flush_missing(self);
   self->ran = true;
   self->dirty = false;
   fprintf(stderr, "[wasm] run complete: %d pages (%d checkpoints)\n",
@@ -573,6 +623,7 @@ static void do_replay(fz_context *ctx, struct wasm_engine *self)
   self->edit_pos = -1;
 
   run_to_end(ctx, self);
+  flush_missing(self);
   self->dirty = false;
   fprintf(stderr, "[wasm] replay from checkpoint %d: %d pages (%d checkpoints)\n",
           k, incdvi_page_count(self->dvi), self->n_ckpts);
