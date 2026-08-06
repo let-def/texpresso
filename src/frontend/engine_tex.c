@@ -880,6 +880,146 @@ static void setenv_kpse(const char *var, const char *kpsevar)
 
 /* Default the format directory to engines/wasm-fmt next to the binary, so the
  * engine works without TEXPRESSO_WASM_FMT being set explicitly. */
+/* Read one line of output from a command. */
+static bool run_capture(const char *cmd, char *out, size_t n)
+{
+  FILE *p = popen(cmd, "r");
+  if (!p) return false;
+  bool ok = fgets(out, (int)n, p) != NULL;
+  pclose(p);
+  if (!ok) return false;
+  out[strcspn(out, "\n")] = 0;
+  return out[0] != 0;
+}
+
+/* Where generated formats live: keyed by engine and by the identity of the
+ * LaTeX kernel they were dumped from, so a TeX Live upgrade regenerates rather
+ * than silently reusing a stale one. */
+static bool format_cache_dir(const tex_engine_profile *prof, char *out, size_t n)
+{
+  const char *home = getenv("HOME");
+  const char *xdg = getenv("XDG_CACHE_HOME");
+  char base[2048];
+  if (getenv("TEXPRESSO_CACHE"))
+    snprintf(base, sizeof base, "%s", getenv("TEXPRESSO_CACHE"));
+  else if (xdg && xdg[0])
+    snprintf(base, sizeof base, "%s/texpresso", xdg);
+  else if (home && home[0])
+    snprintf(base, sizeof base, "%s/.cache/texpresso", home);
+  else
+    return false;
+
+  /* Identify the kernel: its path plus size and mtime. That is exactly what a
+   * .fmt bakes in, so it is the honest cache key. */
+  unsigned long key = 5381;
+  char ltx[2048];
+  if (run_capture("kpsewhich latex.ltx 2>/dev/null", ltx, sizeof ltx))
+  {
+    struct stat st;
+    for (const char *c = ltx; *c; c++) key = key * 33 + (unsigned char)*c;
+    if (stat(ltx, &st) == 0)
+      key = key * 33 + (unsigned long)st.st_size + (unsigned long)st.st_mtime;
+  }
+  snprintf(out, n, "%s/%s-%08lx", base, prof->name, key & 0xffffffffUL);
+  return true;
+}
+
+static bool mkdir_p(const char *path)
+{
+  char tmp[4096];
+  snprintf(tmp, sizeof tmp, "%s", path);
+  for (char *p = tmp + 1; *p; p++)
+    if (*p == '/') { *p = 0; mkdir(tmp, 0755); *p = '/'; }
+  return mkdir(tmp, 0755) == 0 || errno == EEXIST;
+}
+
+/* Dump <format>.fmt into `dir` by running the engine once in INITEX mode.
+ *
+ * We never ship formats: a .fmt is a memory image of the engine after loading
+ * latex.ltx, so shipping one would bake our TeX Live's kernel into everyone's
+ * setup. It has to be built here, from the user's own installation. There is no
+ * way to skip it either — latex.ltx ends with \dump, so loading the kernel and
+ * typesetting in one pass is not something TeX can do.
+ *
+ * The dump must land on the real filesystem, so the engine runs against native
+ * I/O rather than texpresso's VFS for this one invocation. */
+static bool generate_format(const tex_engine_profile *prof, const char *prog,
+                            const char *dir)
+{
+  char ini[64], job[64], pn[64];
+  snprintf(ini, sizeof ini, "%s.ini", prof->format);
+  snprintf(job, sizeof job, "-jobname=%s", prof->format);
+  snprintf(pn, sizeof pn, "-progname=%s", prof->format);
+
+  char *argv[10];
+  int a = 0;
+  argv[a++] = (char *)prog;
+  argv[a++] = "-ini";
+  argv[a++] = "-etex"; /* latex.ltx refuses to load without it */
+  for (int i = 0; i < 3 && prof->extra_argv[i]; i++)
+    argv[a++] = (char *)prof->extra_argv[i];
+  argv[a++] = job;
+  argv[a++] = pn;
+  argv[a++] = ini;
+  argv[a] = NULL;
+
+  char cwd[4096];
+  if (!getcwd(cwd, sizeof cwd)) return false;
+  if (chdir(dir) != 0) return false;
+
+  fprintf(stderr, "[wasm] generating %s.fmt from your TeX Live (one-off, ~10s)\n",
+          prof->format);
+  wasm_host_use_native_io();
+  bool ok = wasm_engine_init(a, argv) == 0;
+  if (ok) while (wasm_engine_run()) {}
+
+  if (chdir(cwd) != 0) { /* nothing sensible left to do */ }
+
+  char fmt[4096];
+  snprintf(fmt, sizeof fmt, "%s/%s.fmt", dir, prof->format);
+  struct stat st;
+  ok = ok && stat(fmt, &st) == 0 && st.st_size > 0;
+  fprintf(stderr, ok ? "[wasm] wrote %s\n" : "[wasm] failed to generate %s\n", fmt);
+  return ok;
+}
+
+/* Point TEXPRESSO_WASM_FMT at a directory holding <format>.fmt, generating one
+ * if needed. A dev tree that already built formats keeps working unchanged. */
+static void ensure_format(const tex_engine_profile *prof, const char *engine_path)
+{
+  if (!prof->format || getenv("TEXFORMATS")) return;
+
+  char fmt[4096];
+  const char *env = getenv("TEXPRESSO_WASM_FMT");
+  if (env)
+  {
+    snprintf(fmt, sizeof fmt, "%s/%s.fmt", env, prof->format);
+    if (access(fmt, R_OK) == 0) return;
+  }
+
+  /* A build tree that ran scripts/build-wasm-fmt.sh already has one. */
+  char dir[4096];
+  snprintf(dir, sizeof dir, "%s", engine_path);
+  char *slash = strrchr(dir, '/');
+  if (slash)
+  {
+    *slash = 0;
+    char cand[4096];
+    snprintf(cand, sizeof cand, "%s/../engines/wasm-fmt", dir);
+    snprintf(fmt, sizeof fmt, "%s/%s.fmt", cand, prof->format);
+    if (access(fmt, R_OK) == 0) { setenv("TEXPRESSO_WASM_FMT", cand, 1); return; }
+  }
+
+  char cache[4096];
+  if (!format_cache_dir(prof, cache, sizeof cache)) return;
+  snprintf(fmt, sizeof fmt, "%s/%s.fmt", cache, prof->format);
+  if (access(fmt, R_OK) == 0) { setenv("TEXPRESSO_WASM_FMT", cache, 1); return; }
+
+  if (!mkdir_p(cache)) return;
+  if (generate_format(prof, engine_path, cache))
+    setenv("TEXPRESSO_WASM_FMT", cache, 1);
+}
+
 static void locate_wasm_fmt(const char *engine_path)
 {
   if (getenv("TEXPRESSO_WASM_FMT")) return;
@@ -954,9 +1094,11 @@ txp_engine *txp_tex_engine_create(fz_context *ctx,
                                    const char *engine_path,
                                    const char *tex_name, dvi_reshooks hooks)
 {
-  locate_wasm_fmt(engine_path);
   if (prof->needs_icu) locate_icu_data(engine_path, prof->name);
   wasm_setup_texmf(prof->needs_icu);
+  ensure_format(prof, engine_path); /* may dump one on first run */
+  locate_wasm_fmt(engine_path);
+  wasm_setup_texmf(prof->needs_icu); /* pick up TEXFORMATS */
   struct wasm_engine *self = fz_malloc_struct(ctx, struct wasm_engine);
   self->_class = &_class;
   /* Give the main file an explicit "./" so the engine's kpathsea opens it

@@ -152,6 +152,13 @@ void wasm_host_set_io(const wasm_io_ops *ops, void *ctx) {
   g_io_ctx = ctx;
 }
 
+/* Back to plain host file access. texpresso swaps to this to dump a format,
+ * which has to reach the real filesystem rather than the in-memory VFS. */
+void wasm_host_use_native_io(void) {
+  g_io = &native_io_ops;
+  g_io_ctx = NULL;
+}
+
 #ifndef WASM_HOST_NO_MAIN /* standalone-only test harness (memfs + main) */
 /* ---- in-memory io backend (TEXPRESSO_MEMFS test) ------------------------
  * Proves the io_ops seam fully replaces the native FS — exactly what the

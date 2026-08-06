@@ -37,6 +37,8 @@ typedef struct wasm_io_ops {
 
 /* Install the I/O backend. If never called, the host uses native POSIX. */
 void wasm_host_set_io(const wasm_io_ops *ops, void *ctx);
+/* Restore plain host file access (the default backend). */
+void wasm_host_use_native_io(void);
 
 /* ---- engine lifecycle (single in-process instance) ----
  * Used by the standalone binaries and by texpresso's engine_wasm backend.
