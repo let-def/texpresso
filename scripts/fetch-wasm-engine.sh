@@ -22,14 +22,17 @@ DEST="$ROOT/engines/build-wasm2c-$ENG"
 # from the fork; point TEXPRESSO_ENGINE_REPO elsewhere to override.
 REPO="${TEXPRESSO_ENGINE_REPO:-merv1n34k/texpresso}"
 
-# Pinned per engine, so one engine can be re-cut without disturbing the others.
-# engine.c and src/engine-wasm/wasm_host.c share an ABI (the w2c_engine struct
-# and the syscall import set), so a mismatched pair fails to compile or, worse,
-# misbehaves — keep these in step with the host.
+# One release holds all three engines. engine.c and src/engine-wasm/wasm_host.c
+# share an ABI — the w2c_engine struct and the syscall import set — so the
+# bundles are a matched set against a given host commit, not three
+# independently versioned artifacts. Bump this to re-cut any of them.
+TAG="engines-2026.1-1"
+
+# Per asset, so a corrupted or mismatched download still fails loudly.
 case "$ENG" in
-  xetex)  TAG="engine-xetex-2026.1-1";  SHA256="" ;;
-  pdftex) TAG="engine-pdftex-2026.1-1"; SHA256="" ;;
-  luatex) TAG="engine-luatex-2026.1-1"; SHA256="" ;;
+  xetex)  SHA256="ee04a506f5a3c7354458fd61b3967ee4774426968778baf1014a54f2da0b181e" ;;
+  pdftex) SHA256="cd1872a47a0e0b4fe043a6665281c5ee473857194a5a0c70c6cb5d75b219fc5e" ;;
+  luatex) SHA256="60fb577e5e2a55dd7d2eb1841f27655d763deac2b0177beb7a72a1b153f230d8" ;;
   *) echo "unknown engine: $ENG (expected xetex|pdftex|luatex)" >&2; exit 1 ;;
 esac
 
