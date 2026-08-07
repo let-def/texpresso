@@ -159,6 +159,15 @@ void wasm_host_use_native_io(void) {
   g_io_ctx = NULL;
 }
 
+/* True when file access is the plain host backend — the standalone binaries and
+ * the one-off format dump. texpresso installs a VFS instead, and under it the
+ * engine must not mutate the real filesystem: reads and writes are answered
+ * from memory, so a mutation that reached the disk would escape the snapshot
+ * and a rollback could not undo it. Refuse those rather than let them through. */
+static int io_is_native(void) { return g_io == &native_io_ops; }
+#define DENY_UNDER_VFS() do { if (!io_is_native()) return neg_errno(EROFS); } while (0)
+
+
 #ifndef WASM_HOST_NO_MAIN /* standalone-only test harness (memfs + main) */
 /* ---- in-memory io backend (TEXPRESSO_MEMFS test) ------------------------
  * Proves the io_ops seam fully replaces the native FS — exactly what the
@@ -539,18 +548,21 @@ u32 w2c_env_0x5F_syscall_fstat64(struct w2c_env *e, u32 fd, u32 buf) {
   return 0;
 }
 u32 w2c_env_0x5F_syscall_mkdirat(struct w2c_env *e, u32 dirfd, u32 path, u32 mode) {
+  DENY_UNDER_VFS();
   w2c_engine *m = e->mod;
   int r = mkdirat(xlate_dirfd(dirfd), (const char *)mem_base(m) + path, (mode_t)mode);
   return r < 0 ? neg_errno(errno) : 0;
 }
 u32 w2c_env_0x5F_syscall_linkat(struct w2c_env *e, u32 od, u32 op, u32 nd, u32 np,
                                 u32 flags) {
+  DENY_UNDER_VFS();
   w2c_engine *m = e->mod;
   int r = linkat(xlate_dirfd(od), (const char *)mem_base(m) + op, xlate_dirfd(nd),
                  (const char *)mem_base(m) + np, (int)flags);
   return r < 0 ? neg_errno(errno) : 0;
 }
 u32 w2c_env_0x5F_syscall_symlinkat(struct w2c_env *e, u32 target, u32 nd, u32 lp) {
+  DENY_UNDER_VFS();
   w2c_engine *m = e->mod;
   int r = symlinkat((const char *)mem_base(m) + target, xlate_dirfd(nd),
                     (const char *)mem_base(m) + lp);
@@ -641,6 +653,7 @@ u32 w2c_env_0x5F_syscall_readlinkat(struct w2c_env *e, u32 dirfd, u32 path,
 
 u32 w2c_env_0x5F_syscall_unlinkat(struct w2c_env *e, u32 dirfd, u32 path,
                                   u32 flags) {
+  DENY_UNDER_VFS();
   w2c_engine *m = e->mod;
   const char *p = (const char *)mem_base(m) + path;
   int r = unlinkat(xlate_dirfd(dirfd), p, (int)flags);
@@ -648,6 +661,7 @@ u32 w2c_env_0x5F_syscall_unlinkat(struct w2c_env *e, u32 dirfd, u32 path,
 }
 
 u32 w2c_env_0x5F_syscall_rmdir(struct w2c_env *e, u32 path) {
+  DENY_UNDER_VFS();
   w2c_engine *m = e->mod;
   int r = rmdir((const char *)mem_base(m) + path);
   return r < 0 ? neg_errno(errno) : 0;
@@ -655,6 +669,7 @@ u32 w2c_env_0x5F_syscall_rmdir(struct w2c_env *e, u32 path) {
 
 u32 w2c_env_0x5F_syscall_renameat(struct w2c_env *e, u32 od, u32 op, u32 nd,
                                   u32 np) {
+  DENY_UNDER_VFS();
   w2c_engine *m = e->mod;
   int r = renameat(xlate_dirfd(od), (const char *)mem_base(m) + op, xlate_dirfd(nd),
                    (const char *)mem_base(m) + np);
