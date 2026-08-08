@@ -41,7 +41,7 @@ $(WASM_ENGINE_DIR)/%.o: $(WASM_ENGINE_DIR)/%.c
 	cc -O2 -I$(WABT_INC) -I$(WASM_ENGINE_DIR) -I../engine-wasm -c -o $@ $<
 
 DIR_OBJECTS=$(foreach OBJ,$(OBJECTS),$(DIR)/$(OBJ))
-TARGETS=texpresso texpresso-dev texpresso-debug-proxy texpresso.so
+TARGETS=texpresso texpresso-debug-proxy
 
 all: $(TARGETS)
 
@@ -54,23 +54,10 @@ $(TEXPRESSO_BIN): $(DIR)/driver.o $(DIR)/main.o $(DIR)/logo.o $(DIR_OBJECTS) $(W
 $(DIR)/wasm_host_txp-$(TEX_ENGINE).o: ../engine-wasm/wasm_host.c | $(DIR)
 	cc -O2 -c -o $@ -DWASM_HOST_NO_MAIN -I$(WABT_INC) -I$(WASM_ENGINE_DIR) $<
 
-texpresso-dev: $(BUILD)/texpresso-dev
-$(BUILD)/texpresso-dev: $(DIR)/driver.o $(DIR)/loader.o $(DIR)/logo.o | $(BUILD)/texpresso-dev.so
-	$(LDCC) -o $@ $^ $(LIBS)
-
-texpresso-dev.so: $(BUILD)/texpresso-dev.so
-$(BUILD)/texpresso-dev.so: $(DIR)/main.o $(DIR_OBJECTS) $(DIR)/libmydvi.a
-	$(MAKE) -C ../dvi
-	$(LDCC) -ldl -shared -o $@ $^ $(LIBS)
-	killall -SIGUSR1 texpresso-dev || true
 
 texpresso-debug-proxy: $(BUILD)/texpresso-debug-proxy
 $(BUILD)/texpresso-debug-proxy: proxy.c
 	$(LDCC) -o $@ $^
-
-texpresso-debug: $(BUILD)/texpresso-debug
-$(BUILD)/texpresso-debug: ../../scripts/texpresso-debug
-	cp $< $@
 
 $(BUILD)/common/libcommon.a:
 	$(MAKE) -C ../common

@@ -47,10 +47,6 @@ static void schedule_event(enum custom_events ev)
   pstate->schedule_event(ev);
 }
 
-static bool should_reload_binary(void)
-{
-  return pstate->should_reload_binary();
-}
 
 #ifdef __APPLE__
 # define st_time(a) st_##a##timespec
@@ -1296,7 +1292,7 @@ bool texpresso_main(struct persistent_state *ps)
   ui->last_mouse_y = -1000;
   ui->last_click_ticks = SDL_GetTicks() - 200000000;
 
-  bool quit = 0, reload = 0;
+  bool quit = 0;
   render(ps->ctx, ui);
   schedule_event(RELOAD_EVENT);
 
@@ -1585,7 +1581,6 @@ bool texpresso_main(struct persistent_state *ps)
             break;
 
           // case SDLK_r:
-          //   reload = 1;
           case SDLK_q:
             quit = 1;
             break;
@@ -1647,11 +1642,6 @@ bool texpresso_main(struct persistent_state *ps)
       switch (e.user.code)
       {
         case SCAN_EVENT:
-          if (should_reload_binary())
-          {
-            quit = reload = 1;
-            continue;
-          }
           send(begin_changes, ui->eng, ps->ctx);
           flush_changes(ps, ui);
           send(detect_changes, ui->eng, ps->ctx);
@@ -1724,5 +1714,5 @@ bool texpresso_main(struct persistent_state *ps)
   txp_renderer_free(ps->ctx, ui->doc_renderer);
   send(destroy, ui->eng, ps->ctx);
 
-  return reload;
+  return 0;
 }

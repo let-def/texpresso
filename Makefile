@@ -61,11 +61,11 @@ $(ENGINE_BINS): texpresso-%: | Makefile.config
 engines: $(ENGINE_BINS)
 	@echo "# Built: $(addprefix build/texpresso-,$(TEX_ENGINES))"
 
-dev: | Makefile.config
-	$(MAKE) -C src texpresso-dev
-
-debug: | Makefile.config
-	$(MAKE) -C src texpresso-debug texpresso-debug-proxy
+# Hot-reload dev builds are gone: the engine runs in this process, so reloading
+# the frontend cannot reload it. What remains is the fifo proxy the Emacs
+# integration attaches a debugger through.
+debug-proxy: | Makefile.config
+	$(MAKE) -C src/frontend texpresso-debug-proxy WASM_ENGINE_DIR=$(abspath $(WASM_ENGINE_DIR))
 
 clean:
 	rm -rf build/*/*
@@ -144,4 +144,4 @@ macos-app: texpresso
 	@[ "$$(uname)" = "Darwin" ] || { echo "macos-app requires macOS"; exit 1; }
 	bash scripts/build-macos-app.sh
 
-.PHONY: all dev clean config texpresso common engines fetch-engine engine-source $(ENGINE_BINS) re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file test-rerun macos-app
+.PHONY: all debug-proxy clean config texpresso common engines fetch-engine engine-source $(ENGINE_BINS) re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file test-rerun macos-app
