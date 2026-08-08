@@ -58,7 +58,12 @@ if ! curl -fL --progress-bar -o "$TMP/$TARBALL" "$URL"; then
 fi
 
 if [ -n "$SHA256" ]; then
-  have="$(shasum -a 256 "$TMP/$TARBALL" | cut -d' ' -f1)"
+  # sha256sum on Linux, shasum on macOS.
+  if command -v sha256sum >/dev/null; then
+    have="$(sha256sum "$TMP/$TARBALL" | cut -d' ' -f1)"
+  else
+    have="$(shasum -a 256 "$TMP/$TARBALL" | cut -d' ' -f1)"
+  fi
   [ "$have" = "$SHA256" ] || {
     echo "checksum mismatch for $TARBALL" >&2
     echo "  expected $SHA256" >&2
