@@ -1,4 +1,4 @@
-OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o renderer.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o
+OBJECTS=state.o fs.o incdvi.o myabort.o renderer.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o
 
 BUILD=../../build
 DIR=$(BUILD)/frontend
@@ -78,8 +78,14 @@ $(BUILD)/common/libcommon.a:
 re2c:
 	$(MAKE) -C ../dvi $@
 
+# -MMD -MP records each object's header dependencies, so editing a header
+# rebuilds what included it. Without this a struct change left stale objects
+# disagreeing about its size, and the mismatch corrupted the heap at runtime
+# rather than failing to build.
 $(DIR)/%.o: %.c | $(DIR)
-	$(CC) -c -o $@ -I../dvi/ -I../include $<
+	$(CC) -MMD -MP -c -o $@ -I../dvi/ -I../include $<
+
+-include $(DIR_OBJECTS:.o=.d) $(DIR)/driver.d $(DIR)/main.d $(DIR)/logo.d
 
 $(DIR)/libmydvi.a:
 	$(MAKE) -C ../dvi $(DIR)/libmydvi.a
