@@ -27,7 +27,10 @@
 
 #include <sys/stat.h>
 #include <mupdf/fitz/buffer.h>
-#include "sprotocol.h"
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include "myabort.h"
 
 #define MAX_FILES 1024
 
@@ -47,7 +50,6 @@ typedef struct fileentry_s {
   fz_buffer *fs_data;
 
   // Cached picture information
-  struct pic_cache pic_cache;
   
   // State of the file in the text editor (or NULL if unedited)
   fz_buffer *edit_data;
@@ -62,7 +64,6 @@ typedef struct fileentry_s {
   } saved;
 
   int seen;
-  int debug_rollback_invalidation;
 } fileentry_t;
 
 typedef struct filecell_s {
@@ -71,7 +72,6 @@ typedef struct filecell_s {
 } filecell_t;
 
 typedef struct {
-  filecell_t table[MAX_FILES];
   filecell_t stdout, document, synctex, log;
 } state_t;
 
@@ -92,7 +92,6 @@ mark_t log_snapshot(fz_context *ctx, log_t *log);
 void log_rollback(fz_context *ctx, log_t *log, mark_t snapshot);
 void log_fileentry(fz_context *ctx, log_t *log, fileentry_t *entry);
 void log_filecell(fz_context *ctx, log_t *log, filecell_t *cell);
-void log_overwrite(fz_context *ctx, log_t *log, fz_buffer *buf, int start, int len);
 
 bool stat_same(struct stat *st1, struct stat *st2);
 
