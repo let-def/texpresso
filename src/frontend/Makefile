@@ -14,17 +14,19 @@ endif
 ifeq ($(wildcard $(WASM_ENGINE_DIR)/engine.c)$(wildcard $(WASM_ENGINE_DIR)/engine.o),)
 $(error No engine in $(WASM_ENGINE_DIR). Get one with `make fetch-engine` (prebuilt, needs only a C compiler) or `make engine-source` (builds from TeX Live sources; needs emscripten + wabt))
 endif
-OBJECTS += engine_tex.o engine_tex_xetex.o engine_tex_pdftex.o engine_tex_luatex.o
+OBJECTS += engine_tex_xetex.o engine_tex_pdftex.o engine_tex_luatex.o
 # A fetched engine bundle vendors the wabt runtime headers, so it needs no wabt
 # install — which is what lets Linux/CI build without brew. Fall back to a
 # local wabt only when building against a raw wasm2c output directory.
 WABT_INC = $(if $(wildcard $(WASM_ENGINE_DIR)/wasm-rt.h),$(WASM_ENGINE_DIR),$(shell brew --prefix wabt)/include)
 
-# Model A: one binary per engine. The frontend objects are engine-independent
-# and shared; only the host shim is engine-specific (it is compiled against
-# that engine's wasm2c engine.h), so it gets a per-engine object name.
-# The profile is selected at runtime from the binary's name — see
-# txp_create_tex_engine — so TEX_ENGINE must match the binary suffix.
+# One binary per engine. Most frontend objects are engine-independent and
+# shared; the two that are not get per-engine object names so switching engines
+# cannot reuse the wrong one:
+#   wasm_host_txp — compiled against that engine's wasm2c engine.h
+#   engine_tex    — has the engine baked in as TEXPRESSO_ENGINE, so the profile
+#                   follows the engine that is actually linked instead of being
+#                   guessed from the executable's path at runtime
 TEX_ENGINE ?= xetex
 TEXPRESSO_BIN ?= $(BUILD)/texpresso
 
@@ -32,7 +34,12 @@ WASM_LINK = $(WASM_ENGINE_DIR)/engine.o \
             $(WASM_ENGINE_DIR)/wasm-rt-impl.o \
             $(WASM_ENGINE_DIR)/wasm-rt-mem-impl.o \
             $(WASM_ENGINE_DIR)/wasm-rt-exceptions-impl.o \
-            $(DIR)/wasm_host_txp-$(TEX_ENGINE).o
+            $(DIR)/wasm_host_txp-$(TEX_ENGINE).o \
+            $(DIR)/engine_tex-$(TEX_ENGINE).o
+
+$(DIR)/engine_tex-$(TEX_ENGINE).o: engine_tex.c | $(DIR)
+	$(CC) -MMD -MP -DTEXPRESSO_ENGINE='"$(TEX_ENGINE)"' \
+	  -c -o $@ -I../dvi/ -I../include $<
 
 
 # An engine bundle ships portable C, not objects — compile it here. A local

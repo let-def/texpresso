@@ -1149,8 +1149,19 @@ txp_engine *txp_create_tex_engine(fz_context *ctx, const char *engine_path,
       &txp_tex_profile_pdftex,
       &txp_tex_profile_luatex,
   };
+  /* The engine is chosen when the binary is linked, so take the profile from
+   * the build rather than guessing. Matching the executable's path was both
+   * order-dependent and wrong whenever a parent directory happened to contain
+   * an engine's name, which would pair one engine's profile with another's
+   * code. TEXPRESSO_ENGINE is set by src/frontend/Makefile alongside
+   * WASM_ENGINE_DIR, so the two cannot disagree. */
   const tex_engine_profile *prof = &txp_tex_profile_xetex; /* default */
+#ifdef TEXPRESSO_ENGINE
+  for (size_t i = 0; i < sizeof profiles / sizeof *profiles; i++)
+    if (!strcmp(TEXPRESSO_ENGINE, profiles[i]->name)) { prof = profiles[i]; break; }
+#else
   for (size_t i = 0; i < sizeof profiles / sizeof *profiles; i++)
     if (strstr(engine_path, profiles[i]->name)) { prof = profiles[i]; break; }
+#endif
   return txp_tex_engine_create(ctx, prof, engine_path, tex_name, hooks);
 }

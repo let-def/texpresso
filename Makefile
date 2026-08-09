@@ -1,6 +1,11 @@
-# The TeX engine runs in-process from a wasm2c build; point this at it (built by
-# scripts/build-wasm-<eng>.sh + scripts/build-wasm2c-<eng>.sh).
-WASM_ENGINE_DIR ?= engines/build-wasm2c-xetex
+# Which TeX engine to build against — one knob for fetching and building, as an
+# environment variable or a make argument:
+#   TEXPRESSO_ENGINE=luatex make fetch-engine texpresso
+#   make fetch-engine texpresso TEXPRESSO_ENGINE=luatex
+# Namespaced because a bare ENGINE is common enough that a stray one in the
+# environment would otherwise silently redirect the build.
+TEXPRESSO_ENGINE ?= xetex
+WASM_ENGINE_DIR ?= engines/build-wasm2c-$(TEXPRESSO_ENGINE)
 
 all: | Makefile.config
 	$(MAKE) common texpresso
@@ -25,24 +30,25 @@ common: | Makefile.config
 	$(MAKE) -C src/common
 
 texpresso: | Makefile.config
-	$(MAKE) -C src/frontend texpresso WASM_ENGINE_DIR=$(abspath $(WASM_ENGINE_DIR))
+	$(MAKE) -C src/frontend texpresso \
+	  TEX_ENGINE=$(TEXPRESSO_ENGINE) \
+	  WASM_ENGINE_DIR=$(abspath $(WASM_ENGINE_DIR))
 
 # ---- Getting an engine ------------------------------------------------------
 # Tier 1 (engine developers): build from pinned upstream TeX Live sources.
-#   make engine-source ENGINE=xetex     # needs emscripten + wabt; slow
+#   make engine-source                  # needs emscripten + wabt; slow
 # Tier 2 (everyone else): download the prebuilt engine.c bundle and compile it.
-#   make fetch-engine ENGINE=xetex      # needs only a C compiler
-# Neither runs as part of `make all`: a build should not reach the network on
-# its own.
-ENGINE ?= xetex
+#   make fetch-engine                   # needs only a C compiler
+# Both honour TEXPRESSO_ENGINE. Neither runs as part of `make all`: a build
+# should not reach the network on its own.
 
 fetch-engine:
-	bash scripts/fetch-wasm-engine.sh $(ENGINE)
+	bash scripts/fetch-wasm-engine.sh $(TEXPRESSO_ENGINE)
 
 engine-source:
 	bash scripts/fetch-engines.sh
-	bash scripts/build-wasm-$(ENGINE).sh
-	bash scripts/build-wasm2c-$(ENGINE).sh
+	bash scripts/build-wasm-$(TEXPRESSO_ENGINE).sh
+	bash scripts/build-wasm2c-$(TEXPRESSO_ENGINE).sh
 
 # Model A: one binary per engine (build/texpresso-<eng>), each linking only its
 # own wasm2c engine. The engine profile is picked at runtime from the binary

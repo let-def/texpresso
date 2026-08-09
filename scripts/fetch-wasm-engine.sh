@@ -53,7 +53,7 @@ if ! curl -fL --progress-bar -o "$TMP/$TARBALL" "$URL"; then
   echo "could not download $TARBALL from $TAG." >&2
   echo "Either the release is not published yet, or this checkout expects a" >&2
   echo "version that no longer exists. Build it yourself instead (tier 1):" >&2
-  echo "  make engine-source ENGINE=$ENG" >&2
+  echo "  make engine-source TEXPRESSO_ENGINE=$ENG" >&2
   exit 1
 fi
 
