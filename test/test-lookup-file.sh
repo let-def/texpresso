@@ -63,6 +63,8 @@ fi
 # actually used and the document typeset.
 if ! grep -q "Output written on" "$OUTFILE"; then
   echo "FAIL: no output produced after supplying $TARGET"
+  echo "--- last 40 lines of engine output ---"
+  tail -40 "$OUTFILE"
   exit 1
 fi
 

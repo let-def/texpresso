@@ -70,6 +70,8 @@ if grep -q "not found" "$OUTFILE"; then
 fi
 if ! grep -q "Output written on" "$OUTFILE"; then
   echo "FAIL: no output produced after the deferred read resolved"
+  echo "--- last 40 lines of engine output ---"
+  tail -40 "$OUTFILE"
   exit 1
 fi
 
