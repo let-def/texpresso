@@ -121,6 +121,25 @@ fill-tectonic-cache:
 	tectonic --outfmt fmt test/format.tex
 	tectonic --outfmt xdv test/simple.tex
 
+# Run every test target, report PASS/FAIL with timings, exit non-zero if any
+# failed. Re-run a single target to see why.
+TEST_TARGETS = test-texpresso test-texpresso-texlive test-texpresso-tectonic \
+               test-open-base64 test-stream test-register test-lookup-file \
+               test-rerun test-replay
+
+test-report:
+	@fail=""; \
+	for t in $(TEST_TARGETS); do \
+	  start=$$SECONDS; \
+	  if $(MAKE) --no-print-directory $$t >/dev/null 2>&1; then \
+	    printf '  %-26s PASS %3ds\n' "$$t" $$((SECONDS-start)); \
+	  else \
+	    printf '  %-26s FAIL %3ds\n' "$$t" $$((SECONDS-start)); fail="$$fail $$t"; \
+	  fi; \
+	done; \
+	if [ -n "$$fail" ]; then echo "  failed:$$fail"; exit 1; fi; \
+	echo "  all $(words $(TEST_TARGETS)) passed"
+
 test-open-base64:
 	printf '(open-base64 "test/simple.tex" "%s")\n' "$$(base64 < test/simple.tex | tr -d '\n')" | \
 	env SDL_VIDEODRIVER=dummy build/texpresso -test-initialize test/simple.tex
@@ -146,8 +165,11 @@ test-lookup-file:
 test-rerun:
 	bash test/test-rerun.sh
 
+test-replay:
+	bash test/test-replay.sh
+
 macos-app: texpresso
 	@[ "$$(uname)" = "Darwin" ] || { echo "macos-app requires macOS"; exit 1; }
 	bash scripts/build-macos-app.sh
 
-.PHONY: all debug-proxy clean config texpresso common engines fetch-engine engine-source $(ENGINE_BINS) re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file test-rerun macos-app
+.PHONY: all test-report debug-proxy clean config texpresso common engines fetch-engine engine-source $(ENGINE_BINS) re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file test-rerun macos-app
