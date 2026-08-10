@@ -42,10 +42,14 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >>"$OUTFILE"
   if [ -z "$sent" ] && [[ "$line" == *"lookup-file read failed \"$TARGET\""* ]]; then
     printf '(open "%s" "Included content.\\n")\n' "$TARGET" >&3
-    exec 3>&-
     sent=1
   fi
 done <"$OUTPIPE"
+# Kept open until now on purpose: closing it as soon as the file was sent made
+# stdin_eof true mid-recompile, and -test-initialize quits on
+# "terminated && stdin_eof" — so the engine could exit before finishing the run
+# it had just been given the file for. An editor would not close it either.
+exec 3>&-
 
 if [ -z "$sent" ]; then
   echo "FAIL: never saw lookup-file failed for $TARGET"
