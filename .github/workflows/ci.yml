@@ -84,7 +84,7 @@ jobs:
 
       - name: Fetch wasm engine
         if: steps.engine-cache.outputs.cache-hit != 'true'
-        run: make fetch-engine ENGINE=xetex
+        run: make fetch-engine TEXPRESSO_ENGINE=xetex
 
       - name: Build project
         run: make all
@@ -171,8 +171,8 @@ jobs:
       - name: Fetch engines
         if: steps.engines-cache.outputs.cache-hit != 'true'
         run: |
-          make fetch-engine ENGINE=pdftex
-          make fetch-engine ENGINE=luatex
+          make fetch-engine TEXPRESSO_ENGINE=pdftex
+          make fetch-engine TEXPRESSO_ENGINE=luatex
 
       - name: Build both
         run: |
