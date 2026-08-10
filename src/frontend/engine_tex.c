@@ -414,6 +414,14 @@ static void notify_missing(struct wasm_engine *self, const char *path)
     if (!strcmp(self->miss[i].path, path)) return;
   if (self->n_miss < WASM_MISS_MAX)
     snprintf(self->miss[self->n_miss++].path, WASM_MISS_PATH, "%s", path);
+
+  /* Record that the engine looked for this file. interpret_open only treats an
+   * editor-supplied file as a change when the entry has been seen, and one that
+   * was merely probed never reaches wio_openat to be marked — so without this
+   * the editor could answer a failed lookup and nothing would recompile. */
+  fileentry_t *e = filesystem_lookup_or_create(self->ctx, self->fs, path);
+  if (e->seen < 0) e->seen = 0;
+
   editor_notify_lookup(path, strlen(path), true, LOOKUP_FAILED);
 }
 
@@ -634,8 +642,13 @@ static void do_replay(fz_context *ctx, struct wasm_engine *self)
 static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_needed)
 {
   SELF;
-  if (self->suspended) /* editor answered a deferred query: carry on */
+  if (self->suspended)
   {
+    /* Resume only once the editor has actually supplied the promised file.
+     * Resuming regardless just re-runs the same lookup, which defers again —
+     * the engine then spun through kpathsea's remaining candidates and gave up
+     * before the (open) arrived. */
+    if (self->deferred && !entry_data(self->deferred)) return false;
     self->ctx = ctx;
     wasm_host_set_io(&wasm_state_io_ops, self);
     run_to_end(ctx, self);
@@ -738,7 +751,12 @@ static fz_display_list *engine_render_page(txp_engine *_self, fz_context *ctx,
 static txp_engine_status engine_get_status(txp_engine *_self)
 {
   SELF;
-  /* atomic run model: RUNNING only until the first (or a replay) run finishes */
+  /* RUNNING only until the first (or a replay) run finishes. A run parked on a
+   * deferred query is not runnable: report TERMINATED so the main loop idles on
+   * input instead of spinning on step(), and so -test-initialize can still exit
+   * if stdin closes with the promised file never supplied. */
+  if (self->suspended && self->deferred && !entry_data(self->deferred))
+    return DOC_TERMINATED;
   return (!self->ran || self->dirty || self->suspended) ? DOC_RUNNING
                                                        : DOC_TERMINATED;
 }
