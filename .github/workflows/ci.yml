@@ -119,6 +119,9 @@ jobs:
       - name: Run tests – Replay (incremental edits stay byte-identical)
         run: make test-replay || echo "fail" > replay.status
 
+      - name: Run tests – Fence (snapshot restore reproduces memory exactly)
+        run: make test-fence || echo "fail" > fence.status
+
       - name: Report summary
         if: always()
         run: |
@@ -132,6 +135,7 @@ jobs:
           [ ! -f lookup-file.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f rerun.status ]       && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f replay.status ]      && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f fence.status ]       && pass=$((pass+1)) || fail=$((fail+1))
           echo "Passed: $pass" >> "$GITHUB_STEP_SUMMARY"
           echo "Failed: $fail"  >> "$GITHUB_STEP_SUMMARY"
           [ $fail -eq 0 ]

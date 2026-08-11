@@ -125,7 +125,7 @@ fill-tectonic-cache:
 # failed. Re-run a single target to see why.
 TEST_TARGETS = test-texpresso test-texpresso-texlive test-texpresso-tectonic \
                test-open-base64 test-stream test-register test-lookup-file \
-               test-rerun test-replay
+               test-rerun test-replay test-fence
 
 test-report:
 	@fail=""; \
@@ -168,8 +168,21 @@ test-rerun:
 test-replay:
 	bash test/test-replay.sh
 
+# Standalone engine binary: the same objects texpresso links, plus the host's
+# own main(). test-fence uses it to check snapshot fidelity directly.
+engine-native: | Makefile.config
+	cc -O2 -I$(WASM_ENGINE_DIR) -Isrc/engine-wasm \
+	   -c src/engine-wasm/wasm_host.c -o build/wasm_host_main.o
+	cc -O2 -o $(WASM_ENGINE_DIR)/$(TEXPRESSO_ENGINE)-native build/wasm_host_main.o \
+	   $(WASM_ENGINE_DIR)/engine.o $(WASM_ENGINE_DIR)/wasm-rt-impl.o \
+	   $(WASM_ENGINE_DIR)/wasm-rt-mem-impl.o \
+	   $(WASM_ENGINE_DIR)/wasm-rt-exceptions-impl.o -lm
+
+test-fence: engine-native
+	bash test/test-fence.sh
+
 macos-app: texpresso
 	@[ "$$(uname)" = "Darwin" ] || { echo "macos-app requires macOS"; exit 1; }
 	bash scripts/build-macos-app.sh
 
-.PHONY: all test-report debug-proxy clean config texpresso common engines fetch-engine engine-source $(ENGINE_BINS) re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file test-rerun macos-app
+.PHONY: all test-report debug-proxy clean config texpresso common engines fetch-engine engine-source $(ENGINE_BINS) re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file test-rerun test-replay test-fence engine-native macos-app
