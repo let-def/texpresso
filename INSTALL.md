@@ -1,137 +1,193 @@
 # Building and installing TeXpresso
 
-If all dependencies are installed and out-of-the-box configuration works, `make all` should be sufficient to build both `texpresso` and `texpresso-xetex` in `build/` directory.
+Building TeXpresso takes two steps: obtain a TeX engine, then build the
+frontend.
+
+```sh
+make fetch-engine     # download a prebuilt engine (needs only a C compiler)
+make                  # build build/texpresso
+```
+
+The engine is compiled into `build/texpresso`, so that single binary is the
+whole program. See `WASM-ENGINE.md` for what the engine is and how it is built.
+
+TeXpresso also needs an installed LaTeX distribution (TeX Live or Tectonic) at
+runtime for packages and fonts.
 
 ## Supported systems
 
-TeXpresso is in an early stage of development and its configuration logic is a rough hand-made script.
-So far it has only been tested the following systems, where we expect it to work:
+Linux and macOS. There is no Windows support: the engine host uses `ucontext`
+and POSIX signal handling.
 
-- OSX
-- Fedora 39
-- Arch Linux: [a PKGBUILD is available in the AUR](https://aur.archlinux.org/packages/texpresso-git) that builds from the latest Git HEAD on installation.
+Tested on:
+
+- macOS
+- Fedora
+- Arch Linux
 - Debian 12
-- Ubuntu 22.04
+- Ubuntu 22.04 and 24.04
 
-On other systems you may observe build failures that require modifying the Makefile. Let us know if it works on a system not listed above, or if you can tweak the configuration/build code to support your system without breaking others.
+On other systems you may hit build failures that require modifying the Makefile.
+Let us know if it works elsewhere, or if you can support your system without
+breaking others.
 
-**Rerun `make config` when you change the build environment**, otherwise freshly installed libraries might not be considered by the build system.
+**Rerun `make config` when you change the build environment**, otherwise freshly
+installed libraries might not be picked up.
+
+Note: the [AUR PKGBUILD](https://aur.archlinux.org/packages/texpresso-git) has
+not been updated for the in-process engine and still builds the retired model.
 
 ### Ubuntu and Debian
 
-(Tested with Ubuntu 22.04 ARM64 and Ubuntu 20.04)
-
-Install all needed dependencies with:
 ```sh
-apt install build-essential libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev  libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev cargo libssl-dev libfontconfig-dev libleptonica-dev libharfbuzz-dev
+apt install build-essential libsdl2-dev libmupdf-dev libmujs-dev \
+  libfreetype-dev libgumbo-dev libjbig2dec0-dev libjpeg-dev \
+  libopenjp2-7-dev libssl-dev libfontconfig-dev libleptonica-dev \
+  libharfbuzz-dev mupdf \
+  texlive-xetex texlive-latex-recommended texlive-extra-utils
 ```
 
 Details:
-- `build-essential` install the compiler (GCC) and basic build tools (GNU Make)
-- `libsdl2-dev`: SDL2 library
-- `libmupdf-dev libmujs-dev libfreetype-dev libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev`: libmupdf and its dependencies
+
+- `build-essential`: the compiler (GCC) and basic build tools (GNU Make)
+- `libsdl2-dev`: SDL2
+- `libmupdf-dev libmujs-dev libfreetype-dev libgumbo-dev libjbig2dec0-dev
+  libjpeg-dev libopenjp2-7-dev`: libmupdf and its dependencies
+- `texlive-*`: the LaTeX distribution TeXpresso reads packages and fonts from
 
 ### Arch Linux (and Manjaro)
 
-Dependencies are listed in the PKGBUILD, but if you need to install them manually:
-
 ```sh
-pacman -S base-devel fontconfig freetype2 gcc-libs glibc graphite gumbo-parser harfbuzz icu jbig2dec libjpeg-turbo libmupdf libpng openjpeg2 openssl sdl2 zlib git libmupdf
+pacman -S base-devel gcc git curl freetype2 harfbuzz icu libjpeg-turbo \
+  openjpeg2 libpng gumbo-parser tesseract leptonica openssl zlib sdl2 mupdf \
+  texlive-bin texlive-core texlive-latexrecommended texlive-xetex \
+  texlive-fontsrecommended
 ```
 
 ### Fedora
 
-(Tested on Fedora 38 ARM64)
-
-Install all dependencies:
-
 ```sh
-sudo dnf install make gcc mupdf-devel SDL2-devel  g++ freetype2-devel libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel gumbo-parser-devel tesseract-devel leptonica-devel cargo openssl-devel fontconfig-devel
+dnf install gcc gcc-c++ make clang curl tar mupdf-devel SDL2-devel \
+  freetype-devel harfbuzz-devel libjpeg-turbo-devel jbig2dec-devel \
+  openjpeg2-devel gumbo-parser-devel tesseract-devel leptonica-devel \
+  openssl-devel fontconfig-devel graphite2-devel libicu-devel zlib-devel \
+  texlive-scheme-basic texlive-collection-latexrecommended texlive-xetex
 ```
 
-### OSX
-
-(Tested on Ventura Intel and Sonoma Apple Sillicon)
-
-Install the following dependencies with homebrew:
+### macOS
 
 ```sh
 brew install mupdf-tools SDL2
 ```
 
->[!Note]
->`mupdf-tools` can be replaced by `mupdf`, either is fine.
+You also need a LaTeX distribution, e.g. MacTeX, or Tectonic.
 
 > [!Note]
-> Also, for macOS Sequoia (15.0) you may need to reinstall `gcc`, see [this](https://discussions.apple.com/thread/256033797?sortBy=rank) issue.
+> `mupdf-tools` can be replaced by `mupdf`, either is fine.
+
+> [!Note]
+> For macOS Sequoia (15.0) you may need to reinstall `gcc`, see
+> [this](https://discussions.apple.com/thread/256033797?sortBy=rank) issue.
 
 ## Download
 
-Simply clone the git repository using one of the following commands:
-
-```
+```sh
 git clone https://github.com/let-def/texpresso.git   # cloning by HTTP
 git clone git@github.com:let-def/texpresso.git       # cloning by SSH
 ```
 
-(You may want to adjust the URL if you are looking at a different fork.)
+(Adjust the URL if you are looking at a different fork.)
 
-## Build TeXpresso and TeXpresso-XeTeX
+## Get an engine
 
-First make sure the dependencies are available: `pkg-config`, `SDL2`, `mupdf` (and its own dependencies: `libjpeg`, `libpng`, `freetype2`, `gumbo`, `jbig2dec`... and possibly `leptonica`, `tesseract` and `mujs` depending on the mupdf version).
+The engine is not built by `make`, and a build never reaches the network on its
+own. Choose one:
+
+```sh
+make fetch-engine                        # prebuilt bundle; needs only a C compiler
+make engine-source                       # build from pinned TeX Live sources
+```
+
+`engine-source` needs emscripten and wabt, and takes considerably longer.
+
+Both honour `TEXPRESSO_ENGINE`, which selects the engine: `xetex` (default),
+`pdftex` or `luatex`. The same variable selects the engine compiled into the
+frontend, so use it consistently:
+
+```sh
+TEXPRESSO_ENGINE=luatex make fetch-engine
+TEXPRESSO_ENGINE=luatex make
+```
+
+No format file is shipped. If the format your engine needs is not present, it is
+generated on the first run and cached, which makes that run slow.
+
+## Build
+
+Make sure the dependencies are available: `pkg-config`, `SDL2`, `mupdf` (and its
+own dependencies: `libjpeg`, `libpng`, `freetype2`, `gumbo`, `jbig2dec`, and
+possibly `leptonica`, `tesseract` and `mujs` depending on the mupdf version).
 Under macOS, `brew` is also used to find local files.
 
-If it succeeds, `make texpresso` produces `build/texpresso` and `make texpresso-xetex` produces `build/texpresso-xetex`.
+`make` (or `make texpresso`) produces `build/texpresso`.
 
-Other targets are:
-- `config` to generate configuration in `Makefile.config` (automatically called during first build)
-- `dev` produces `build/texpresso-dev` which supports hot-reloading to ease development
-- `debug` produces debugging tools in `build/`
-- `macos-app` (macOS only) bundles the built binaries into `build/TeXpresso.app` with a HIG-compliant dock icon; requires `rsvg-convert` and `iconutil` in `PATH`
-- `clean` to remove intermediate build files
-- `distclean` to remove all build files (`build/` and `Makefile.config`)
+Other targets:
+
+- `config` generates `Makefile.config` (called automatically on first build)
+- `engines` builds one frontend per engine: `build/texpresso-{xetex,pdftex,luatex}`,
+  each needing that engine fetched or built first
+- `engine-native` builds the standalone engine binary used by `make test-fence`
+- `debug-proxy` builds `texpresso-debug-proxy`
+- `macos-app` (macOS only) bundles into `build/TeXpresso.app`; requires
+  `rsvg-convert` and `iconutil` in `PATH`
+- `test-report` runs the test suite and reports PASS/FAIL per target
+- `clean` removes intermediate build files
+- `distclean` removes all build files (`build/` and `Makefile.config`)
 
 If the build fails, try tweaking the configuration flags in `Makefile.config`.
 
 ## Package providers
 
-A LaTeX distribution comes with many packages and resource files.
-TeXpresso uses an existing installation:
+A LaTeX distribution comes with many packages and resource files. TeXpresso uses
+an existing installation:
+
 - it defaults to TeXlive if the `kpsewhich` command is available.
 - it falls back to Tectonic if the `tectonic` command is available (in `PATH`)
 
-It is possible to force selecting a specific distribution by passing the
-`-tectonic` or `-texlive` flags.
+Force a specific distribution with the `-texlive` or `-tectonic` flags.
 
 ## Testing TeXpresso
-
-If both commands built successfully, you can try TeXpresso using:
 
 ```sh
 build/texpresso test/simple.tex
 ```
 
-Or:
+Or select a distribution:
+
 ```sh
 build/texpresso -texlive test/simple.tex
 build/texpresso -tectonic test/simple.tex
 ```
-to select a specific distribution.
 
-This is just a minimal test to make sure that TeXpresso is installed correctly.
-If TeXpresso window does not display the document, please report an issue.
+This is a minimal check that TeXpresso is installed correctly. If the window
+does not display the document, please report an issue.
 
 > [!Note]
-> Expect first run to be quite slow, due to initial packages compilation
+> Expect the first run to be slow: the format is generated if absent, and
+> packages are compiled for the first time.
+
+Run the full suite with `make test-report`.
 
 ### Tectonic initialization
 
-Using Tectonic can be quite slow when a file is needed for the first time as it needs to be downloaded.
-To speed up the process, you can run:
+Tectonic can be slow the first time a file is needed, since it downloads it. To
+prime the cache:
+
 ```sh
 make fill-tectonic-cache
 ```
 
 ## Using TeXpresso
 
-[README.md](./README.md) has information on supported editors and how to control the TeXpresso viewer.
+[README.md](./README.md) has information on supported editors and how to control
+the TeXpresso viewer.
