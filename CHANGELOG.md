@@ -4,7 +4,7 @@
   Live sources are compiled to WebAssembly and then to C (wasm2c); snapshots use
   userland copy-on-write instead of `fork(2)`. There is no `texpresso-xetex`
   helper binary any more, and the engine needs no patches.
-- support three engines — XeTeX, pdfTeX and LuaTeX — selected at build time with
+- support three engines (XeTeX, pdfTeX and LuaTeX), selected at build time with
   `TEXPRESSO_ENGINE=<name>`; the default is `xetex`.
 - the engine is no longer built as part of `make`: get one with
   `make fetch-engine` (prebuilt bundle, needs only a C compiler) or
