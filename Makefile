@@ -11,8 +11,8 @@ all: | Makefile.config
 	$(MAKE) common texpresso
 	@echo "# Build succeeded."
 	@echo "# TeXpresso detects package providers (TeXlive or Tectonic) by looking in PATH:"
-	@echo "# - it defaults to Tectonic if the 'tectonic' command is available"
-	@echo "# - it falls back to TeXlive if the 'kpsewhich' command is available"
+	@echo "# - it defaults to TeXlive if the 'kpsewhich' command is available"
+	@echo "# - it falls back to Tectonic if the 'tectonic' command is available"
 	@echo "# A provider can be selected manually by passing the '-texlive' or '-tectonic' flags."
 	@echo "#"
 	@echo "# When using tectonic, first time launch needs to download many files and can be slow."

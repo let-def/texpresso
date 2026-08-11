@@ -3,7 +3,7 @@
 The process should be started from the editor passing the root TeX file as argument:
 
 ```
-texpressso [-I path]* [-json] [-lines] [-texlive] [-tectonic] [-test-initialize] [-stream] <some-dir>/root.tex
+texpresso [-I path]* [-json] [-lines] [-texlive] [-tectonic] [-test-initialize] [-stream] <some-dir>/root.tex
 ```
 
 The rest of the communication will happen on stdin/stdout:
