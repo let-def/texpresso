@@ -27,7 +27,7 @@ manually / by `make fill-tectonic-cache`.
 | target | script | checks |
 |---|---|---|
 | `test-stream` | `test_stream.sh` | the `-stream` command channel |
-| `test-register` | `test-register.sh` | `(register)` → `lookup-file promised` → `(open)` resumes the run |
+| `test-register` | `test-register.sh` | `(register)` then `lookup-file promised` then `(open)` resumes the run |
 | `test-lookup-file` | `test-lookup-file.sh` | an unregistered miss is reported and the supplied file is used |
 | `test-rerun` | `test-rerun.sh` | aux-driven convergence (TOC / refs) across reruns |
 | `test-replay` | `test-replay.sh` | incremental replay is byte-identical to a full compile |
