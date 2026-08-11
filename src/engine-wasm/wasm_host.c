@@ -1127,7 +1127,12 @@ static void snapshot_restore_to(int k) {
   for (int i = g_nlayers - 1; i > k; i--) layer_free(&g_layers[i]); /* pop deeper */
   g_nlayers = k + 1;
   memset(K->saved, 0, bits_for(K->cap)); /* re-arm layer k's window */
-  g_cow_size = K->cap;
+  /* Track the engine's live memory, not the layer's shadow coverage. cap only
+   * says how far this layer's shadow reaches; the protected window has to match
+   * what the engine actually has mapped, or cow_on_grow's "new_size >
+   * g_cow_size" test cannot fire as the heap grows again and the window stops
+   * following it. */
+  g_cow_size = K->meminfo.size;
   g_engine_done = 0;
   mprotect(g_cow_base, g_cow_size, PROT_READ);
   g_cow_active = 1;
