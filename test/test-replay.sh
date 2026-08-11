@@ -30,7 +30,11 @@ mkbody() { # $1 = marker word, $2 = paragraph to mark
 esc() { sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' "$1" | awk '{if(NR>1)printf"\\n";printf"%s",$0}'; }
 
 status=0
-for PCT in 10 50 90; do
+# 1% lands in the first few paragraphs, which selects the base checkpoint; the
+# other three select deeper ones. Sampling only the middle of the document left
+# the base-checkpoint path untested, and it was broken on Linux while every
+# sampled position passed.
+for PCT in 1 10 50 90; do
   EPAR=$((PARAGRAPHS * PCT / 100)); [ "$EPAR" -lt 1 ] && EPAR=1
   SRC=$(mktemp -d /tmp/txp-replay-src-XXXXXX)
   mkbody ORIGINALWORD   "$EPAR" >"$SRC/orig.tex"
