@@ -34,8 +34,10 @@ On macOS, `make macos-app` additionally produces `build/TeXpresso.app`, a bundle
 
 The TeXpresso system is built of the following parts:
 
-1. A TeX engine that renders LaTeX documents into PDF;
-   we use a custom version of the `XeTeX` engine, modified to interact with the TeXpresso driver.
+1. A TeX engine that renders LaTeX documents into PDF; we use stock upstream
+   TeX Live sources (`XeTeX`, `pdfTeX` or `LuaTeX`, selected at build time)
+   compiled to WebAssembly and then to C, so the engine runs inside the
+   TeXpresso process with no patches and no separate binary.
 
 2. A PDF renderer that renders PDF documents into images.
    We use [MuPDF](https://mupdf.com/).
