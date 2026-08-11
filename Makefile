@@ -1,9 +1,18 @@
+# Which TeX engine to build against — one knob for fetching and building, as an
+# environment variable or a make argument:
+#   TEXPRESSO_ENGINE=luatex make fetch-engine texpresso
+#   make fetch-engine texpresso TEXPRESSO_ENGINE=luatex
+# Namespaced because a bare ENGINE is common enough that a stray one in the
+# environment would otherwise silently redirect the build.
+TEXPRESSO_ENGINE ?= xetex
+WASM_ENGINE_DIR ?= engines/build-wasm2c-$(TEXPRESSO_ENGINE)
+
 all: | Makefile.config
-	$(MAKE) common texpresso texpresso-xetex
+	$(MAKE) common texpresso
 	@echo "# Build succeeded."
 	@echo "# TeXpresso detects package providers (TeXlive or Tectonic) by looking in PATH:"
-	@echo "# - it defaults to Tectonic if the 'tectonic' command is available"
-	@echo "# - it falls back to TeXlive if the 'kpsewhich' command is available"
+	@echo "# - it defaults to TeXlive if the 'kpsewhich' command is available"
+	@echo "# - it falls back to Tectonic if the 'tectonic' command is available"
 	@echo "# A provider can be selected manually by passing the '-texlive' or '-tectonic' flags."
 	@echo "#"
 	@echo "# When using tectonic, first time launch needs to download many files and can be slow."
@@ -21,13 +30,48 @@ common: | Makefile.config
 	$(MAKE) -C src/common
 
 texpresso: | Makefile.config
-	$(MAKE) -C src/frontend texpresso
+	$(MAKE) -C src/frontend texpresso \
+	  TEX_ENGINE=$(TEXPRESSO_ENGINE) \
+	  WASM_ENGINE_DIR=$(abspath $(WASM_ENGINE_DIR))
 
-dev: | Makefile.config
-	$(MAKE) -C src texpresso-dev
+# ---- Getting an engine ------------------------------------------------------
+# Tier 1 (engine developers): build from pinned upstream TeX Live sources.
+#   make engine-source                  # needs emscripten + wabt; slow
+# Tier 2 (everyone else): download the prebuilt engine.c bundle and compile it.
+#   make fetch-engine                   # needs only a C compiler
+# Both honour TEXPRESSO_ENGINE. Neither runs as part of `make all`: a build
+# should not reach the network on its own.
 
-debug: | Makefile.config
-	$(MAKE) -C src texpresso-debug texpresso-debug-proxy
+fetch-engine:
+	bash scripts/fetch-wasm-engine.sh $(TEXPRESSO_ENGINE)
+
+engine-source:
+	bash scripts/fetch-engines.sh
+	bash scripts/build-wasm-$(TEXPRESSO_ENGINE).sh
+	bash scripts/build-wasm2c-$(TEXPRESSO_ENGINE).sh
+
+# Model A: one binary per engine (build/texpresso-<eng>), each linking only its
+# own wasm2c engine. The engine profile is picked at runtime from the binary
+# name, so the suffix is load-bearing. Each needs engines/build-wasm2c-<eng>
+# (scripts/build-wasm2c-<eng>.sh) and its format (scripts/build-wasm-fmt.sh <eng>).
+TEX_ENGINES = xetex pdftex luatex
+ENGINE_BINS = $(addprefix texpresso-,$(TEX_ENGINES))
+
+$(ENGINE_BINS): texpresso-%: | Makefile.config
+	$(MAKE) common
+	$(MAKE) -C src/frontend texpresso \
+	  TEX_ENGINE=$* \
+	  WASM_ENGINE_DIR=$(abspath engines/build-wasm2c-$*) \
+	  TEXPRESSO_BIN=../../build/texpresso-$*
+
+engines: $(ENGINE_BINS)
+	@echo "# Built: $(addprefix build/texpresso-,$(TEX_ENGINES))"
+
+# Hot-reload dev builds are gone: the engine runs in this process, so reloading
+# the frontend cannot reload it. What remains is the fifo proxy the Emacs
+# integration attaches a debugger through.
+debug-proxy: | Makefile.config
+	$(MAKE) -C src/frontend texpresso-debug-proxy WASM_ENGINE_DIR=$(abspath $(WASM_ENGINE_DIR))
 
 clean:
 	rm -rf build/*/*
@@ -70,9 +114,6 @@ config:
 	echo >>Makefile.config "LIBS=-L$(BREW)/lib -lmupdf -lm `CC=gcc ./mupdf-config.sh -L$(BREW)/lib` -lz -ljpeg -lharfbuzz -lfreetype -lSDL2"
 endif
 
-texpresso-xetex:
-	$(MAKE) -C src/engine
-
 compile_commands.json:
 	bear -- $(MAKE) -B -k all
 
@@ -80,13 +121,24 @@ fill-tectonic-cache:
 	tectonic --outfmt fmt test/format.tex
 	tectonic --outfmt xdv test/simple.tex
 
-test-texlive:
-	build/texpresso-xetex -texlive test/simple.tex
-	rm simple.aux simple.log simple.xdv
+# Run every test target, report PASS/FAIL with timings, exit non-zero if any
+# failed. Re-run a single target to see why.
+TEST_TARGETS = test-texpresso test-texpresso-texlive test-texpresso-tectonic \
+               test-open-base64 test-stream test-register test-lookup-file \
+               test-rerun test-replay test-fence
 
-test-tectonic:
-	build/texpresso-xetex -tectonic test/simple.tex
-	rm simple.aux simple.log simple.xdv
+test-report:
+	@fail=""; \
+	for t in $(TEST_TARGETS); do \
+	  start=$$SECONDS; \
+	  if $(MAKE) --no-print-directory $$t >/dev/null 2>&1; then \
+	    printf '  %-26s PASS %3ds\n' "$$t" $$((SECONDS-start)); \
+	  else \
+	    printf '  %-26s FAIL %3ds\n' "$$t" $$((SECONDS-start)); fail="$$fail $$t"; \
+	  fi; \
+	done; \
+	if [ -n "$$fail" ]; then echo "  failed:$$fail"; exit 1; fi; \
+	echo "  all $(words $(TEST_TARGETS)) passed"
 
 test-open-base64:
 	printf '(open-base64 "test/simple.tex" "%s")\n' "$$(base64 < test/simple.tex | tr -d '\n')" | \
@@ -113,8 +165,24 @@ test-lookup-file:
 test-rerun:
 	bash test/test-rerun.sh
 
+test-replay:
+	bash test/test-replay.sh
+
+# Standalone engine binary: the same objects texpresso links, plus the host's
+# own main(). test-fence uses it to check snapshot fidelity directly.
+engine-native: | Makefile.config
+	cc -O2 -I$(WASM_ENGINE_DIR) -Isrc/engine-wasm \
+	   -c src/engine-wasm/wasm_host.c -o build/wasm_host_main.o
+	cc -O2 -o $(WASM_ENGINE_DIR)/$(TEXPRESSO_ENGINE)-native build/wasm_host_main.o \
+	   $(WASM_ENGINE_DIR)/engine.o $(WASM_ENGINE_DIR)/wasm-rt-impl.o \
+	   $(WASM_ENGINE_DIR)/wasm-rt-mem-impl.o \
+	   $(WASM_ENGINE_DIR)/wasm-rt-exceptions-impl.o -lm
+
+test-fence: engine-native
+	bash test/test-fence.sh
+
 macos-app: texpresso
 	@[ "$$(uname)" = "Darwin" ] || { echo "macos-app requires macOS"; exit 1; }
 	bash scripts/build-macos-app.sh
 
-.PHONY: all dev clean config texpresso common texpresso-xetex re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file test-rerun macos-app
+.PHONY: all test-report debug-proxy clean config texpresso common engines fetch-engine engine-source $(ENGINE_BINS) re2c compile_commands.json fill-tectonic-cache test-texlive test-tectonic test-texpresso test-stream test-open-base64 test-register test-lookup-file test-rerun test-replay test-fence engine-native macos-app

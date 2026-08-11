@@ -34,8 +34,7 @@
 
 enum log_action {
   LOG_ENTRY = 0x42,
-  LOG_CELL,
-  LOG_OVERWRITE
+  LOG_CELL
 };
 
 struct log_s
@@ -121,24 +120,7 @@ void log_filecell(fz_context *ctx, log_t *log, filecell_t *cell)
   }
 }
 
-struct overwrite_data {
-  fz_buffer *buf;
-  int start, len;
-};
 
-void log_overwrite(fz_context *ctx, log_t *log, fz_buffer *buf, int start, int len)
-{
-  if (LOG) fprintf(stderr, "push LOG_OVERWRITE\n");
-  fz_keep_buffer(ctx, buf);
-  fz_append_data(ctx, log->data, buf->data + start, len);
-  struct overwrite_data data = {
-    .buf = buf,
-    .start = start,
-    .len = len,
-  };
-  PUSH_VALUE(ctx, log->data, data);
-  push_action(ctx, log->data, LOG_OVERWRITE);
-}
 
 static enum log_action pop_action(fz_buffer *buf)
 {
@@ -171,15 +153,6 @@ static void log_pop(fz_context *ctx, log_t *log)
       filecell_t *cell;
       POP_VALUE(log->data, cell);
       POP_VALUE(log->data, *cell);
-      break;
-    }
-    case LOG_OVERWRITE:
-    {
-      if (LOG) fprintf(stderr, "pop LOG_OVERWRITE\n");
-      struct overwrite_data data;
-      POP_VALUE(log->data, data);
-      pop_value(log->data, data.buf->data + data.start, data.len);
-      fz_drop_buffer(ctx, data.buf);
       break;
     }
     default:

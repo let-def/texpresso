@@ -2,9 +2,9 @@ name: CI TeXpresso – build & test
 
 on:
   push:
-    branches: [detectonic, main, detectonic-ci]
+    branches: [eclipse, detectonic, main, detectonic-ci]
   pull_request:
-    branches: [detectonic, main, detectonic-ci]
+    branches: [eclipse, detectonic, main, detectonic-ci]
 
 jobs:
   test:
@@ -37,7 +37,7 @@ jobs:
             container: archlinux:latest
             install: |
               pacman -Sy --noconfirm --needed \
-                base-devel gcc git \
+                base-devel gcc git curl \
                 freetype2 harfbuzz icu libjpeg-turbo openjpeg2 libpng \
                 gumbo-parser tesseract leptonica openssl zlib \
                 sdl2 mupdf \
@@ -49,7 +49,7 @@ jobs:
             os: ubuntu-latest
             container: fedora:latest
             install: |
-              dnf install -y gcc gcc-c++ make rust cargo clang \
+              dnf install -y gcc gcc-c++ make rust cargo clang curl tar \
                 mupdf-devel SDL2-devel freetype-devel harfbuzz-devel \
                 libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel \
                 gumbo-parser-devel tesseract-devel leptonica-devel \
@@ -70,17 +70,27 @@ jobs:
       - name: Install tool-chain
         run: ${{ matrix.install }}
 
+      # The engine is a build artifact, not source: engines/ is gitignored. Cache
+      # it keyed on the fetch script, which carries both the release tag and the
+      # checksums — re-cutting a release therefore invalidates this by itself.
+      # The cached directory also ends up holding engine.o, so warm runs skip the
+      # ~1 min -O2 compile of a 45 MB engine.c.
+      - name: Cache wasm engine
+        id: engine-cache
+        uses: actions/cache@v4
+        with:
+          path: engines/build-wasm2c-xetex
+          key: engine-xetex-${{ matrix.label }}-${{ hashFiles('scripts/fetch-wasm-engine.sh') }}
+
+      - name: Fetch wasm engine
+        if: steps.engine-cache.outputs.cache-hit != 'true'
+        run: make fetch-engine TEXPRESSO_ENGINE=xetex
+
       - name: Build project
         run: make all
 
       - name: Generate Tectonic cache
         run: make fill-tectonic-cache
-
-      - name: Run test – TeX Live
-        run: make test-texlive   || echo "fail" > texlive.status
-
-      - name: Run tests – Tectonic
-        run: make test-tectonic  || echo "fail" > tectonic.status
 
       - name: Run tests – Texpresso
         run: make test-texpresso || echo "fail" > texpresso.status
@@ -106,12 +116,16 @@ jobs:
       - name: Run tests – Rerun (editor commands + on-demand convergence)
         run: make test-rerun || echo "fail" > rerun.status
 
+      - name: Run tests – Replay (incremental edits stay byte-identical)
+        run: make test-replay || echo "fail" > replay.status
+
+      - name: Run tests – Fence (snapshot restore reproduces memory exactly)
+        run: make test-fence || echo "fail" > fence.status
+
       - name: Report summary
         if: always()
         run: |
           pass=0; fail=0
-          [ ! -f texlive.status ]   && pass=$((pass+1)) || fail=$((fail+1))
-          [ ! -f tectonic.status ]  && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f texpresso.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f open-base64.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f texpresso-texlive.status ]  && pass=$((pass+1)) || fail=$((fail+1))
@@ -120,7 +134,66 @@ jobs:
           [ ! -f register.status ]    && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f lookup-file.status ] && pass=$((pass+1)) || fail=$((fail+1))
           [ ! -f rerun.status ]       && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f replay.status ]      && pass=$((pass+1)) || fail=$((fail+1))
+          [ ! -f fence.status ]       && pass=$((pass+1)) || fail=$((fail+1))
           echo "Passed: $pass" >> "$GITHUB_STEP_SUMMARY"
           echo "Failed: $fail"  >> "$GITHUB_STEP_SUMMARY"
           [ $fail -eq 0 ]
 
+  # ABI drift check. Each engine's wasm exposes a different w2c_engine struct —
+  # luatex has three mutable globals where xetex has one — and wasm_host.c once
+  # hardcoded xetex's, so it could not compile against luatex at all for a week
+  # without anything noticing. Building each engine catches that. The frontend
+  # logic is engine-independent and already covered by the matrix above, so these
+  # only need to build and typeset. One platform is enough: the ABI does not vary
+  # by OS.
+  engines:
+    name: pdftex + luatex
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tool-chain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libsdl2-dev libmupdf-dev libmujs-dev \
+            libfreetype-dev libgumbo-dev libjbig2dec0-dev libjpeg-dev \
+            libopenjp2-7-dev libssl-dev libfontconfig-dev libleptonica-dev \
+            libharfbuzz-dev mupdf curl \
+            texlive-luatex texlive-latex-recommended texlive-extra-utils
+
+      - name: Cache wasm engines
+        id: engines-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            engines/build-wasm2c-pdftex
+            engines/build-wasm2c-luatex
+          key: engines-extra-${{ hashFiles('scripts/fetch-wasm-engine.sh') }}
+
+      - name: Fetch engines
+        if: steps.engines-cache.outputs.cache-hit != 'true'
+        run: |
+          make fetch-engine TEXPRESSO_ENGINE=pdftex
+          make fetch-engine TEXPRESSO_ENGINE=luatex
+
+      - name: Build both
+        run: |
+          make common
+          make texpresso-pdftex
+          make texpresso-luatex
+
+      - name: Typeset with each
+        run: |
+          set -e
+          printf '\\documentclass{article}\n\\begin{document}\nCI.\n\\end{document}\n' > /tmp/ci.tex
+          for e in pdftex luatex; do
+            echo "--- $e ---"
+            # Match the real summary line, not the copy embedded in the log
+            # protocol message — a loose pattern here passes on garbage.
+            SDL_VIDEODRIVER=dummy timeout 300 build/texpresso-$e -test-initialize /tmp/ci.tex \
+              | grep -aoE "Output written on [A-Za-z0-9_.-]+ \([0-9]+ pages?, [0-9]+ bytes\)" \
+              | head -1 | tee /tmp/$e.out
+            [ -s /tmp/$e.out ] || { echo "$e produced no output"; exit 1; }
+          done

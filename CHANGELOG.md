@@ -1,5 +1,17 @@
 # NEXT
 
+- the TeX engine now runs **inside** the TeXpresso process. Stock upstream TeX
+  Live sources are compiled to WebAssembly and then to C (wasm2c); snapshots use
+  userland copy-on-write instead of `fork(2)`. There is no `texpresso-xetex`
+  helper binary any more, and the engine needs no patches.
+- support three engines (XeTeX, pdfTeX and LuaTeX), selected at build time with
+  `TEXPRESSO_ENGINE=<name>`; the default is `xetex`.
+- the engine is no longer built as part of `make`: get one with
+  `make fetch-engine` (prebuilt bundle, needs only a C compiler) or
+  `make engine-source` (build from pinned TeX Live sources; needs emscripten and
+  wabt). See INSTALL.md.
+- a LaTeX format is generated on first run if one is not present, so no `.fmt`
+  is shipped.
 - fix TeX build date to use SOURCE_DATE_EPOCH if set, otherwise falling back to
   the current date (previously hardcoded to Feb 8, 2025).
 - fix zealous JSON escaping

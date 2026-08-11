@@ -37,13 +37,10 @@
 
 typedef struct txp_engine_s txp_engine;
 
-txp_engine *txp_create_tex_engine(fz_context *ctx,
-                                  const char *engine_path,
-                                  bool use_texlive,
-                                  bool stream_mode,
-                                  const char *inclusion_path,
-                                  const char *tex_name,
-                                  dvi_reshooks hooks);
+/* The TeX engine: compiles a .tex source, in-process via wasm2c (see
+ * engine_tex.c). engine_path is used as argv[0] for the engine's kpathsea. */
+txp_engine *txp_create_tex_engine(fz_context *ctx, const char *engine_path,
+                                  const char *tex_name, dvi_reshooks hooks);
 
 txp_engine *txp_create_pdf_engine(fz_context *ctx, const char *pdf_path);
 

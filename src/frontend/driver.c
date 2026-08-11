@@ -97,10 +97,6 @@ static bool get_executable_path(char path[PATH_MAX])
   return realpath(exe_path, path);
 }
 
-static bool should_reload_binary(void)
-{
-  return 0;
-}
 
 static void usage(void)
 {
@@ -119,8 +115,9 @@ static void usage(void)
           " -texlive   Load TeX packages from TeXlive installation (using "
           "kpsewhich command)\n");
   fprintf(stderr,
-          " -tectonic  Load TeX packages from tectonic installation (using "
-          "tectonic command)\n");
+          " -tectonic  Load rendering resources from a tectonic installation.\n"
+          "            The engine still needs a TeX Live tree (kpathsea) for "
+          "packages.\n");
   fprintf(stderr,
           " -test-initialize  Run a single cycle for test purposes\n");
   fprintf(stderr,
@@ -345,7 +342,6 @@ int main(int argc, const char **argv)
       .inclusion_path = inclusion_path,
       .custom_event = custom_event,
       .schedule_event = &schedule_event,
-      .should_reload_binary = &should_reload_binary,
 
       .line_output = line_output,
       .use_tectonic = use_tectonic,

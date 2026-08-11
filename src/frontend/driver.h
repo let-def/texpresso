@@ -61,7 +61,6 @@ struct persistent_state {
   Uint32 custom_event;
 
   void (*schedule_event)(enum custom_events ev);
-  bool (*should_reload_binary)(void);
 
   SDL_Window *window;
   SDL_Renderer *renderer;

@@ -62,11 +62,17 @@ iconutil -c icns "$ICONSET.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
 rm -rf "$ICONSET.iconset"
 trap - EXIT
 
-# Copy texpresso and its engine binary. find_engine() looks for the
-# engine in the same directory as the main binary, so both must
-# sit together under Contents/MacOS/.
+# The engine is linked into texpresso, so there is no separate engine binary to
+# bundle. xetex does need its ICU data, which locate_icu_data() looks for beside
+# the executable. No format is shipped — texpresso builds one on first run from
+# the user's own TeX Live.
 cp "$BUILD/texpresso" "$APP/Contents/MacOS/texpresso"
-[ -x "$BUILD/texpresso-xetex" ]  && cp "$BUILD/texpresso-xetex"  "$APP/Contents/MacOS/"
+ICU="$(ls "$REPO/engines/build-wasm2c-xetex"/icudt*.dat 2>/dev/null | head -1)"
+if [ -n "$ICU" ]; then
+  cp "$ICU" "$APP/Contents/MacOS/"
+else
+  echo "warning: no ICU data found; the bundled xetex will not run" >&2
+fi
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
