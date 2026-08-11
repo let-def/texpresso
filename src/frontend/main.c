@@ -1241,6 +1241,24 @@ bool texpresso_main(struct persistent_state *ps)
     return 0;
   }
 
+  /* The engine runs in-process and resolves packages with kpathsea, so a TeX
+   * Live tree is needed whichever provider supplies rendering resources.
+   * Tectonic alone gets through the checks above and then finds no .sty,
+   * producing an empty document with no error — fail here instead. */
+  if (!texlive_available())
+  {
+    fprintf(stderr,
+            "[fatal] cannot find kpsewhich: the in-process TeX engine resolves\n"
+            "packages with kpathsea and requires a TeX Live installation.\n"
+            "Tectonic on its own is not enough to run the engine; see\n"
+            "WASM-ENGINE.md. Install TeX Live (or set PATH so kpsewhich is\n"
+            "visible) and try again.\n");
+    /* Not `return 0`: false means "quit" to the caller, which is also what a
+     * successful run returns, so the process would exit 0 and no script could
+     * tell this apart from success. */
+    exit(1);
+  }
+
   const char *doc_ext = NULL;
 
   for (const char *ptr = ps->doc_name; *ptr; ptr++)

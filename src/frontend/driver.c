@@ -115,8 +115,9 @@ static void usage(void)
           " -texlive   Load TeX packages from TeXlive installation (using "
           "kpsewhich command)\n");
   fprintf(stderr,
-          " -tectonic  Load TeX packages from tectonic installation (using "
-          "tectonic command)\n");
+          " -tectonic  Load rendering resources from a tectonic installation.\n"
+          "            The engine still needs a TeX Live tree (kpathsea) for "
+          "packages.\n");
   fprintf(stderr,
           " -test-initialize  Run a single cycle for test purposes\n");
   fprintf(stderr,

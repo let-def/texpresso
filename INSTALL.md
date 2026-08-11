@@ -156,6 +156,12 @@ an existing installation:
 
 Force a specific distribution with the `-texlive` or `-tectonic` flags.
 
+**TeX Live is required either way.** The engine runs in-process and resolves
+packages with kpathsea, so it needs a TeX Live tree even when `-tectonic` is
+selected; `-tectonic` then supplies rendering resources only. TeXpresso exits
+with an error if `kpsewhich` is not on `PATH`. Feeding the engine from a
+Tectonic bundle instead is not implemented.
+
 ## Testing TeXpresso
 
 ```sh
