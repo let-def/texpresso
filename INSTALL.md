@@ -12,6 +12,7 @@ So far it has only been tested the following systems, where we expect it to work
 - Arch Linux: [a PKGBUILD is available in the AUR](https://aur.archlinux.org/packages/texpresso-git) that builds from the latest Git HEAD on installation.
 - Debian 12
 - Ubuntu 22.04
+- openSUSE Tumbleweed
 
 On other systems you may observe build failures that require modifying the Makefile. Let us know if it works on a system not listed above, or if you can tweak the configuration/build code to support your system without breaking others.
 
@@ -47,6 +48,16 @@ Install all dependencies:
 
 ```sh
 sudo dnf install make gcc mupdf-devel SDL2-devel  g++ freetype2-devel libjpeg-turbo-devel jbig2dec-devel openjpeg2-devel gumbo-parser-devel tesseract-devel leptonica-devel cargo openssl-devel fontconfig-devel
+```
+
+### openSUSE Tumbleweed
+
+(Tested on openSUSE Tumbleweed version 20260922-4317.1 x86_64)
+
+Install all dependencies:
+
+```sh
+sudo zypper in make gcc gcc-c++ pkg-config sdl2-compat-devel libopenssl-devel mupdf freetype2-devel cargo fontconfig-devel leptonica-devel jbig2dec-devel libjpeg8-devel harfbuzz-devel
 ```
 
 ### OSX
