@@ -456,7 +456,7 @@ size_t ttstub_input_seek(ttbc_input_handle_t *handle,
   {
     txp_input *input = input_as_txp(handle);
     if (input->id == -1)
-      return fseek(input->file, offset, whence);
+      return fseek(input->file, offset, whence) ? (size_t)-1 : (size_t)ftell(input->file);
 
     int ofs = offset;
     if (whence == SEEK_CUR)
@@ -478,7 +478,8 @@ size_t ttstub_input_seek(ttbc_input_handle_t *handle,
 
     return input->file_pos + input->buf_pos;
   }
-  return fseek(input_as_file(handle), offset, whence);
+  FILE *f = input_as_file(handle);
+  return fseek(f, offset, whence) ? (size_t)-1 : (size_t)ftell(f);
 }
 
 static ssize_t internal_input_read(ttbc_input_handle_t *handle, char *data, size_t len)

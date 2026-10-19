@@ -370,6 +370,8 @@ static void process_line(struct table *table, char *path)
 
   char *sub = NULL;
   char *line = NULL;
+  // kpathsea never searches a tree's doc/ and source/ subtrees for inputs
+  bool skip = false;
 
   size_t cap = 0;
   ssize_t len;
@@ -405,8 +407,13 @@ static void process_line(struct table *table, char *path)
         fclose(f);
         return;
       }
+      skip = !strncmp(sub, "doc", 3) && (sub[3] == '/' || sub[3] == 0);
+      skip = skip || (!strncmp(sub, "source", 6) && (sub[6] == '/' || sub[6] == 0));
       continue;
     }
+
+    if (skip)
+      continue;
 
     // Add file to the table
     add(table, path, sub ? sub : "", line);
