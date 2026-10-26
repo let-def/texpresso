@@ -620,6 +620,11 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
           {
             if (fs_path == q->open.path)
               fs_path = e->path;
+            // A rollback to before the file was first opened leaves it read
+            // once already: drop that copy, or every run of TeX from the
+            // start keeps one more of each file it reads (pictures included).
+            if (e->fs_data)
+              fz_drop_buffer(ctx, e->fs_data);
             e->fs_data = fz_read_file(ctx, fs_path);
             e->saved.level = FILE_READ;
             stat(fs_path, &e->fs_stat);
@@ -628,6 +633,11 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
       }
       else
       {
+        // A file written again (beamer's .vrb, once per fragile frame) drops
+        // the entry's own reference to what it held; log_fileentry above kept
+        // one for the rollback when it is needed.
+        if (e->saved.data)
+          fz_drop_buffer(ctx, e->saved.data);
         e->saved.data = fz_new_buffer(ctx, 1024);
         e->saved.level = level;
       }
