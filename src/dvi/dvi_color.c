@@ -373,9 +373,11 @@ bool special_colorstack(fz_context *ctx, dvi_colorstacks *cs, dvi_colorstate *cu
   switch (op)
   {
     case COLOR_PUSH:
+      // An unknown color (e.g. a named one) pushes the current color again,
+      // so that the matching pop stays balanced
       color = *colorstack_top(stack);
       if (!parse_color(ctx, &color, cur, lim))
-        return 0;
+        color = *colorstack_top(stack);
       colorstack_push(ctx, stack, &color);
       break;
 
@@ -392,7 +394,12 @@ bool special_colorstack(fz_context *ctx, dvi_colorstacks *cs, dvi_colorstate *cu
     case PDF_SCOLOR:
       color = *colorstack_top(stack);
       if (!parse_pdf_setcolor(ctx, &color, cur, lim))
-        return 0;
+      {
+        // Keep "pdf:bcolor" balanced with its "pdf:ecolor"
+        if (op != PDF_BCOLOR)
+          return 0;
+        color = *colorstack_top(stack);
+      }
       if (op == PDF_BCOLOR)
         colorstack_push(ctx, stack, &color);
       else
@@ -412,7 +419,12 @@ bool special_colorstack(fz_context *ctx, dvi_colorstacks *cs, dvi_colorstate *cu
     case PDFCOLORSTACK_SET:
       color = *colorstack_top(stack);
       if (!parse_pdfcolor(ctx, &color, cur, pdfstring_end(cur, lim)))
-        return 0;
+      {
+        // Keep the push balanced with its pop
+        if (op != PDFCOLORSTACK_PUSH)
+          return 0;
+        color = *colorstack_top(stack);
+      }
       if (op == PDFCOLORSTACK_PUSH)
         colorstack_push(ctx, stack, &color);
       else
