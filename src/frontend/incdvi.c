@@ -36,6 +36,9 @@ struct incdvi_s
   int page_len, page_cap;
   int *pages;
   dvi_context *dc;
+  // Offset from which the DVI buffer has changed since the last rendering
+  // (-1 if unchanged)
+  int invalid_from;
 };
 
 static int add_page(fz_context *ctx, incdvi_t *d)
@@ -65,6 +68,7 @@ incdvi_t *incdvi_new(fz_context *ctx, dvi_reshooks hooks)
 {
   incdvi_t *d = fz_malloc_struct(ctx, incdvi_t);
   d->dc = dvi_context_new(ctx, hooks);
+  d->invalid_from = -1;
   return d;
 }
 
@@ -81,6 +85,7 @@ void incdvi_reset(incdvi_t *d)
   d->offset = 0;
   d->fontdef_offset = 0;
   d->page_len = 0;
+  d->invalid_from = 0;
 }
 
 void incdvi_update(fz_context *ctx, incdvi_t *d, fz_buffer *buf)
@@ -104,6 +109,8 @@ void incdvi_update(fz_context *ctx, incdvi_t *d, fz_buffer *buf)
       d->page_len -= 1;
       d->offset = d->pages[d->page_len];
     }
+    if (d->invalid_from == -1 || d->invalid_from > d->offset)
+      d->invalid_from = d->offset;
   }
 
   if (d->offset == 0)
@@ -195,11 +202,20 @@ void incdvi_render_page(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page, 
   if (page < 0 || page >= incdvi_page_count(d)) abort();
   int offset = d->pages[page * 2];
   int eop = d->pages[page * 2 + 1];
-  incdvi_parse_fontdef(ctx, d, buf, offset);
+  float width, height;
+  incdvi_page_dim(d, buf, page, &width, &height, NULL);
 
   dvi_context *dc = d->dc;
+  if (d->invalid_from >= 0)
+  {
+    dvi_context_invalidate_source(ctx, dc, d->invalid_from);
+    d->invalid_from = -1;
+  }
+  dvi_context_set_source(dc, buf->data, buf->len);
+  incdvi_parse_fontdef(ctx, d, buf, offset);
+
   enum dvi_version version = dvi_context_state(dc)->version;
-  dvi_context_begin_frame(ctx, d->dc, dev);
+  dvi_context_begin_frame(ctx, d->dc, dev, height);
   while (offset < eop)
   {
     int ilen = dvi_instr_size(buf->data + offset, eop - offset, version);
@@ -208,6 +224,7 @@ void incdvi_render_page(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page, 
     offset += ilen;
   }
   dvi_context_end_frame(ctx, dc);
+  dvi_context_set_source(dc, NULL, 0);
 }
 
 float incdvi_tex_scale_factor(incdvi_t *d)

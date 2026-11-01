@@ -37,7 +37,7 @@ static void output_fill_rect(fz_context *ctx, dvi_context *dc, dvi_state *st, in
     fz_path *path = fz_new_path(ctx);
     fz_rectto(ctx, path, x0 * s, - y0 * s, x1 * s, - y1 * s);
     fz_fill_path(ctx, dc->dev, path, 0, st->gs.ctm, fz_device_rgb(ctx),
-                 st->gs.colors.fill, 1.0, color_params);
+                 st->gs.colors.fill, st->gs.fill_alpha, color_params);
     fz_drop_path(ctx, path);
   }
 }
@@ -61,7 +61,7 @@ void dvi_context_flush_text(fz_context *ctx, dvi_context *dc, dvi_state *st)
     if (!dc->dev)
       abort();
     fz_fill_text(ctx, dc->dev, dc->text, fz_identity, fz_device_rgb(ctx),
-        st->gs.colors.fill, 1.0, color_params);
+        st->gs.colors.fill, st->gs.fill_alpha, color_params);
     fz_drop_text(ctx, dc->text);
     dc->text = NULL;
   }
@@ -233,8 +233,8 @@ void dvi_exec_fnt_num(fz_context *ctx, dvi_context *dc, dvi_state *st, uint32_t 
 
 void dvi_exec_rule(fz_context *ctx, dvi_context *dc, dvi_state *st, uint32_t w, uint32_t h)
 {
-  int32_t x = st->registers.h - st->gs.h;
-  int32_t y = st->registers.v - st->gs.v;
+  int32_t x = st->registers.h - st->origin.h;
+  int32_t y = st->registers.v - st->origin.v;
 
   //fprintf(stderr, "rule: (%fpt, %fpt, %fpt, %fpt)\n", fx, fy, fw, fh);
   output_fill_rect(ctx, dc, st, x, y, x + w, y - h);
@@ -278,6 +278,7 @@ bool dvi_exec_bop(fz_context *ctx, dvi_context *dc, dvi_state *st, uint32_t c[10
     fprintf(stderr, "beginning_of_page: transformation stack was not at empty\n");
     st->gs_stack.depth = 0;
   }
+  st->coords_stack.depth = 0;
   if (st->registers_stack.depth != 0)
   {
     fprintf(stderr, "beginning_of_page: stack was not at empty\n");
@@ -340,8 +341,8 @@ void dvi_exec_xdvglyphs(fz_context *ctx, dvi_context *dc, dvi_state *st, fixed_t
     float ds = dc->scale;
     float fs = size.value * ds;
 
-    int32_t sh = st->registers.h - st->gs.h;
-    int32_t sv = st->registers.v + dy0.value - st->gs.v;
+    int32_t sh = st->registers.h - st->origin.h;
+    int32_t sv = st->registers.v + dy0.value - st->origin.v;
     if (dc->dev)
     {
       fz_text *text = get_text(ctx, dc);

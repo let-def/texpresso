@@ -208,7 +208,10 @@ seek_next_line:
 #undef seek
 #undef fail_if
 
-    if (count + count / 4 > capacity)
+    if (capacity == 0)
+      // No map entry found: keep a (empty) table so that lookups fail
+      capacity = 1;
+    else if (count + count / 4 > capacity)
       capacity *= 2;
 
     tex_fontmap_entry *hashtable =

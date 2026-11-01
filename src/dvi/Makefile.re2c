@@ -4,6 +4,6 @@ TARGETS = $(patsubst %.re2c.c,%.c,$(SOURCES))
 all: $(TARGETS)
 
 %.c: %.re2c.c
-	re2c $< -o $@ --tags --bit-vectors
+	re2c $< -o $@ --tags
 
 .PHONY: all

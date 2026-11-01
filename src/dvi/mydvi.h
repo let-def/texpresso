@@ -254,9 +254,30 @@ void dvi_scratch_clear(fz_context *ctx, dvi_scratch *sc);
 // Mostly based on PDF graphic state, with extensions to handle DVI/pdfTeX
 // specials.
 
+// Color spaces selected by PDF operators (cs/CS)
+enum dvi_colorspace
+{
+  DVI_CS_GRAY = 0,
+  DVI_CS_RGB,
+  DVI_CS_CMYK,
+  // Colored tiling patterns and shading patterns
+  DVI_CS_PATTERN,
+  // Uncolored tiling patterns, the color is specified in the underlying space
+  DVI_CS_PATTERN_GRAY,
+  DVI_CS_PATTERN_RGB,
+  DVI_CS_PATTERN_CMYK,
+  // Other color spaces (Separation, DeviceN, ...) are loaded by MuPDF:
+  // DVI_CS_LOADED + i refers to dvi_context.colorspaces[i]
+  DVI_CS_LOADED,
+};
+
+// Colors are always kept in RGB
 typedef struct
 {
   float line[3], fill[3];
+  uint8_t line_cs, fill_cs;
+  // Object number of the current pattern (0 if none)
+  int line_pattern, fill_pattern;
 } dvi_colorstate;
 
 typedef enum
@@ -280,12 +301,23 @@ typedef struct
   float line_width, miter_limit;
   pdf_line_join line_join;
   pdf_line_caps line_caps;
+  // Number of clips (and soft masks) pushed on the device
   int clip_depth;
-  float dash[4];
+  float dash[16];
   int dash_len;
   float dash_phase;
-  int h, v;
+  float fill_alpha, line_alpha;
+  int blend_mode;
+  // Ignore color operators (when painting uncolored tiling patterns)
+  bool color_locked;
 } dvi_graphicstate;
+
+void dvi_graphicstate_init(dvi_graphicstate *gs, fz_matrix ctm);
+
+typedef struct
+{
+  int32_t h, v;
+} dvi_coord;
 
 typedef struct
 {
@@ -306,7 +338,11 @@ typedef struct
 {
   enum dvi_version version;
   uint32_t f;
+  // The PDF graphic state.
+  // gs.ctm maps PDF user space to device space, and DVI positions are
+  // relative to `origin` in user space (pdf:bcontent moves the origin).
   dvi_graphicstate gs;
+  dvi_coord origin;
   dvi_registers registers;
   struct {
     dvi_registers *base;
@@ -316,7 +352,15 @@ typedef struct
     dvi_graphicstate *base;
     int depth, limit;
   } gs_stack;
+  struct {
+    dvi_coord *base;
+    int depth, limit;
+  } coords_stack;
   dvi_fonttable *fonts;
+  // Default coordinate space (used for patterns) and resources of the
+  // current content (the page or a form XObject)
+  fz_matrix base_ctm;
+  pdf_obj *resources;
 } dvi_state;
 
 // Shared data common to DVI interpreter and renderer
@@ -325,18 +369,52 @@ typedef struct
   fz_device *dev;
   fz_text *text;
   fz_path *path;
+  // Clipping requested for the current path (0: none, 1: non-zero, 2: even-odd)
+  int path_clip;
   dvi_scratch scratch;
   dvi_resmanager *resmanager;
   dvi_state root;
   dvi_registers registers_stack[256];
   dvi_graphicstate gs_stack[256];
+  dvi_coord coords_stack[256];
 
   // Default color stack (used by dvipdfmx)
   dvi_colorstack colorstack;
   // Pdf color stacks (introduced by pdftex)
   dvi_colorstacks pdfcolorstacks;
   float scale;
+
+  // PDF objects defined by specials
+  struct dvi_pdfstore *pdfstore;
+  // Color spaces loaded from PDF objects
+  fz_colorspace *colorspaces[32];
+  int colorspaces_count;
+  // The DVI buffer being interpreted, used to record the content of form
+  // XObjects (pdf:bxobj/pdf:exobj)
+  const uint8_t *source;
+  size_t source_len;
+  // Form XObjects being recorded
+  struct dvi_formcapture {
+    int num;
+    size_t start;
+    // State and device to restore at the end of the form
+    bool restore;
+    fz_device *dev;
+    dvi_graphicstate gs;
+    dvi_coord origin;
+    int gs_depth, coords_depth;
+    // Dictionary of the form being recorded
+    pdf_obj *dict;
+  } forms[16];
+  int forms_depth;
+  // Nesting of replayed forms (to prevent infinite recursions)
+  int replay_depth;
+  // Undo stack of x:bscale
+  float bscale[16][2];
+  int bscale_depth;
 } dvi_context;
+
+typedef struct dvi_formcapture dvi_formcapture;
 
 #define DC_ALLOC(ctx, dc, type, count) ((type*)dvi_scratch_alloc(ctx, &(dc)->scratch, sizeof(type) * (count)))
 
@@ -345,7 +423,9 @@ void dvi_context_free(fz_context *ctx, dvi_context *dc);
 dvi_state *dvi_context_state(dvi_context *dc);
 bool dvi_state_enter_vf(dvi_context *dc, dvi_state *vfst, const dvi_state *st, dvi_fonttable *fonts, int font, fixed_t scale);
 void dvi_context_flush_text(fz_context *ctx, dvi_context *dc, dvi_state *st);
-void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev);
+void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev, float page_height);
+void dvi_context_set_source(dvi_context *dc, const uint8_t *data, size_t len);
+void dvi_context_invalidate_source(fz_context *ctx, dvi_context *dc, size_t offset);
 void dvi_context_end_frame(fz_context *ctx, dvi_context *dc);
 
 #define inlined static inline __attribute__((unused))
@@ -353,16 +433,9 @@ void dvi_context_end_frame(fz_context *ctx, dvi_context *dc);
 inlined fz_matrix dvi_get_ctm(const dvi_context *dc, const dvi_state *st)
 {
   float s = dc->scale;
-  int32_t h = st->registers.h - st->gs.h;
-  int32_t v = st->registers.v - st->gs.v;
+  int32_t h = st->registers.h - st->origin.h;
+  int32_t v = st->registers.v - st->origin.v;
   return fz_pre_translate(st->gs.ctm, h * s, - v * s);
-}
-
-inlined void dvi_set_ctm(dvi_state *st, fz_matrix ctm)
-{
-  st->gs.ctm = ctm;
-  st->gs.h = st->registers.h;
-  st->gs.v = st->registers.v;
 }
 
 #undef inlined

@@ -557,7 +557,7 @@ int dvi_interp_bop(const uint8_t *buf, int len, float *width, float *height, boo
     pos += n;
     CHECK_LEN(pos + size);
     const char * ptr = (const char *)buf + pos;
-    dvi_prescan_special(ptr, ptr + len, width, height, landscape);
+    dvi_prescan_special(ptr, ptr + size, width, height, landscape);
     pos += size;
   }
 
@@ -573,6 +573,6 @@ void dvi_interp_init(fz_context *ctx, dvi_context *dc, const uint8_t *buf, int l
     int size = decode_uB(buf+1, n);
     if (1 + n + size > len) return;
     const char *ptr = (const char *)buf + 1 + n;
-    dvi_init_special(ctx, dc, dvi_context_state(dc), ptr, ptr + len);
+    dvi_init_special(ctx, dc, dvi_context_state(dc), ptr, ptr + size);
   }
 }

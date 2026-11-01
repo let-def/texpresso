@@ -461,6 +461,7 @@ void dvi_resmanager_free(fz_context *ctx, dvi_resmanager *rm)
       tex_tfm_free(ctx, cell->font.tfm);
     if (cell->font.fz)
       fz_drop_font(ctx, cell->font.fz);
+    fz_free(ctx, cell->font.glyph_map);
     fz_free(ctx, cell);
     cell = next;
   }
@@ -737,6 +738,7 @@ void dvi_resmanager_invalidate(fz_context *ctx, dvi_resmanager *rm, dvi_reskind 
           tex_tfm_free(ctx, (*cell)->font.tfm);
         if ((*cell)->font.fz)
           fz_drop_font(ctx, (*cell)->font.fz);
+        fz_free(ctx, (*cell)->font.glyph_map);
         cell_dvi_font *next = (*cell)->next;
         fz_free(ctx, *cell);
         *cell = next;
