@@ -216,6 +216,9 @@ void vstack_begin_dict(fz_context *ctx, vstack *t)
 static void vstack_close_struct(fz_context *ctx, vstack *t, uint8_t tag, val *out)
 {
   uint32_t base = t->len, offset = t->previous, length = t->struct_length;
+  // The length of a structure is stored on 24 bits
+  if (length > 0xFFFFFF)
+    fz_throw(ctx, 0, "vstack: too many values");
   uint8_t *index = vstack_alloc(ctx, t, length * 4);
   for (int i = 0; i < length; ++i)
   {
@@ -235,7 +238,7 @@ static void vstack_close_struct(fz_context *ctx, vstack *t, uint8_t tag, val *ou
         break;
 
       case TAG_STRING: case TAG_HEXSTRING: case TAG_NAME:
-        offset += 1 + 3 + load_u24(&t->data[offset + 1]) + 1;
+        offset += 1 + 4 + load_u32(&t->data[offset + 1]) + 1;
         break;
 
       case TAG_ARRAY: case TAG_DICT:
@@ -288,13 +291,17 @@ static void vstack_open_string(fz_context *ctx, vstack *t, enum val_string_kind 
 {
   if (t->string_length != 0) abort();
   t->string_kind = kind;
-  vstack_alloc(ctx, t, 4)[0] = tag;
+  // Tag and 32-bit length
+  vstack_alloc(ctx, t, 5)[0] = tag;
 }
 
 static void vstack_close_string(fz_context *ctx, vstack *t)
 {
-  uint32_t offset = t->len - t->string_length - 4;
-  store_u24(&t->data[offset + 1], t->string_length);
+  // val.length has 28 bits
+  if (t->string_length > 0x0FFFFFFF)
+    fz_throw(ctx, 0, "vstack: string too long");
+  uint32_t offset = t->len - t->string_length - 5;
+  store_u32(&t->data[offset + 1], t->string_length);
   vstack_alloc(ctx, t, 1)[0] = 0;
   t->string_kind = CTX_NONE;
   t->string_length = 0;
@@ -387,10 +394,10 @@ static val decode(const uint8_t* data, uint32_t *offset)
     case TAG_STRING:
     case TAG_HEXSTRING:
     case TAG_NAME:
-      len = load_u24(&data[*offset + 1]);
+      len = load_u32(&data[*offset + 1]);
       result.kind = VAL_STRING + data[*offset] - TAG_STRING;
       result.length = len;
-      *offset += 4;
+      *offset += 5;
       result.o = *offset;
       *offset += len + 1;
       return result;

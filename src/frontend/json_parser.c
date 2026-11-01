@@ -85,16 +85,15 @@ static bool json_pop_context(json_parser *cp, vstack *stack)
 #define POP_CONTEXT(input) \
   if (!json_pop_context(cp, stack)) return (input);
 
-static char extract_bits(int *c, int count)
-{
-  int result = *c & ((1 << count) - 1);
-  *c = *c >> count;
-  return result;
-}
+// Malformed input: the caller reports the error and resets the parser
+#define JSON_ERROR() \
+  fz_throw(ctx, FZ_ERROR_GENERIC, "json parser: unexpected character '%c'", *input)
 
+// Encode a code point in UTF-8: the high bits go in the first byte
 static void push_codepoint(fz_context *ctx, vstack *stack, int cp)
 {
-  char bytes[4], count = 0; 
+  char bytes[4];
+  int count;
   if (cp < 0x80)
   {
     count = 1;
@@ -103,25 +102,53 @@ static void push_codepoint(fz_context *ctx, vstack *stack, int cp)
   else if (cp < 0x800)
   {
     count = 2;
-    bytes[0] = 0xC0 | extract_bits(&cp, 5);
-    bytes[1] = 0x80 | cp;
+    bytes[0] = 0xC0 | (cp >> 6);
+    bytes[1] = 0x80 | (cp & 0x3F);
   }
   else if (cp < 0x10000)
   {
     count = 3;
-    bytes[0] = 0xE0 | extract_bits(&cp, 4);
-    bytes[1] = 0x80 | extract_bits(&cp, 6);
-    bytes[2] = 0x80 | cp;
+    bytes[0] = 0xE0 | (cp >> 12);
+    bytes[1] = 0x80 | ((cp >> 6) & 0x3F);
+    bytes[2] = 0x80 | (cp & 0x3F);
   }
   else
   {
     count = 4;
-    bytes[0] = 0xF0 | extract_bits(&cp, 3);
-    bytes[1] = 0x80 | extract_bits(&cp, 6);
-    bytes[2] = 0x80 | extract_bits(&cp, 6);
-    bytes[3] = 0x80 | cp;
+    bytes[0] = 0xF0 | (cp >> 18);
+    bytes[1] = 0x80 | ((cp >> 12) & 0x3F);
+    bytes[2] = 0x80 | ((cp >> 6) & 0x3F);
+    bytes[3] = 0x80 | (cp & 0x3F);
   }
   vstack_push_chars(ctx, stack, bytes, count);
+}
+
+// A high surrogate not followed by a low one is invalid
+static void flush_surrogate(fz_context *ctx, json_parser *cp, vstack *stack)
+{
+  if (cp->high_surrogate)
+  {
+    push_codepoint(ctx, stack, 0xFFFD);
+    cp->high_surrogate = 0;
+  }
+}
+
+static void push_escaped_codepoint(fz_context *ctx, json_parser *cp, vstack *stack, int c)
+{
+  if (cp->high_surrogate && c >= 0xDC00 && c <= 0xDFFF)
+  {
+    c = 0x10000 + ((cp->high_surrogate - 0xD800) << 10) + (c - 0xDC00);
+    cp->high_surrogate = 0;
+    push_codepoint(ctx, stack, c);
+    return;
+  }
+  flush_surrogate(ctx, cp, stack);
+  if (c >= 0xD800 && c <= 0xDBFF)
+    cp->high_surrogate = c;
+  else if (c >= 0xDC00 && c <= 0xDFFF)
+    push_codepoint(ctx, stack, 0xFFFD);
+  else
+    push_codepoint(ctx, stack, c);
 }
 
 
@@ -150,6 +177,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
           case '"':
             vstack_begin_string(ctx, stack);
             cp->state = P_JSON_STRING;
+            cp->high_surrogate = 0;
             break;
           case '{':
             vstack_begin_dict(ctx, stack);
@@ -161,7 +189,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
             break;
           case ']':
             if (!vstack_in_array(stack))
-              myabort();
+              JSON_ERROR();
             vstack_end_array(ctx, stack);
             POP_CONTEXT(input + 1);
             continue;
@@ -169,7 +197,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
           case 'f': cp->state = P_JSON_FALSE_F; break;
           case 'n': cp->state = P_JSON_NULL_N; break;
           default:
-            myabort();
+            JSON_ERROR();
         }
         input++;
         break;
@@ -186,6 +214,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
 
             case '"':
               input += 1;
+              flush_surrogate(ctx, cp, stack);
               if (vstack_in_name(stack))
               {
                 vstack_end_name(ctx, stack);
@@ -200,6 +229,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
 
             default:
             {
+              flush_surrogate(ctx, cp, stack);
               const char *begin = input;
               do {
                 input += 1;
@@ -212,6 +242,8 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
         break;
 
       case P_JSON_STRING_ESCAPE:
+        if (*input != 'u')
+          flush_surrogate(ctx, cp, stack);
         switch (*input)
         {
           case '"': case '\\': case '/':
@@ -231,7 +263,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
             continue;
 
           default:
-            myabort();
+            JSON_ERROR();
         }
         cp->state = P_JSON_STRING;
         input++;
@@ -244,12 +276,12 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
         do
         {
           int c = as_hex(*input);
-          if (c == -1) myabort();
+          if (c == -1) JSON_ERROR();
           cp->codepoint = (cp->codepoint << 4) | c;
           input++;
           if (cp->state == P_JSON_STRING_U4)
           {
-            push_codepoint(ctx, stack, cp->codepoint);
+            push_escaped_codepoint(ctx, cp, stack, cp->codepoint);
             cp->state = P_JSON_STRING;
             break;
           }
@@ -266,7 +298,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
             return NULL;
         }
         if (*input != ':')
-          myabort();
+          JSON_ERROR();
         input += 1;
         cp->state = P_JSON_ELEMENT;
         break;
@@ -286,7 +318,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
             else if (vstack_in_array(stack))
               cp->state = P_JSON_ELEMENT;
             else
-              myabort();
+              JSON_ERROR();
             break;
 
           case '}':
@@ -300,7 +332,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
             break;
 
           default:
-            myabort();
+            JSON_ERROR();
         }
         input++;
         break;
@@ -321,9 +353,10 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
           case '"':
             vstack_begin_name(ctx, stack);
             cp->state = P_JSON_STRING;
+            cp->high_surrogate = 0;
             break;
           default:
-            myabort();
+            JSON_ERROR();
         }
         input++;
         break;
@@ -372,12 +405,12 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
         continue;
 
       case P_JSON_EXPONENT_SIGN:
-        cp->sign = 0;
+        cp->exp_sign = 0;
         if (*input == '+')
           input++;
         else if (*input == '-')
         {
-          cp->sign = 1;
+          cp->exp_sign = 1;
           input++;
         }
         cp->exp = 0.0;
@@ -392,9 +425,8 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
         }
         if (!(input < limit))
           return NULL;
-        float f = exp(cp->exp * log(10.0));
-        if (cp->sign) f = -f;
-        vstack_push_number(ctx, stack, cp->num * f);
+        float f = pow(10.0, cp->exp);
+        vstack_push_number(ctx, stack, cp->exp_sign ? cp->num / f : cp->num * f);
         POP_CONTEXT(input);
         break;
 
@@ -412,7 +444,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
 
       case P_JSON_NULL_N:
         if (*input != 'u')
-          myabort();
+          JSON_ERROR();
         cp->state = P_JSON_NULL_NU;
         input++;
         if (!(input < limit))
@@ -420,7 +452,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
 
       case P_JSON_NULL_NU:
         if (*input != 'l')
-          myabort();
+          JSON_ERROR();
         cp->state = P_JSON_NULL_NUL;
         input++;
         if (!(input < limit))
@@ -428,7 +460,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
 
       case P_JSON_NULL_NUL:
         if (*input != 'l')
-          myabort();
+          JSON_ERROR();
         vstack_push_null(ctx, stack);
         input++;
         POP_CONTEXT(input);
@@ -436,7 +468,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
 
       case P_JSON_TRUE_T:
         if (*input != 'r')
-          myabort();
+          JSON_ERROR();
         cp->state = P_JSON_TRUE_TR;
         input++;
         if (!(input < limit))
@@ -444,7 +476,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
 
       case P_JSON_TRUE_TR:
         if (*input != 'u')
-          myabort();
+          JSON_ERROR();
         cp->state = P_JSON_TRUE_TRU;
         input++;
         if (!(input < limit))
@@ -452,7 +484,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
 
       case P_JSON_TRUE_TRU:
         if (*input != 'e')
-          myabort();
+          JSON_ERROR();
         vstack_push_bool(ctx, stack, 1);
         input++;
         POP_CONTEXT(input);
@@ -460,7 +492,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
 
       case P_JSON_FALSE_F:
         if (*input != 'a')
-          myabort();
+          JSON_ERROR();
         cp->state = P_JSON_FALSE_FA;
         input++;
         if (!(input < limit))
@@ -468,7 +500,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
 
       case P_JSON_FALSE_FA:
         if (*input != 'l')
-          myabort();
+          JSON_ERROR();
         cp->state = P_JSON_FALSE_FAL;
         input++;
         if (!(input < limit))
@@ -476,7 +508,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
 
       case P_JSON_FALSE_FAL:
         if (*input != 's')
-          myabort();
+          JSON_ERROR();
         cp->state = P_JSON_FALSE_FALS;
         input++;
         if (!(input < limit))
@@ -484,7 +516,7 @@ const char *json_parse(fz_context *ctx, json_parser *cp, vstack *stack, const
 
       case P_JSON_FALSE_FALS:
         if (*input != 'e')
-          myabort();
+          JSON_ERROR();
         vstack_push_bool(ctx, stack, 0);
         input++;
         POP_CONTEXT(input);

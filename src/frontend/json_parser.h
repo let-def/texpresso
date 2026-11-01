@@ -62,7 +62,12 @@ typedef struct
   enum json_parser_state state;
   union
   {
-    int codepoint;
+    struct
+    {
+      int codepoint;
+      // Pending high surrogate of a \uXXXX\uXXXX pair (0 if none)
+      int high_surrogate;
+    };
     struct
     {
       int sign, exp_sign;
