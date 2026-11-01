@@ -214,99 +214,127 @@ cursor_t pdfstring_end(cursor_t cur, cursor_t lim)
 /* Color stacks */
 /****************/
 
-dvi_colorstack *get_colorstack(dvi_context *dc, int index)
+void dvi_colorstacks_clear(fz_context *ctx, dvi_colorstacks *cs)
 {
-  if (index == -1)
-    return &dc->colorstack;
-  if (index < 0 || index >= dc->pdfcolorstacks.capacity)
+  fz_free(ctx, cs->main.base);
+  for (int i = 0; i < cs->capacity; i++)
+    fz_free(ctx, cs->stacks[i].base);
+  fz_free(ctx, cs->stacks);
+  *cs = (dvi_colorstacks){0,};
+}
+
+static void colorstack_copy(fz_context *ctx, dvi_colorstack *dst, const dvi_colorstack *src)
+{
+  *dst = *src;
+  dst->base = NULL;
+  dst->limit = src->depth;
+  if (src->depth > 0)
+  {
+    dst->base = fz_malloc_struct_array(ctx, src->depth, dvi_colorstate);
+    memcpy(dst->base, src->base, sizeof(dvi_colorstate) * src->depth);
+  }
+}
+
+void dvi_colorstacks_copy(fz_context *ctx, dvi_colorstacks *dst, const dvi_colorstacks *src)
+{
+  dvi_colorstacks_clear(ctx, dst);
+  if (!src)
+    return;
+  colorstack_copy(ctx, &dst->main, &src->main);
+  if (src->capacity > 0)
+  {
+    dst->stacks = fz_malloc_struct_array(ctx, src->capacity, dvi_colorstack);
+    dst->capacity = src->capacity;
+    for (int i = 0; i < src->capacity; i++)
+      colorstack_copy(ctx, &dst->stacks[i], &src->stacks[i]);
+  }
+}
+
+// The current color of a stack
+const dvi_colorstate *colorstack_top(const dvi_colorstack *stack)
+{
+  return stack->depth > 0 ? &stack->base[stack->depth - 1] : &stack->origin;
+}
+
+static void colorstack_push(fz_context *ctx, dvi_colorstack *stack, const dvi_colorstate *color)
+{
+  if (stack->depth == stack->limit)
+  {
+    int size = stack->limit == 0 ? 16 : stack->limit * 2;
+    dvi_colorstate *base = fz_malloc_struct_array(ctx, size, dvi_colorstate);
+    if (stack->depth > 0)
+      memcpy(base, stack->base, sizeof(dvi_colorstate) * stack->depth);
+    fz_free(ctx, stack->base);
+    stack->base = base;
+    stack->limit = size;
+  }
+  stack->base[stack->depth] = *color;
+  stack->depth += 1;
+}
+
+static bool colorstack_pop(dvi_colorstack *stack)
+{
+  if (stack->depth == 0)
+    return 0;
+  stack->depth -= 1;
+  return 1;
+}
+
+// Replace the current color
+static void colorstack_set(dvi_colorstack *stack, const dvi_colorstate *color)
+{
+  if (stack->depth > 0)
+    stack->base[stack->depth - 1] = *color;
+  else
+    stack->origin = *color;
+}
+
+// A pdfcolorstack, NULL if it has not been initialized
+static dvi_colorstack *pdfcolorstack_get(dvi_colorstacks *cs, int index)
+{
+  if (index < 0 || index >= cs->capacity || !cs->stacks[index].defined)
   {
     fprintf(stderr, "pdfcolorstack %d: no such stack\n", index);
     return NULL;
   }
-  return &dc->pdfcolorstacks.stacks[index];
+  return &cs->stacks[index];
 }
 
-bool
-pdfcolorstack_current(fz_context *ctx, dvi_context *dc, dvi_state *st, int index)
+static dvi_colorstack *pdfcolorstack_init(fz_context *ctx, dvi_colorstacks *cs, int index)
 {
-  dvi_colorstack *stack = get_colorstack(dc, index);
-  if (!stack)
-    return 0;
-  if (stack->depth == 0)
-    st->gs.colors = stack->origin;
-  else
-    st->gs.colors = stack->base[stack->depth - 1];
-  return 1;
-}
-
-bool
-colorstack_push(fz_context *ctx, dvi_context *dc, dvi_state *st, int index)
-{
-  dvi_colorstack *stack = get_colorstack(dc, index);
-  if (!stack)
-    return 0;
-
-  if (stack->depth == stack->limit)
-  {
-    size_t size = stack->limit;
-    size = size == 0 ? 16 : size * 2;
-    dvi_colorstate *base = fz_malloc_struct_array(ctx, size, dvi_colorstate);
-    if (stack->limit > 0)
-    {
-      memcpy(base, stack->base, sizeof(dvi_colorstate) * stack->limit);
-      fz_free(ctx, stack->base);
-    }
-    stack->base = base;
-    stack->limit = size;
-  }
-
-  stack->base[stack->depth] = st->gs.colors;
-  stack->depth += 1;
-
-  return 1;
-}
-
-bool
-colorstack_pop(fz_context *ctx, dvi_context *dc, dvi_state *st, int index)
-{
-  dvi_colorstack *stack = get_colorstack(dc, index);
-  if (!stack)
-    return 0;
-  if (stack->depth == 0)
-  {
-    fprintf(stderr, "pdfcolorstack_pop %d: empty stack\n", index);
-    return 0;
-  }
-  stack->depth -= 1;
-  st->gs.colors = stack->base[stack->depth];
-  return 1;
-}
-
-dvi_colorstack *
-colorstack_init(fz_context *ctx, dvi_context *dc, int index)
-{
-  if (index < 0)
+  if (index < 0 || index > 1023)
     return NULL;
-  if (index >= dc->pdfcolorstacks.capacity)
+  if (index >= cs->capacity)
   {
-    size_t cap = dc->pdfcolorstacks.capacity;
-    size_t newcap = cap == 0 ? 4 : cap;
-    while (newcap <= index) newcap *= 2;
-    dvi_colorstack *stacks = fz_malloc_struct_array(ctx, newcap, dvi_colorstack);
-    if (cap > 0)
-    {
-      memcpy(stacks, dc->pdfcolorstacks.stacks, sizeof(dvi_colorstack) * cap);
-      fz_free(ctx, dc->pdfcolorstacks.stacks);
-    }
-    dc->pdfcolorstacks.stacks = stacks;
-    dc->pdfcolorstacks.capacity = newcap;
+    int cap = cs->capacity == 0 ? 4 : cs->capacity;
+    while (cap <= index)
+      cap *= 2;
+    dvi_colorstack *stacks = fz_malloc_struct_array(ctx, cap, dvi_colorstack);
+    if (cs->capacity > 0)
+      memcpy(stacks, cs->stacks, sizeof(dvi_colorstack) * cs->capacity);
+    fz_free(ctx, cs->stacks);
+    cs->stacks = stacks;
+    cs->capacity = cap;
   }
-  return &dc->pdfcolorstacks.stacks[index];
+  dvi_colorstack *stack = &cs->stacks[index];
+  fz_free(ctx, stack->base);
+  *stack = (dvi_colorstack){0,};
+  stack->defined = 1;
+  return stack;
 }
 
-// pdf:bcolor / pdf:scolor COLOR [COLOR]
-bool
-special_setcolor(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t lim, bool push)
+// The colors at the beginning of a page: the current color of the main stack,
+// then of the pdfcolorstacks declared with "page" (like dvipdfmx)
+void dvi_colorstacks_page_color(const dvi_colorstacks *cs, dvi_colorstate *color)
+{
+  *color = *colorstack_top(&cs->main);
+  for (int i = 0; i < cs->capacity; i++)
+    if (cs->stacks[i].defined && cs->stacks[i].page)
+      *color = *colorstack_top(&cs->stacks[i]);
+}
+
+// Parse "pdf:bcolor" / "pdf:scolor" arguments: FILL [STROKE]
+static bool parse_pdf_setcolor(fz_context *ctx, dvi_colorstate *color, cursor_t cur, cursor_t lim)
 {
   float fill[3], line[3];
   uint8_t fill_cs, line_cs;
@@ -318,9 +346,93 @@ special_setcolor(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, 
     memcpy(line, fill, sizeof(line));
     line_cs = fill_cs;
   }
-  if (push && !colorstack_push(ctx, dc, st, -1))
-    return 0;
-  colorstate_set_fill(&st->gs.colors, fill_cs, fill);
-  colorstate_set_line(&st->gs.colors, line_cs, line);
+  colorstate_set_fill(color, fill_cs, fill);
+  colorstate_set_line(color, line_cs, line);
+  return 1;
+}
+
+// Interpret a color stack special on the stacks `cs`. The arguments start at
+// `cur`; for pdfcolorstack operations taking a literal, `cur` is after the
+// opening parenthesis.
+// When rendering, `current` is the color of the graphic state, updated to the
+// new current color.
+bool special_colorstack(fz_context *ctx, dvi_colorstacks *cs, dvi_colorstate *current,
+                        enum colorstack_op op, int index, bool page,
+                        cursor_t cur, cursor_t lim)
+{
+  dvi_colorstack *stack = &cs->main;
+  dvi_colorstate color;
+
+  if (op >= PDFCOLORSTACK_PUSH && op != PDFCOLORSTACK_INIT)
+  {
+    stack = pdfcolorstack_get(cs, index);
+    if (!stack)
+      return 0;
+  }
+
+  switch (op)
+  {
+    case COLOR_PUSH:
+      color = *colorstack_top(stack);
+      if (!parse_color(ctx, &color, cur, lim))
+        return 0;
+      colorstack_push(ctx, stack, &color);
+      break;
+
+    case COLOR_SET:
+      // "color X": clear the stack and set the color
+      color = *colorstack_top(stack);
+      if (!parse_color(ctx, &color, cur, lim))
+        return 0;
+      stack->depth = 0;
+      stack->origin = color;
+      break;
+
+    case PDF_BCOLOR:
+    case PDF_SCOLOR:
+      color = *colorstack_top(stack);
+      if (!parse_pdf_setcolor(ctx, &color, cur, lim))
+        return 0;
+      if (op == PDF_BCOLOR)
+        colorstack_push(ctx, stack, &color);
+      else
+        colorstack_set(stack, &color);
+      break;
+
+    case COLOR_POP:
+    case PDFCOLORSTACK_POP:
+      if (!colorstack_pop(stack))
+      {
+        fprintf(stderr, "color pop: empty stack\n");
+        return 0;
+      }
+      break;
+
+    case PDFCOLORSTACK_PUSH:
+    case PDFCOLORSTACK_SET:
+      color = *colorstack_top(stack);
+      if (!parse_pdfcolor(ctx, &color, cur, pdfstring_end(cur, lim)))
+        return 0;
+      if (op == PDFCOLORSTACK_PUSH)
+        colorstack_push(ctx, stack, &color);
+      else
+        colorstack_set(stack, &color);
+      break;
+
+    case PDFCOLORSTACK_CURRENT:
+      break;
+
+    case PDFCOLORSTACK_INIT:
+      stack = pdfcolorstack_init(ctx, cs, index);
+      if (!stack)
+        return 0;
+      stack->page = page;
+      if (!parse_pdfcolor(ctx, &stack->origin, cur, pdfstring_end(cur, lim)))
+        return 0;
+      break;
+  }
+
+  if (current)
+    *current = *colorstack_top(stack);
   return 1;
 }

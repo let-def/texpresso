@@ -319,18 +319,36 @@ typedef struct
   int32_t h, v;
 } dvi_coord;
 
+// A color stack. Like in dvipdfmx, the current color is the top of the
+// stack, and the stacks persist from one page to the next.
 typedef struct
 {
+  // Bottom of the stack: the initial color, or the color set by "color X"
   dvi_colorstate origin;
+  // Colors pushed above the origin
   dvi_colorstate *base;
   int depth, limit;
+  // Defined by pdfcolorstackinit
+  bool defined;
+  // pdfcolorstackinit ... page: the current color is set at the beginning
+  // of each page
+  bool page;
 } dvi_colorstack;
 
 typedef struct
 {
+  // "color push/pop" and pdf:bcolor/ecolor
+  dvi_colorstack main;
+  // pdfcolorstack, a pdfTeX feature implemented by dvipdfmx
   dvi_colorstack *stacks;
   int capacity;
 } dvi_colorstacks;
+
+void dvi_colorstacks_clear(fz_context *ctx, dvi_colorstacks *cs);
+void dvi_colorstacks_copy(fz_context *ctx, dvi_colorstacks *dst, const dvi_colorstacks *src);
+// The color at the beginning of a page: the current color of the main stack,
+// overridden by the pdfcolorstacks declared with "page"
+void dvi_colorstacks_page_color(const dvi_colorstacks *cs, dvi_colorstate *color);
 
 // State of a DVI interpreter
 
@@ -378,10 +396,11 @@ typedef struct
   dvi_graphicstate gs_stack[256];
   dvi_coord coords_stack[256];
 
-  // Default color stack (used by dvipdfmx)
-  dvi_colorstack colorstack;
-  // Pdf color stacks (introduced by pdftex)
-  dvi_colorstacks pdfcolorstacks;
+  // Color stacks of the page being rendered
+  dvi_colorstacks colors;
+  // Color stacks at the position of the scan of document-wide specials
+  // (see dvi_init_special)
+  dvi_colorstacks scan_colors;
   float scale;
 
   // PDF objects defined by specials
@@ -423,7 +442,18 @@ void dvi_context_free(fz_context *ctx, dvi_context *dc);
 dvi_state *dvi_context_state(dvi_context *dc);
 bool dvi_state_enter_vf(dvi_context *dc, dvi_state *vfst, const dvi_state *st, dvi_fonttable *fonts, int font, fixed_t scale);
 void dvi_context_flush_text(fz_context *ctx, dvi_context *dc, dvi_state *st);
-void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev, float page_height);
+// Begin rendering a page. `colors` are the color stacks at the beginning of
+// the page (see dvi_context_save_colors), or NULL for the initial state.
+void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev,
+                             float page_height, const dvi_colorstacks *colors);
+
+// Snapshot of the color stacks at the current position of the scan of
+// document-wide specials, to be released with dvi_colorstacks_drop
+dvi_colorstacks *dvi_context_save_colors(fz_context *ctx, dvi_context *dc);
+// Move the scan of document-wide specials back to a snapshot
+// (NULL for the beginning of the document)
+void dvi_context_restore_colors(fz_context *ctx, dvi_context *dc, const dvi_colorstacks *colors);
+void dvi_colorstacks_drop(fz_context *ctx, dvi_colorstacks *colors);
 void dvi_context_set_source(dvi_context *dc, const uint8_t *data, size_t len);
 void dvi_context_invalidate_source(fz_context *ctx, dvi_context *dc, size_t offset);
 void dvi_context_end_frame(fz_context *ctx, dvi_context *dc);

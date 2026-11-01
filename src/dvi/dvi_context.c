@@ -81,10 +81,8 @@ void dvi_context_free(fz_context *ctx, dvi_context *dc)
   dvi_pdfstore_free(ctx, dc->pdfstore);
   for (int i = 0; i < dc->colorspaces_count; i++)
     fz_drop_colorspace(ctx, dc->colorspaces[i]);
-  fz_free(ctx, dc->colorstack.base);
-  for (int i = 0; i < dc->pdfcolorstacks.capacity; i++)
-    fz_free(ctx, dc->pdfcolorstacks.stacks[i].base);
-  fz_free(ctx, dc->pdfcolorstacks.stacks);
+  dvi_colorstacks_clear(ctx, &dc->colors);
+  dvi_colorstacks_clear(ctx, &dc->scan_colors);
   dvi_fonttable_free(ctx, dc->root.fonts);
   dvi_scratch_release(ctx, &dc->scratch);
   fz_free(ctx, dc);
@@ -97,7 +95,8 @@ static void drop_forms(fz_context *ctx, dvi_context *dc)
   dc->forms_depth = 0;
 }
 
-void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev, float page_height)
+void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev,
+                             float page_height, const dvi_colorstacks *colors)
 {
   dvi_context_set_device(ctx, dc, dev);
   dvi_state *st = &dc->root;
@@ -127,9 +126,35 @@ void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev, f
   }
   dc->path_clip = 0;
 
-  dc->colorstack.depth = 0;
-  for (int i = 0; i < dc->pdfcolorstacks.capacity; i++)
-    dc->pdfcolorstacks.stacks[i].depth = 0;
+  // Color stacks persist across pages
+  dvi_colorstacks_copy(ctx, &dc->colors, colors);
+  dvi_colorstacks_page_color(&dc->colors, &st->gs.colors);
+}
+
+dvi_colorstacks *dvi_context_save_colors(fz_context *ctx, dvi_context *dc)
+{
+  dvi_colorstacks *colors = fz_malloc_struct(ctx, dvi_colorstacks);
+  fz_try(ctx)
+    dvi_colorstacks_copy(ctx, colors, &dc->scan_colors);
+  fz_catch(ctx)
+  {
+    fz_free(ctx, colors);
+    fz_rethrow(ctx);
+  }
+  return colors;
+}
+
+void dvi_context_restore_colors(fz_context *ctx, dvi_context *dc, const dvi_colorstacks *colors)
+{
+  dvi_colorstacks_copy(ctx, &dc->scan_colors, colors);
+}
+
+void dvi_colorstacks_drop(fz_context *ctx, dvi_colorstacks *colors)
+{
+  if (!colors)
+    return;
+  dvi_colorstacks_clear(ctx, colors);
+  fz_free(ctx, colors);
 }
 
 void dvi_context_end_frame(fz_context *ctx, dvi_context *dc)
@@ -168,14 +193,6 @@ void dvi_context_end_frame(fz_context *ctx, dvi_context *dc)
   st->gs.clip_depth = 0;
   dvi_scratch_clear(ctx, &dc->scratch);
   dvi_context_set_device(ctx, dc, NULL);
-
-  if (dc->colorstack.depth > 0)
-    fprintf(stderr, "default color stack: ending frame with %d colors\n", dc->colorstack.depth);
-
-  for (int i = 0; i < dc->pdfcolorstacks.capacity; i++)
-    if (dc->pdfcolorstacks.stacks[i].depth > 0)
-      fprintf(stderr, "default color stack: ending frame with %d colors\n",
-              dc->pdfcolorstacks.stacks[i].depth);
 }
 
 dvi_state *dvi_context_state(dvi_context *dc)

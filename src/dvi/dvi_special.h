@@ -201,6 +201,23 @@ typedef struct
   int path_clip;
 } saved_path;
 
+// Color stack specials
+enum colorstack_op
+{
+  // Main stack ("color ...", "pdf:bcolor", ...)
+  COLOR_PUSH,
+  COLOR_POP,
+  COLOR_SET,
+  PDF_BCOLOR,
+  PDF_SCOLOR,
+  // pdfcolorstack
+  PDFCOLORSTACK_PUSH,
+  PDFCOLORSTACK_POP,
+  PDFCOLORSTACK_SET,
+  PDFCOLORSTACK_CURRENT,
+  PDFCOLORSTACK_INIT,
+};
+
 enum paint_op
 {
   PAINT_NONE = 0,
@@ -225,17 +242,16 @@ void color_set_hsb(float color[3], float h, float s, float b);
 void color_set_rgb(float color[3], float r, float g, float b);
 uint8_t colorspace_of_components(int n);
 cursor_t colorspec_numbers(fz_context *ctx, cursor_t cur, cursor_t lim, float rgb[3], uint8_t *space, cursor_t f0, cursor_t f1, cursor_t f2, cursor_t f3);
-dvi_colorstack *colorstack_init(fz_context *ctx, dvi_context *dc, int index);
-bool colorstack_pop(fz_context *ctx, dvi_context *dc, dvi_state *st, int index);
-bool colorstack_push(fz_context *ctx, dvi_context *dc, dvi_state *st, int index);
 void colorstate_set_fill(dvi_colorstate *cs, uint8_t space, const float rgb[3]);
 void colorstate_set_line(dvi_colorstate *cs, uint8_t space, const float rgb[3]);
-dvi_colorstack *get_colorstack(dvi_context *dc, int index);
 bool parse_color(fz_context *ctx, dvi_colorstate *state, cursor_t cur, cursor_t lim);
 bool parse_pdfcolor(fz_context *ctx, dvi_colorstate *state, cursor_t cur, cursor_t lim);
-bool special_setcolor(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t lim, bool push);
 cursor_t pdfstring_end(cursor_t cur, cursor_t lim);
-bool pdfcolorstack_current(fz_context *ctx, dvi_context *dc, dvi_state *st, int index);
+const dvi_colorstate *colorstack_top(const dvi_colorstack *stack);
+
+bool special_colorstack(fz_context *ctx, dvi_colorstacks *cs, dvi_colorstate *current,
+                        enum colorstack_op op, int index, bool page,
+                        cursor_t cur, cursor_t lim);
 
 // dvi_gstate.c
 void concat_around_current_point(dvi_context *dc, dvi_state *st, fz_matrix m);

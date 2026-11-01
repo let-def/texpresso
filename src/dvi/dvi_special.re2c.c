@@ -34,7 +34,8 @@
 //   DVI position;
 // - PDF objects (pdf:obj, pdf:put, pdf:stream, pdf:bxobj, ...) are kept in a
 //   document-level store (see dvi_pdfstore.h), and are visible from all pages
-//   following their definition.
+//   following their definition;
+// - color stacks persist from one page to the next (see dvi_color.c).
 //
 // This file only parses and dispatches specials. The interpretation is done
 // by the modules listed in dvi_special.h.
@@ -306,6 +307,71 @@ cursor_t parse_name_ref(fz_context *ctx, dvi_context *dc, cursor_t cur, cursor_t
 }
 
 
+// Recognize the specials operating on color stacks. Returns the operation,
+// or -1 for other specials. On success, `*cur` is moved to the arguments.
+static int
+match_colorstack(cursor_t *pcur, cursor_t lim, int *index, bool *page)
+{
+  cursor_t cur = skip_ws(*pcur, lim), mar, i, p;
+  int op = -1;
+  *index = -1;
+  *page = 0;
+
+  /*!re2c
+
+  "color" ws+ "pop"
+  { op = COLOR_POP; goto done; }
+
+  "color" ws+ "push" ws+
+  { op = COLOR_PUSH; goto done; }
+
+  "color" ws+
+  { op = COLOR_SET; goto done; }
+
+  "pdf:" ws* ("begincolor" | "bcolor" | "bc" | "begingray" | "bgray" | "bg")
+  { op = PDF_BCOLOR; goto done; }
+
+  "pdf:" ws* ("setcolor" | "scolor" | "sc")
+  { op = PDF_SCOLOR; goto done; }
+
+  "pdf:" ws* ("endcolor" | "ecolor" | "ec" | "endgray" | "egray" | "eg")
+  { op = COLOR_POP; goto done; }
+
+  // Other pdf: specials ("pdf:bcontent" is not "pdf:bc ontent")
+  "pdf:" ws* [a-zA-Z]+
+  { return -1; }
+
+  "pdfcolorstack" ws+ @i nat ws+ "current"
+  { op = PDFCOLORSTACK_CURRENT; goto stack; }
+
+  "pdfcolorstack" ws+ @i nat ws+ "pop"
+  { op = PDFCOLORSTACK_POP; goto stack; }
+
+  "pdfcolorstack" ws+ @i nat ws+ "push" ws+ "("
+  { op = PDFCOLORSTACK_PUSH; goto stack; }
+
+  "pdfcolorstack" ws+ @i nat ws+ "set" ws+ "("
+  { op = PDFCOLORSTACK_SET; goto stack; }
+
+  "pdfcolorstackinit" ws+ @i nat ws+ @p ("page" ws+)? ("direct" ws+)? "("
+  {
+    *page = (lim - p >= 4 && memcmp(p, "page", 4) == 0);
+    op = PDFCOLORSTACK_INIT;
+    goto stack;
+  }
+
+  ''
+  { return -1; }
+
+  */
+
+stack:
+  *index = pint(i, lim);
+done:
+  *pcur = cur;
+  return op;
+}
+
 static bool
 dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t spc, cursor_t cur, cursor_t lim)
 {
@@ -337,15 +403,6 @@ dvi_exec_pdf(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t spc, curs
 
   "econtent"
   { return special_econtent(ctx, dc, st); }
-
-  ("begincolor" | "bcolor" | "bc" | "begingray" | "bgray" | "bg")
-  { return special_setcolor(ctx, dc, st, cur, lim, 1); }
-
-  ("setcolor" | "scolor" | "sc")
-  { return special_setcolor(ctx, dc, st, cur, lim, 0); }
-
-  ("endcolor" | "ecolor" | "ec" | "endgray" | "egray" | "eg")
-  { return colorstack_pop(ctx, dc, st, -1); }
 
   ("bgcolor" | "bgc" | "bbc" | "bbg")
   { return fill_background(ctx, dc, st, cur, lim); }
@@ -459,7 +516,13 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
   bool result = 0;
   fz_try(ctx)
   {
-    for (;;)
+    int index;
+    bool page;
+    cursor_t args = cur;
+    int op = match_colorstack(&args, lim, &index, &page);
+    if (op >= 0)
+      result = special_colorstack(ctx, &dc->colors, &st->gs.colors, op, index, page, args, lim);
+    else for (;;)
     {
       /*!re2c
 
@@ -468,65 +531,6 @@ bool dvi_exec_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
 
       "landscape"
       { result = 1; break; }
-
-      "pdfcolorstack" ws+ @i nat
-                      ws+ "current"
-      { result = pdfcolorstack_current(ctx, dc, st, pint(i, lim)); break; }
-
-      "pdfcolorstack" ws+ @i nat
-                      ws+ "pop"
-      { result = colorstack_pop(ctx, dc, st, pint(i, lim)); break; }
-
-      "pdfcolorstack" ws+ @i nat
-                      ws+ "push" ws+ "("
-      {
-        result = colorstack_push(ctx, dc, st, pint(i, lim)) &&
-                 parse_pdfcolor(ctx, &st->gs.colors, cur, pdfstring_end(cur, lim));
-        break;
-      }
-
-      "pdfcolorstack" ws+ @i nat
-                      ws+ "set" ws+ "("
-      {
-        // Replace the top of the stack
-        dvi_colorstack *stack = get_colorstack(dc, pint(i, lim));
-        result = stack &&
-                 parse_pdfcolor(ctx, &st->gs.colors, cur, pdfstring_end(cur, lim));
-        if (result && stack->depth == 0)
-          stack->origin = st->gs.colors;
-        break;
-      }
-
-      "pdfcolorstackinit" ws+ @i nat
-                          ws+ ("page" ws+)? ("direct" ws+)? "("
-      {
-        // Usually initialized when scanning previous pages,
-        // but the stack may be defined on the page being rendered
-        dvi_colorstack *stack = colorstack_init(ctx, dc, pint(i, lim));
-        result = stack &&
-                 parse_pdfcolor(ctx, &stack->origin, cur, pdfstring_end(cur, lim));
-        if (result && stack->depth == 0)
-          st->gs.colors = stack->origin;
-        break;
-      }
-
-      "color" ws+ "pop"
-      { result = colorstack_pop(ctx, dc, st, -1); break; }
-
-      "color" ws+ "push" ws+
-      {
-        result = colorstack_push(ctx, dc, st, -1) &&
-                 parse_color(ctx, &st->gs.colors, cur, lim);
-        break;
-      }
-
-      "color" ws+
-      {
-        // Set the color and clear the stack
-        dc->colorstack.depth = 0;
-        result = parse_color(ctx, &st->gs.colors, cur, lim);
-        break;
-      }
 
       "background" ws+
       { result = fill_background(ctx, dc, st, cur, lim); break; }
@@ -612,21 +616,18 @@ bool dvi_init_special(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t 
 
   fz_try(ctx)
   {
-    for (;;)
+    int index;
+    bool page;
+    cursor_t args = cur;
+    int op = match_colorstack(&args, lim, &index, &page);
+    if (op >= 0)
+      result = special_colorstack(ctx, &dc->scan_colors, NULL, op, index, page, args, lim);
+    else for (;;)
     {
       /*!re2c
 
       ws
       { continue; }
-
-      "pdfcolorstackinit" ws+ @i nat
-                          ws+ ("page" ws+)? ("direct" ws+)? "("
-      {
-        dvi_colorstack *stack = colorstack_init(ctx, dc, pint(i, lim));
-        result = stack &&
-                 parse_pdfcolor(ctx, &stack->origin, cur, pdfstring_end(cur, lim));
-        break;
-      }
 
       "pdf:" ws*
       { result = dvi_init_pdf(ctx, dc, st, spc, cur, lim); break; }
