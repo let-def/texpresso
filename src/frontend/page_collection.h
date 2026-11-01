@@ -63,6 +63,10 @@ int txp_page_collection_valid_count(const txp_page_collection *pc);
 // Display list of a page, or NULL for a placeholder (or out of bounds)
 fz_display_list *txp_page_collection_get(const txp_page_collection *pc, int index);
 
+// The page has been produced by the engine, it might be stale
+// (false for placeholders)
+bool txp_page_collection_has_contents(const txp_page_collection *pc, int index);
+
 // Text of a page, extracted on demand, or NULL
 fz_stext_page *txp_page_collection_stext(fz_context *ctx, txp_page_collection *pc, int index);
 

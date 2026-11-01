@@ -87,8 +87,11 @@ typedef struct
   txp_view_mode mode;
   txp_fit_mode fit;
 
-  // Page displayed in single page mode
+  // Page requested in single page mode
   int page;
+  // Page displayed in single page mode: the requested page once the engine
+  // produced it, the previous one meanwhile, -1 if none
+  int shown;
   // Alignment to apply once the page is available, -1 for none
   int pending_align;
 

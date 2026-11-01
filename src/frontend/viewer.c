@@ -65,6 +65,7 @@ void txp_viewer_init(txp_viewer *v, txp_view_mode mode)
   v->win_w = v->win_h = 1;
   v->scale = 1;
   v->margin = continuous(v) ? MARGIN : 0;
+  v->shown = -1;
   v->last.page = -1;
 }
 
@@ -81,14 +82,14 @@ static int layout_count(const txp_viewer *v, const txp_page_collection *pc)
   int count = txp_page_collection_count(pc);
   if (continuous(v))
     return count;
-  return (v->page >= 0 && v->page < count) ? 1 : 0;
+  return (v->shown >= 0 && v->shown < count) ? 1 : 0;
 }
 
 static bool in_layout(const txp_viewer *v, const txp_page_collection *pc, int page)
 {
   if (continuous(v))
     return page >= 0 && page < txp_page_collection_count(pc);
-  return page == v->page && layout_count(v, pc) > 0;
+  return page == v->shown && layout_count(v, pc) > 0;
 }
 
 static float layout_top(const txp_viewer *v, const txp_page_collection *pc,
@@ -111,7 +112,7 @@ static float layout_height(fz_context *ctx, txp_viewer *v,
     return 0;
   if (continuous(v))
     return txp_page_collection_height(pc, gap);
-  return page_height(ctx, v, pc, v->page);
+  return page_height(ctx, v, pc, v->shown);
 }
 
 static int layout_find(const txp_viewer *v, const txp_page_collection *pc, float y)
@@ -120,13 +121,13 @@ static int layout_find(const txp_viewer *v, const txp_page_collection *pc, float
     return -1;
   if (continuous(v))
     return txp_page_collection_find(pc, y, v->gap);
-  return v->page;
+  return v->shown;
 }
 
 static float compute_scale(fz_context *ctx, txp_viewer *v,
                            txp_page_collection *pc, float zoom)
 {
-  int ref = continuous(v) ? 0 : v->page;
+  int ref = continuous(v) ? 0 : v->shown;
   fz_rect b = txp_viewer_page_bounds(ctx, v, pc, ref);
   if (fz_is_empty_rect(b))
     b = fz_make_rect(0, 0, 612, 792);
@@ -143,9 +144,19 @@ static float compute_gap(const txp_viewer *v, float scale)
   return continuous(v) ? fz_min(PAGE_GAP, v->margin / scale) : 0;
 }
 
+// Single page mode: show the requested page once it is available, keep
+// showing the previous one while it loads
+static void update_shown(txp_viewer *v, txp_page_collection *pc)
+{
+  if (txp_page_collection_has_contents(pc, v->page) ||
+      v->shown >= txp_page_collection_count(pc))
+    v->shown = v->page < txp_page_collection_count(pc) ? v->page : -1;
+}
+
 // Recompute scale and gap after changing zoom or layout
 static void relayout(fz_context *ctx, txp_viewer *v, txp_page_collection *pc)
 {
+  update_shown(v, pc);
   v->margin = continuous(v) ? MARGIN : 0;
   v->scale = compute_scale(ctx, v, pc, v->zoom);
   v->gap = compute_gap(v, v->scale);
@@ -245,7 +256,7 @@ txp_visible_range txp_viewer_visible_range(fz_context *ctx, txp_viewer *v,
     vr.last = layout_find(v, pc, v->y + v->win_h / v->scale);
   }
   else
-    vr.first = vr.last = v->page;
+    vr.first = vr.last = v->shown;
   return vr;
 }
 
@@ -315,9 +326,11 @@ static void animate_to(txp_viewer *v, float zoom, float x, float y)
 // Apply a pending alignment once the page is available (single page mode)
 static void apply_pending(fz_context *ctx, txp_viewer *v, txp_page_collection *pc)
 {
-  if (v->pending_align < 0 || layout_count(v, pc) == 0)
+  if (v->pending_align < 0)
     return;
   relayout(ctx, v, pc);
+  if (continuous(v) || v->shown != v->page)
+    return;
   float lo, hi;
   vertical_limits(ctx, v, pc, v->scale, &lo, &hi);
   v->y = v->pending_align == TXP_ALIGN_TOP ? lo : hi;
@@ -505,7 +518,7 @@ bool txp_viewer_update(fz_context *ctx, txp_viewer *v, txp_page_collection *pc,
       v->last.x != v->x || v->last.y != v->y || v->last.scale != v->scale ||
       v->last.win_w != v->win_w || v->last.win_h != v->win_h ||
       v->last.thumb_y != sb->thumb_y || v->last.thumb_h != sb->thumb_h ||
-      v->last.alpha != (int)sb->alpha || v->last.page != v->page;
+      v->last.alpha != (int)sb->alpha || v->last.page != v->shown;
   v->last.x = v->x;
   v->last.y = v->y;
   v->last.scale = v->scale;
@@ -514,7 +527,7 @@ bool txp_viewer_update(fz_context *ctx, txp_viewer *v, txp_page_collection *pc,
   v->last.thumb_y = sb->thumb_y;
   v->last.thumb_h = sb->thumb_h;
   v->last.alpha = (int)sb->alpha;
-  v->last.page = v->page;
+  v->last.page = v->shown;
   return changed;
 }
 

@@ -81,6 +81,13 @@ fz_display_list *txp_page_collection_get(const txp_page_collection *pc, int inde
   return pc->pages[index].dl;
 }
 
+bool txp_page_collection_has_contents(const txp_page_collection *pc, int index)
+{
+  if (index < 0 || index >= pc->count)
+    return false;
+  return index < pc->valid || pc->pages[index].dl != NULL;
+}
+
 static fz_rect page_content(fz_context *ctx, txp_page_collection *pc, txp_page *p)
 {
   if (p->has_content)
