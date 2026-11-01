@@ -453,10 +453,7 @@ parse_point(const uint8_t **ptr, struct point *point)
   *ptr = string_parse_int(*ptr, &point->x);
   if (**ptr != ',')
     return 0;
-  if (**ptr == '=')
-    *ptr += 1;
-  else
-    *ptr = string_parse_int(*ptr + 1, &point->y);
+  *ptr = string_parse_int(*ptr + 1, &point->y);
   return 1;
 }
 

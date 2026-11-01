@@ -357,44 +357,64 @@ static void invert_pixmap(fz_context *ctx, fz_pixmap *pix, uint32_t black, uint3
   }
 }
 
-static void render_rect(fz_context *ctx, txp_renderer *self, fz_rect bounds, void *pixels, int pitch,
+// Return false if rendering failed: the pixels might be incomplete
+static bool render_rect(fz_context *ctx, txp_renderer *self, fz_rect bounds, void *pixels, int pitch,
                         int x, int y, fz_irect r, float scale)
 {
   fz_colorspace *csp = fz_device_bgr(ctx);
   if (pitch == 0)
     pitch = fz_irect_width(r) * 3;
-  fz_pixmap *pm = fz_new_pixmap_with_data(ctx, csp, fz_irect_width(r), fz_irect_height(r), NULL, 0, pitch, pixels);
-  fz_matrix ctm;
-  ctm = fz_translate(-x, -y);
-  ctm = fz_pre_scale(ctm, scale, scale);
-  ctm = fz_pre_translate(ctm, -bounds.x0, -bounds.y0);
-  fz_device *dev = fz_new_draw_device(ctx, ctm, pm);
-  fz_clear_pixmap_with_value(ctx, pm, 255);
+  fz_pixmap *pm = NULL;
+  fz_device *dev = NULL;
+  bool ok = 1;
+  fz_var(pm);
+  fz_var(dev);
+  fz_var(ok);
 
-  bounds.x0 += x / scale;
-  bounds.y0 += y / scale;
-  bounds.x1 = bounds.x0 + (r.x1 - r.x0) / scale;
-  bounds.y1 = bounds.y0 + (r.y1 - r.y0) / scale;
+  fz_try(ctx)
+  {
+    pm = fz_new_pixmap_with_data(ctx, csp, fz_irect_width(r), fz_irect_height(r), NULL, 0, pitch, pixels);
+    fz_matrix ctm;
+    ctm = fz_translate(-x, -y);
+    ctm = fz_pre_scale(ctm, scale, scale);
+    ctm = fz_pre_translate(ctm, -bounds.x0, -bounds.y0);
+    dev = fz_new_draw_device(ctx, ctm, pm);
+    fz_clear_pixmap_with_value(ctx, pm, 255);
 
-  fz_point p0 = fz_transform_point_xy(bounds.x0, bounds.y0, ctm);
-  fz_point p1 = fz_transform_point_xy(bounds.x1, bounds.y1, ctm);
-  fprintf(stderr, "optimized bounds: %f,%f - %f,%f\n", p0.x, p0.y, p1.x, p1.y);
+    bounds.x0 += x / scale;
+    bounds.y0 += y / scale;
+    bounds.x1 = bounds.x0 + (r.x1 - r.x0) / scale;
+    bounds.y1 = bounds.y0 + (r.y1 - r.y0) / scale;
 
-  fz_run_display_list(ctx, self->contents, dev, fz_identity, bounds, NULL);
-  fz_close_device(ctx, dev);
-  fz_drop_device(ctx, dev);
+    fz_point p0 = fz_transform_point_xy(bounds.x0, bounds.y0, ctm);
+    fz_point p1 = fz_transform_point_xy(bounds.x1, bounds.y1, ctm);
+    fprintf(stderr, "optimized bounds: %f,%f - %f,%f\n", p0.x, p0.y, p1.x, p1.y);
 
-  uint32_t bg, fg;
-  txp_get_colors(&self->config, &bg, &fg);
-  //if (bg != 0x00FFFFFF || fg != 0x00000000)
-    invert_pixmap(ctx, pm, fg, bg);
-  fz_drop_pixmap(ctx, pm);
+    fz_run_display_list(ctx, self->contents, dev, fz_identity, bounds, NULL);
+    fz_close_device(ctx, dev);
+
+    uint32_t bg, fg;
+    txp_get_colors(&self->config, &bg, &fg);
+    //if (bg != 0x00FFFFFF || fg != 0x00000000)
+      invert_pixmap(ctx, pm, fg, bg);
+  }
+  fz_always(ctx)
+  {
+    fz_drop_device(ctx, dev);
+    fz_drop_pixmap(ctx, pm);
+  }
+  fz_catch(ctx)
+  {
+    fprintf(stderr, "[renderer] rendering failed: %s\n", fz_caught_message(ctx));
+    ok = 0;
+  }
+  return ok;
 }
 
-static void render_inc_rect(fz_context *ctx, txp_renderer *self, fz_rect bounds, void *pixels,
+static bool render_inc_rect(fz_context *ctx, txp_renderer *self, fz_rect bounds, void *pixels,
                         int x, int y, fz_irect n, fz_irect r, float scale)
 {
-  render_rect(ctx, self, bounds, pixels, 0, x + r.x0 - n.x0, y + r.y0 - n.y0, r, scale);
+  return render_rect(ctx, self, bounds, pixels, 0, x + r.x0 - n.x0, y + r.y0 - n.y0, r, scale);
 }
 
 static void update_sdl_texture(SDL_Texture *t, int pitch, void *pixels,
@@ -626,10 +646,12 @@ static void update_texture(fz_context *ctx,
 
       stopclock_t sc;
       stopclock_start(&sc);
+      bool failed = 0;
 
       if (!fz_is_empty_irect(tl))
       {
-        render_inc_rect(ctx, self, bounds, pixels, x, y, n, tl, scale);
+        if (!render_inc_rect(ctx, self, bounds, pixels, x, y, n, tl, scale))
+          failed = 1;
         fprintf(stderr, "render tl: %dus\n", stopclock_reset_us(&sc));
         upload_texture_rect(self->tex, tl, pixels);
         fprintf(stderr, "upload tl: %dus\n", stopclock_reset_us(&sc));
@@ -638,7 +660,8 @@ static void update_texture(fz_context *ctx,
 
       if (!fz_is_empty_irect(tr))
       {
-        render_inc_rect(ctx, self, bounds, pixels, x, y, n, tr, scale);
+        if (!render_inc_rect(ctx, self, bounds, pixels, x, y, n, tr, scale))
+          failed = 1;
         fprintf(stderr, "render tr: %dus\n", stopclock_reset_us(&sc));
         upload_texture_rect(self->tex, tr, pixels);
         fprintf(stderr, "upload tr: %dus\n", stopclock_reset_us(&sc));
@@ -647,7 +670,8 @@ static void update_texture(fz_context *ctx,
 
       if (!fz_is_empty_irect(bl))
       {
-        render_inc_rect(ctx, self, bounds, pixels, x, y, n, bl, scale);
+        if (!render_inc_rect(ctx, self, bounds, pixels, x, y, n, bl, scale))
+          failed = 1;
         fprintf(stderr, "render bl: %dus\n", stopclock_reset_us(&sc));
         upload_texture_rect(self->tex, bl, pixels);
         fprintf(stderr, "upload bl: %dus\n", stopclock_reset_us(&sc));
@@ -656,12 +680,16 @@ static void update_texture(fz_context *ctx,
 
       if (!fz_is_empty_irect(br))
       {
-        render_inc_rect(ctx, self, bounds, pixels, x, y, n, br, scale);
+        if (!render_inc_rect(ctx, self, bounds, pixels, x, y, n, br, scale))
+          failed = 1;
         fprintf(stderr, "render br: %dus\n", stopclock_reset_us(&sc));
         upload_texture_rect(self->tex, br, pixels);
         fprintf(stderr, "upload br: %dus\n", stopclock_reset_us(&sc));
         fprintf(stderr, "  br: %d pixels\n", fz_irect_area(br));
       }
+      // Rerender everything next time
+      if (failed)
+        self->st.scale = 0;
       done = 1;
     }
   }
@@ -699,7 +727,9 @@ static void update_texture(fz_context *ctx,
   }
 
   fz_irect full_rect = fz_make_irect(0, 0, w, h);
-  render_rect(ctx, self, bounds, pixels, pitch, x, y, full_rect, scale);
+  // Keep the partial result, but rerender everything next time
+  if (!render_rect(ctx, self, bounds, pixels, pitch, x, y, full_rect, scale))
+    self->st.scale = 0;
 
   self->st.x = x;
   self->st.y = y;
