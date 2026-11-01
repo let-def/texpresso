@@ -45,6 +45,7 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
   SELF;
   fz_drop_buffer(ctx, self->buffer);
   incdvi_free(ctx, self->dvi);
+  fz_free(ctx, self);
 }
 
 static fz_display_list *engine_render_page(txp_engine *_self,
@@ -56,10 +57,21 @@ static fz_display_list *engine_render_page(txp_engine *_self,
   incdvi_page_dim(self->dvi, self->buffer, index, &width, &height, NULL);
   fz_rect box = fz_make_rect(0, 0, width, height);
   fz_display_list *dl = fz_new_display_list(ctx, box);
-  fz_device *dev = fz_new_list_device(ctx, dl);
-  incdvi_render_page(ctx, self->dvi, self->buffer, index, dev);
-  fz_close_device(ctx, dev);
-  fz_drop_device(ctx, dev);
+  fz_device *dev = NULL;
+  fz_var(dev);
+  fz_try(ctx)
+  {
+    dev = fz_new_list_device(ctx, dl);
+    incdvi_render_page(ctx, self->dvi, self->buffer, index, dev);
+    fz_close_device(ctx, dev);
+  }
+  fz_always(ctx)
+    fz_drop_device(ctx, dev);
+  fz_catch(ctx)
+  {
+    fz_drop_display_list(ctx, dl);
+    fz_rethrow(ctx);
+  }
   return dl;
 }
 
