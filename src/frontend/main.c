@@ -408,6 +408,14 @@ static int SDLCALL poll_stdin_thread_main(void *data)
   }
 }
 
+// In initialize mode, stop once the first page is ready or the engine is done
+static bool initialize_done(struct persistent_state *ps, ui_state *ui, bool stdin_eof)
+{
+  return ps->initialize_only &&
+         (send(page_count, ui->eng) > 0 ||
+          (send(get_status, ui->eng) == DOC_TERMINATED && stdin_eof));
+}
+
 static bool poll_stdin(void)
 {
   struct pollfd fd;
@@ -1375,6 +1383,13 @@ bool texpresso_main(struct persistent_state *ps)
       {
         if (advance)
           continue;
+        // Nothing might wake us up if the engine stopped without output
+        if (initialize_done(ps, ui, stdin_eof))
+        {
+          fprintf(stderr, "[info] Initialize mode: terminating engine process\n");
+          quit = 1;
+          continue;
+        }
         if (!stdin_eof)
           wakeup_poll_thread(poll_stdin_pipe, 'c');
 
@@ -1689,9 +1704,7 @@ bool texpresso_main(struct persistent_state *ps)
           break;
       }
     }
-    if (ps->initialize_only &&
-        (send(page_count, ui->eng) > 0 ||
-         (send(get_status, ui->eng) == DOC_TERMINATED && stdin_eof)))
+    if (initialize_done(ps, ui, stdin_eof))
     {
       fprintf(stderr, "[info] Initialize mode: terminating engine process\n");
       quit = 1;

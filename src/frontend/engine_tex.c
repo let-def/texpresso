@@ -469,8 +469,9 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
   const char *fs_path = path;
   const char *inclusion_path = self->inclusion_path;
 
+  // Like kpathsea, only consider regular files (not directories, ...)
   do {
-    if (stat(fs_path, st) != -1)
+    if (stat(fs_path, st) != -1 && S_ISREG(st->st_mode))
       break;
   }
   while ((fs_path = expand_path(&inclusion_path, path, buf)));
@@ -627,9 +628,23 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
           {
             if (fs_path == q->open.path)
               fs_path = e->path;
-            e->fs_data = fz_read_file(ctx, fs_path);
+            fz_try(ctx)
+            {
+              e->fs_data = fz_read_file(ctx, fs_path);
+              stat(fs_path, &e->fs_stat);
+            }
+            fz_catch(ctx)
+            {
+              // The file is unreadable or vanished: the worker is waiting
+              // for an answer, give it an empty file. If the file is still
+              // there, a scan picks up its contents once it changes.
+              fprintf(stderr, "[error] cannot read %s: %s\n", fs_path,
+                      fz_caught_message(ctx));
+              e->fs_data = fz_new_buffer(ctx, 0);
+              if (stat(fs_path, &e->fs_stat) != 0)
+                memset(&e->fs_stat, 0, sizeof(e->fs_stat));
+            }
             e->saved.level = FILE_READ;
-            stat(fs_path, &e->fs_stat);
           }
         }
       }

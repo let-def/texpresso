@@ -45,6 +45,8 @@ struct channel_s
     int pos;
   } output;
   int passed_fd;
+  // Set when the connection ended in the middle of a message
+  bool eof;
   char *buf;
   int buf_size;
 };
@@ -126,7 +128,10 @@ static bool read_all(channel_t *t, int fd, char *buf, int size)
   {
     int n = read_(t, fd, buf, size);
     if (n == 0)
+    {
+      t->eof = 1;
       return 0;
+    }
 
     buf += n;
     size -= n;
@@ -180,6 +185,7 @@ static bool refill_at_least(channel_t *c, int fd, int at_least)
     if (n == 0)
     {
       c->input.len = avail;
+      c->eof = 1;
       return 0;
     }
     avail += n;
@@ -469,6 +475,9 @@ bool channel_read_query(channel_t *t, int fd, query_t *r)
 {
   uint32_t tag;
 
+  // Fields read after the end of the connection are 0: read the whole
+  // message, then check that it was complete
+  t->eof = 0;
   if (!try_read_u32(t, fd, &tag))
     return 0;
   r->tag = tag;
@@ -545,6 +554,8 @@ bool channel_read_query(channel_t *t, int fd, query_t *r)
     case Q_CHLD:
       {
         r->chld.pid = read_u32(t, fd);
+        if (t->eof)
+          break;
         if (t->passed_fd == -1)
           abort();
         r->chld.fd = t->passed_fd;
@@ -557,6 +568,11 @@ bool channel_read_query(channel_t *t, int fd, query_t *r)
               tag & 0xFF, (tag >> 8) & 0xFF, (tag >> 16) & 0xFF, (tag >> 24) & 0xFF);
       mabort();
     }
+  }
+  if (t->eof)
+  {
+    fprintf(stderr, "[process] connection closed in the middle of a message\n");
+    return 0;
   }
   if (LOG)
   {
@@ -628,6 +644,12 @@ void channel_reset(channel_t *t)
 {
   t->input.pos = t->input.len = 0;
   t->output.pos = 0;
+  // A snapshot fd received from a process that died before announcing it
+  if (t->passed_fd != -1)
+  {
+    close(t->passed_fd);
+    t->passed_fd = -1;
+  }
 }
 
 void *channel_get_buffer(channel_t *t, size_t n)
