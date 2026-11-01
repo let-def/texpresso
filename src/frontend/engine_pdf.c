@@ -46,6 +46,7 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
   SELF;
   fz_free(ctx, self->path);
   fz_drop_document(ctx, self->doc);
+  fz_free(ctx, self);
 }
 
 static fz_display_list *engine_render_page(txp_engine *_self,
@@ -54,8 +55,13 @@ static fz_display_list *engine_render_page(txp_engine *_self,
 {
   SELF;
   fz_page *page = fz_load_page(ctx, self->doc, index);
-  fz_display_list *dl = fz_new_display_list_from_page(ctx, page);
-  fz_drop_page(ctx, page);
+  fz_display_list *dl = NULL;
+  fz_try(ctx)
+    dl = fz_new_display_list_from_page(ctx, page);
+  fz_always(ctx)
+    fz_drop_page(ctx, page);
+  fz_catch(ctx)
+    fz_rethrow(ctx);
   return dl;
 }
 
@@ -73,13 +79,27 @@ static void engine_begin_changes(txp_engine *_self, fz_context *ctx)
 static void engine_detect_changes(txp_engine *_self, fz_context *ctx)
 {
   SELF;
-  fz_document *doc = fz_open_document(ctx, self->path);
-  if (!doc)
+  fz_document *doc = NULL;
+  int page_count = 0;
+  fz_var(doc);
+  // The file might be in the middle of being rewritten: keep the current
+  // document until it can be opened again
+  fz_try(ctx)
+  {
+    doc = fz_open_document(ctx, self->path);
+    page_count = fz_count_pages(ctx, doc);
+  }
+  fz_catch(ctx)
+  {
+    fprintf(stderr, "[pdf] cannot reload %s: %s\n", self->path,
+            fz_caught_message(ctx));
+    fz_drop_document(ctx, doc);
     return;
+  }
 
   fz_drop_document(ctx, self->doc);
   self->doc = doc;
-  self->page_count = fz_count_pages(ctx, doc);
+  self->page_count = page_count;
   self->changed = 1;
 }
 
@@ -148,9 +168,8 @@ static void engine_finish_convergence(txp_engine *_self, fz_context *ctx)
 
 txp_engine *txp_create_pdf_engine(fz_context *ctx, const char *pdf_path)
 {
+  // Throws if the document cannot be opened
   fz_document *doc = fz_open_document(ctx, pdf_path);
-  if (!doc)
-    return NULL;
 
   struct pdf_engine *self = fz_malloc_struct(ctx, struct pdf_engine);
   self->_class = &_class;

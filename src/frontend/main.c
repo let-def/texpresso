@@ -854,6 +854,8 @@ static void interpret_open(struct persistent_state *ps,
       fz_resize_buffer(ps->ctx, e->edit_data, size + 128);
     e->edit_data->len = size;
     memcpy(e->edit_data->data, data, size);
+    // The editor now owns the contents (not a convergence stash anymore)
+    e->edit_data_from_convergence = false;
   }
   else
   {
@@ -911,6 +913,7 @@ static void interpret_close(struct persistent_state *ps,
 
   fz_drop_buffer(ps->ctx, e->edit_data);
   e->edit_data = NULL;
+  e->edit_data_from_convergence = false;
 
   fprintf(stderr, "[command] close %s: closing, changed offset %d\n", path,
           changed);
@@ -930,7 +933,17 @@ static uint32_t convert_color(fz_context *ctx, vstack *stack, float frgb[3])
 
 static void display_page(struct persistent_state *ps, ui_state *ui)
 {
-  fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
+  fz_display_list *dl = NULL;
+  fz_var(dl);
+  fz_try(ps->ctx)
+    dl = send(render_page, ui->eng, ps->ctx, ui->page);
+  fz_catch(ps->ctx)
+  {
+    // Keep showing the previous contents
+    fprintf(stderr, "[render] cannot render page %d: %s\n", ui->page,
+            fz_caught_message(ps->ctx));
+    return;
+  }
   txp_renderer_set_contents(ps->ctx, ui->doc_renderer, dl);
   fz_drop_display_list(ps->ctx, dl);
   schedule_event(RENDER_EVENT);
