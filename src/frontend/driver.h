@@ -28,7 +28,8 @@
 #include <stdbool.h>
 #include <SDL2/SDL.h>
 #include <mupdf/fitz/context.h>
-#include "renderer.h"
+#include "page_collection.h"
+#include "viewer.h"
 
 enum custom_events {
   SCAN_EVENT,
@@ -39,14 +40,19 @@ enum custom_events {
   EVENT_COUNT,
 };
 
+struct txp_theme
+{
+  bool themed, inverted;
+  uint32_t background, foreground;
+};
+
+// UI state kept when reloading the binary
 struct initial_state
 {
   int initialized;
-  int page;
-  int need_synctex;
-  int zoom;
-  txp_renderer_config config;
-  fz_display_list *display_list;
+  txp_page_collection pages;
+  txp_viewer viewer;
+  struct txp_theme theme;
 };
 
 enum editor_protocol
@@ -70,6 +76,8 @@ struct persistent_state {
   const char *exe_path, *doc_path, *doc_name, *inclusion_path;
 
   bool line_output, use_tectonic, use_texlive, initialize_only, stream_mode;
+  // Show all pages, scrolling continuously, rather than one page at a time
+  bool continuous;
   bool paused;
   bool rerun_enabled;
   bool rerun_once_pending;

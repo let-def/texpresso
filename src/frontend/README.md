@@ -48,8 +48,14 @@ while supporting backtracking.
 [incdvi.c](incdvi.c), [incdvi.h](incdvi.h) is an incremental viewer for DVI files, implemented
 on top of <dvi/> library.
 
-[renderer.c](renderer.c), [renderer.h](renderer.h) renders the contents of TeXpresso window,
-with support for scrolling, cropping, remapping colors, etc.
+The contents of TeXpresso window are displayed by:
+- [page_collection.c](page_collection.c), [page_collection.h](page_collection.h): the pages
+  produced so far, their size and vertical layout (using [prefix_sum.c](prefix_sum.c),
+  [prefix_sum.h](prefix_sum.h)), cropping;
+- [viewer.c](viewer.c), [viewer.h](viewer.h): the position of pages on screen and
+  navigation, either one page at a time or continuously scrolling (`-continuous`);
+- [page_buffer.c](page_buffer.c), [page_buffer.h](page_buffer.h): a texture caching the
+  rasterized pages around the visible area, with color remapping.
 
 ### Misc files
 

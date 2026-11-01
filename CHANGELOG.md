@@ -10,6 +10,10 @@
 - add `(register)`, `(pause)`, `(resume)` commands; `-stream` now starts the
   engine paused so the editor can prime the VFS before compilation begins
   (@merv1n34k)
+- add `-continuous` flag for a viewer showing all pages, scrolling continuously
+  (based on the multipage branch); the single page viewer shares the same
+  rendering code
+- fix loading of fonts from relative paths in DVI files
 
 # v0.2 Fri  6 Mar 19:09:31 JST 2026
 

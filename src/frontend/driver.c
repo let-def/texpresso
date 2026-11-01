@@ -147,7 +147,7 @@ static void usage(void)
 {
   fprintf(stderr,
           "Usage: texpresso [-I path]* [-json] [-lines] [-texlive] [-tectonic] "
-          "[-test-initialize] [-stream] root_file.tex\n");
+          "[-test-initialize] [-stream] [-continuous] root_file.tex\n");
   fprintf(stderr,
           " -I path    Add a path to included directories. \n"
           "    Files are looked up relative to document directory and all "
@@ -166,6 +166,8 @@ static void usage(void)
           " -test-initialize  Run a single cycle for test purposes\n");
   fprintf(stderr,
           " -stream   Skip filesystem lookups; files are pushed via editor commands\n");
+  fprintf(stderr,
+          " -continuous  Show all pages in a continuous scroll, rather than one at a time\n");
 }
 
 int main(int argc, const char **argv)
@@ -199,6 +201,7 @@ int main(int argc, const char **argv)
   bool use_texlive = 0;
   bool initialize_only = 0;
   bool stream_mode = 0;
+  bool continuous = 0;
 
   int inclusion_path_size = 1;
   for (int i = 1; i < argc; i++)
@@ -241,6 +244,10 @@ int main(int argc, const char **argv)
       else if (strcmp(arg, "-stream") == 0)
       {
         stream_mode = 1;
+      }
+      else if (strcmp(arg, "-continuous") == 0)
+      {
+        continuous = 1;
       }
       else
       {
@@ -405,6 +412,7 @@ int main(int argc, const char **argv)
       .use_texlive = use_texlive,
       .initialize_only = initialize_only,
       .stream_mode = stream_mode,
+      .continuous = continuous,
       // In stream mode, start paused: editor primes the VFS before (resume).
       .paused = stream_mode,
       .rerun_enabled = false,

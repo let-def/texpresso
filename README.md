@@ -66,13 +66,30 @@ Keyboard controls:
 - `+` / `-`: Zoom in / out
 - `F5`, `f`, `F11`: Toggle fullscreen presentation
 - `ESC`: Exit full screen
+- `v` ("view"): switch between single page and continuous modes
 
 Mouse controls:
 
-- click: select text in window (TODO: move Emacs buffer with SyncTeX)
+- click: select text in window and move the editor to the source (SyncTeX)
 - control+click: pan page
 - wheel: scroll page
 - control+wheel: zoom
+
+### Continuous mode
+
+With `-continuous` (or after pressing `v`), all pages are shown one below the other,
+scrolling smoothly with some inertia:
+- `↑`, `↓`, `<Space>`, `b`: move by a screen, page by page: a page that fits on screen
+  is centered, a taller one is shown from its top to its bottom
+- `←`, `→`, `PageUp`, `PageDown`: previous / next page
+- `Home`, `End`: first / last page
+- `j`, `k`: scroll a little
+- drag: scroll, the pages keep moving when released
+- click: move the editor to the source (SyncTeX)
+- double click: zoom to the width of the page, triple click: also toggle cropping
+- control+drag: select text
+- control+wheel or shift+wheel: zoom
+- a scrollbar appears when the mouse gets close to the right edge
 
 ## Supported editors
 
