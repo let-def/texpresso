@@ -2,7 +2,8 @@ OBJECTS= \
 	dvi_context.o dvi_interp.o dvi_prim.o dvi_special.o \
 	dvi_scratch.o dvi_fonttable.o dvi_resmanager.o \
 	tex_tfm.o tex_fontmap.o tex_vf.o tex_enc.o \
-  vstack.o pdf_lexer.o dvi_pdfstore.o
+  vstack.o pdf_lexer.o dvi_pdfstore.o \
+	dvi_color.o dvi_gstate.o dvi_xobject.o dvi_paint.o dvi_pdfcode.o
 
 BUILD=../../build
 DIR=$(BUILD)/frontend
