@@ -344,6 +344,12 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
   SELF;
   while (self->process_count > 0)
     pop_process(ctx, self);
+  // Release the buffers referenced by the log before freeing the files
+  log_rollback(ctx, self->log, self->restart);
+  log_free(ctx, self->log);
+  filesystem_free(ctx, self->fs);
+  channel_free(self->c);
+  free(self->trace);
   incdvi_free(ctx, self->dvi);
   synctex_free(ctx, self->stex);
   fz_free(ctx, self->name);

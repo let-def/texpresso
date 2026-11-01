@@ -378,10 +378,11 @@ static void output_json_string(FILE *f, const char *ptr, int len)
       {
         putc_unlocked(c, f);
         putc_unlocked(ptr[1], f);
+        ptr += 1;
       }
       else
-        putc_unlocked('?', f);  // Invalid UTF-8
-      ptr += 1;
+        // Invalid UTF-8: one '?' per byte, keeping the following bytes
+        putc_unlocked('?', f);
     }
     else if ((c & 0xf0) == 0xe0)
     {
@@ -391,10 +392,11 @@ static void output_json_string(FILE *f, const char *ptr, int len)
         putc_unlocked(c, f);
         putc_unlocked(ptr[1], f);
         putc_unlocked(ptr[2], f);
+        ptr += 2;
       }
       else
-        putc_unlocked('?', f);  // Invalid UTF-8
-      ptr += 2;
+        // Invalid UTF-8: one '?' per byte, keeping the following bytes
+        putc_unlocked('?', f);
     }
     else if ((c & 0xf8) == 0xf0)
     {
@@ -406,10 +408,11 @@ static void output_json_string(FILE *f, const char *ptr, int len)
         putc_unlocked(ptr[1], f);
         putc_unlocked(ptr[2], f);
         putc_unlocked(ptr[3], f);
+        ptr += 3;
       }
       else
-        putc_unlocked('?', f);  // Invalid UTF-8
-      ptr += 3;
+        // Invalid UTF-8: one '?' per byte, keeping the following bytes
+        putc_unlocked('?', f);
     }
     else
       putc_unlocked('?', f);  // Invalid UTF-8 start byte
@@ -497,11 +500,11 @@ void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos)
       fprintf(stdout, protocol == EDITOR_SEXP ? " \"" : ", \"");
       output_data_string(stdout, data + pos, next - pos);
       fprintf(stdout, "\"");
-      pos = next;
-      do {
+      // Next line starts after the '\n'
+      pos = next + 1;
+      next = pos;
+      while (next < buf->len && buf->data[next] != '\n')
         next++;
-      }
-      while (next < buf->len && buf->data[next] != '\n');
     }
 
     // Trailer
