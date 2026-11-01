@@ -340,8 +340,8 @@ int main(int argc, const char **argv)
   setup_signals();
 
   //Create window
-  char window_title[128] = "TeXpresso ";
-  strcat(window_title, doc_name);
+  char window_title[128];
+  snprintf(window_title, sizeof(window_title), "TeXpresso %s", doc_name);
 
 #if SDL_VERSION_ATLEAST(2, 0, 8)
   SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
@@ -373,6 +373,18 @@ int main(int argc, const char **argv)
 
   SDL_Renderer *renderer;
   renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
+  if (renderer == NULL)
+  {
+    // Retry without the optional features
+    fprintf(stderr, "Renderer with vsync could not be created (%s), retrying\n",
+            SDL_GetError());
+    renderer = SDL_CreateRenderer(window, -1, 0);
+  }
+  if (renderer == NULL)
+  {
+    fprintf(stderr, "Renderer could not be created! SDL_Error: %s\n", SDL_GetError());
+    abort();
+  }
 
   struct persistent_state pstate = {
       .initial = {0,},
