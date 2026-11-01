@@ -140,7 +140,7 @@ tectonic_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const cha
       break;
 
     case RES_FONT:
-      if (name[0] == '/' || name[0] == '.')
+      if (strchr(name, '/'))
       {
         path = (char *)name;
         break;
@@ -282,7 +282,7 @@ texlive_hooks_open_file(fz_context *ctx, void *env, dvi_reskind kind, const char
       break;
 
     case RES_FONT:
-      if (name[0] == '/' || name[0] == '.')
+      if (strchr(name, '/'))
       {
         path = (char *)name;
         break;
