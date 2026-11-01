@@ -93,7 +93,8 @@ static void txp_get_colors(txp_renderer_config *config, uint32_t *bg, uint32_t *
 
 txp_renderer *txp_renderer_new(fz_context *ctx, SDL_Renderer *sdl)
 {
-  txp_renderer *self;
+  txp_renderer *self = NULL;
+  fz_var(self);
   fz_try(ctx)
   {
     self = fz_malloc_struct(ctx, txp_renderer);
@@ -183,6 +184,9 @@ static fz_rect get_bounds(fz_context *ctx, txp_renderer *self)
     fz_close_device(ctx, dev);
     fz_drop_device(ctx, dev);
     self->contents_bounds = fz_intersect_rect(bounds, self->contents_bounds);
+    // Nothing to crop to (blank page): show the whole page
+    if (fz_is_empty_rect(self->contents_bounds))
+      self->contents_bounds = bounds;
     self->contents_bounds_valid = 1;
   }
 
@@ -216,6 +220,8 @@ bool txp_renderer_page_bounds(fz_context *ctx, txp_renderer *self, txp_renderer_
     return 0;
 
   fz_rect bounds = get_bounds(ctx, self);
+  if (!(bounds.x1 > bounds.x0 && bounds.y1 > bounds.y0))
+    return 0;
 
   float out_ar = (float)self->output_w / (float)self->output_h;
   float doc_ar = (bounds.x1 - bounds.x0) / (bounds.y1 - bounds.y0);
@@ -302,6 +308,9 @@ static void prepare_texture(fz_context *ctx, txp_renderer *self)
   {
     self->tex = SDL_CreateTexture(self->sdl, SDL_PIXELFORMAT_BGR24,
                                   SDL_TEXTUREACCESS_STREAMING, pw, ph);
+    if (!self->tex)
+      fprintf(stderr, "[renderer] cannot create a %dx%d texture: %s\n",
+              pw, ph, SDL_GetError());
     self->st = (texture_state){
         .w = pw,
         .h = ph,
@@ -555,6 +564,8 @@ static void update_texture(fz_context *ctx,
       .h = view_rect->h,
   };
   prepare_texture(ctx, self);
+  if (!self->tex)
+    return;
 
   int x = tex_rect.x;
   int y = tex_rect.y;
@@ -679,7 +690,12 @@ static void update_texture(fz_context *ctx,
   else
   {
     SDL_Rect lock_rect = (SDL_Rect){.x = 0, .y = 0, .w = w, .h = h};
-    SDL_LockTexture(self->tex, &lock_rect, &pixels, &pitch);
+    if (SDL_LockTexture(self->tex, &lock_rect, &pixels, &pitch) != 0)
+    {
+      fprintf(stderr, "[renderer] cannot lock texture: %s\n", SDL_GetError());
+      clear_texture(self);
+      return;
+    }
   }
 
   fz_irect full_rect = fz_make_irect(0, 0, w, h);
@@ -784,6 +800,8 @@ void txp_renderer_render(fz_context *ctx, txp_renderer *self)
   clock_gettime(CLOCK_MONOTONIC, &update_start);
   update_texture(ctx, self, &page_rect, &view_rect);
   clock_gettime(CLOCK_MONOTONIC, &update_end);
+  if (!self->tex)
+    return;
   // fprintf(stderr, "[txp_renderer] updated texture in %ldus\n",
   //         (update_end.tv_sec - update_start.tv_sec) * 1000 * 1000 +
   //         (update_end.tv_nsec - update_start.tv_nsec) / 1000);
