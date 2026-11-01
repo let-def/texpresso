@@ -144,6 +144,8 @@ static pid_t exec_xelatex_generic(char **args, int *fd)
     perror("exec_xelatex socketpair");
     mabort();
   }
+  // Workers spawned later must not inherit our end of the connection
+  fcntl(sockets[0], F_SETFD, FD_CLOEXEC);
 
   char buf[30];
   snprintf(buf, 30, "%d", sockets[1]);
@@ -171,8 +173,9 @@ static pid_t exec_xelatex_generic(char **args, int *fd)
   if (pid == 0)
   {
     /* CHILD */
+    // Only async-signal-safe calls are allowed after vfork
     if (close(sockets[0]) != 0)
-      mabort();
+      _exit(2);
     // Redirect stdout to stderr
     dup2(STDERR_FILENO, STDOUT_FILENO);
     execvp(args[0], args);
@@ -212,7 +215,7 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
     p->pid = exec_xelatex(self->engine_path, self->use_texlive, self->name, &p->fd);
     p->trace_len = 0;
     if (!channel_handshake(self->c, p->fd))
-      mabort();
+      mabort("could not start the engine (%s)\n", self->engine_path);
   }
 }
 
@@ -226,6 +229,8 @@ static void close_process(process_t *p)
     close(p->fd);
     p->fd = -1;
   }
+  // Reap terminated root workers (snapshots are children of the workers)
+  while (waitpid(-1, NULL, WNOHANG) > 0);
 }
 
 static void pop_process(fz_context *ctx, struct tex_engine *self)
@@ -244,7 +249,9 @@ static void clear_convergence_stash(fz_context *ctx, struct tex_engine *self)
   fileentry_t *e;
   for (int index = 0; (e = filesystem_scan(self->fs, &index));)
   {
-    if (e->edit_data_from_convergence && e->edit_data)
+    // A surviving snapshot may still read the stash: dropping it would
+    // change the contents under it (or leave it without data at all)
+    if (e->edit_data_from_convergence && e->edit_data && e->seen < 0)
     {
       fz_drop_buffer(ctx, e->edit_data);
       e->edit_data = NULL;
@@ -986,7 +993,6 @@ static void revert_trace(trace_entry_t *te)
 static void rollback_processes(fz_context *ctx, struct tex_engine *self, int reverted, int trace)
 {
   self->deferred.active = false;
-  clear_convergence_stash(ctx, self);
 
   fprintf(
     stderr,
@@ -1027,6 +1033,7 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
     reverted--;
     revert_trace(&self->trace[reverted]);
   }
+  clear_convergence_stash(ctx, self);
 
   fprintf(stderr, "after rollback: %d bytes of output\n",
     self->st.document.entry
@@ -1171,12 +1178,9 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
       return 0;
     if (!channel_has_pending_query(self->c, fd, 10))
       return 0;
+    // On failure, read_query already closed the process
     if (!read_query(self, self->c, &q))
-    {
-      close(fd);
-      get_process(self)->fd = -1;
       return 0;
-    }
     answer_query(ctx, self, &q);
     channel_flush(self->c, fd);
     return 1;
@@ -1332,7 +1336,8 @@ static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
   // - kill if stuck
   // - check pending SEEN messages to update vision of the process
   int nothing_seen = 1;
-  do {
+  while (p->fd != -1)
+  {
     if (!channel_has_pending_query(self->c, p->fd, 10))
     {
       fprintf(stderr, "[kill] worker might be stuck, killing\n");
@@ -1341,26 +1346,23 @@ static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
       close_process(p);
       break;
     }
-    // Process only pending SEEN to have an updated view on process state
-    switch (channel_peek_query(self->c, p->fd))
+    // Process only pending SEEN to have an updated view on process state.
+    // Any other query means that the worker is waiting for an answer.
+    enum query tag = channel_peek_query(self->c, p->fd);
+    if (tag == 0)
     {
-      case Q_SEEN:
-        {
-          query_t q;
-          if (!read_query(self, self->c, &q))
-          {
-            close(p->fd);
-            p->fd = -1;
-            break;
-          }
-          answer_query(ctx, self, &q);
-          nothing_seen = 0;
-          continue;
-        }
-      default:
-        break;
+      fprintf(stderr, "[process] terminating process\n");
+      close_process(p);
+      break;
     }
-  } while(0);
+    if (tag != Q_SEEN)
+      break;
+    query_t q;
+    if (!read_query(self, self->c, &q))
+      break;
+    answer_query(ctx, self, &q);
+    nothing_seen = 0;
+  }
 
   self->rollback.flush = 1;
   return nothing_seen;

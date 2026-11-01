@@ -24,6 +24,8 @@
 
 #include <unistd.h>
 #include <signal.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <mupdf/fitz.h>
 #include "logo.h"
 #include "driver.h"
@@ -38,14 +40,15 @@
 
 Uint32 custom_event = 0;
 
+// Events can be scheduled from other threads (stdin, signals).
+// The main loop clears the flag when processing the event (user.data1).
 void schedule_event(enum custom_events ev)
 {
-  static char scheduled[EVENT_COUNT] = {0,};
+  static SDL_atomic_t scheduled[EVENT_COUNT];
 
-  char *sched = scheduled + ev;
-  if (!*sched)
+  SDL_atomic_t *sched = scheduled + ev;
+  if (SDL_AtomicCAS(sched, 0, 1))
   {
-    *sched = 1;
     SDL_Event event;
     SDL_zero(event);
     event.type = custom_event;
@@ -56,18 +59,56 @@ void schedule_event(enum custom_events ev)
   }
 }
 
+// SDL_PushEvent is not async-signal-safe: the signal handler wakes up a
+// thread that schedules the event.
+static int usr1_pipe[2] = {-1, -1};
+
 static void signal_usr1(int sig)
 {
   (void)sig;
+  int saved_errno = errno;
+  char c = 0;
+  if (write(usr1_pipe[1], &c, 1) < 0) {}
+  errno = saved_errno;
+}
 
-  static volatile int barrier = 0;
-
-  if (!barrier)
+static int signal_usr1_thread(void *data)
+{
+  (void)data;
+  char buf[64];
+  while (1)
   {
-    barrier = 1;
-    schedule_event(SCAN_EVENT);
-    barrier = 0;
+    ssize_t n = read(usr1_pipe[0], buf, sizeof(buf));
+    if (n > 0)
+      schedule_event(SCAN_EVENT);
+    else if (n == 0 || errno != EINTR)
+      return 0;
   }
+}
+
+static void setup_signals(void)
+{
+  // Writing to a worker that just died should not kill the frontend
+  signal(SIGPIPE, SIG_IGN);
+
+  if (pipe(usr1_pipe) != 0)
+  {
+    perror("pipe");
+    return;
+  }
+  for (int i = 0; i < 2; i++)
+    fcntl(usr1_pipe[i], F_SETFD, FD_CLOEXEC);
+  // A burst of signals should not block the handler
+  fcntl(usr1_pipe[1], F_SETFL, O_NONBLOCK);
+  SDL_Thread *thread =
+      SDL_CreateThread(signal_usr1_thread, "signal_usr1_thread", NULL);
+  if (!thread)
+  {
+    fprintf(stderr, "SDL_CreateThread: %s\n", SDL_GetError());
+    return;
+  }
+  SDL_DetachThread(thread);
+  signal(SIGUSR1, signal_usr1);
 }
 
 /* Misc routines */
@@ -296,7 +337,7 @@ int main(int argc, const char **argv)
   }
 
   custom_event = SDL_RegisterEvents(1);
-  signal(SIGUSR1, signal_usr1);
+  setup_signals();
 
   //Create window
   char window_title[128] = "TeXpresso ";

@@ -28,6 +28,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <poll.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 
 #define PACK(a,b,c,d) ((d << 24) | (c << 16) | (b << 8) | a)
@@ -89,6 +90,9 @@ static ssize_t read_(channel_t *t, int fd, void *data, size_t len)
       abort();
       //close(t->passed_fd);
     t->passed_fd = fds0[0];
+    // Don't leak the snapshot sockets into workers spawned later: a peer
+    // would never see the end of the connection.
+    fcntl(t->passed_fd, F_SETFD, FD_CLOEXEC);
   }
 
   return recvd;
@@ -139,10 +143,11 @@ static void write_all(int fd, const char *buf, int size)
     {
       if (errno == EINTR)
         continue;
+      // The peer died: the next read will report the end of the connection
+      if (errno == ECONNRESET || errno == EPIPE)
+        return;
       perror("sprotocol.c write_all");
       print_backtrace();
-      if (errno == ECONNRESET)
-        return;
     }
     if (n <= 0)
       mabort();
@@ -452,9 +457,10 @@ bool channel_has_pending_query(channel_t *t, int fd, int timeout)
 
 enum query channel_peek_query(channel_t *t, int fd)
 {
-  uint32_t result = read_u32(t, fd);
-  if (result == 0)
-    abort();
+  uint32_t result;
+  // End of connection: the process died
+  if (!try_read_u32(t, fd, &result))
+    return 0;
   t->input.pos -= 4;
   return result;
 }

@@ -400,7 +400,8 @@ static int SDLCALL poll_stdin_thread_main(void *data)
           continue;
         return 1;
       }
-      if ((fds[0].revents & POLLRDNORM) != 0)
+      // A closed pipe reports POLLHUP without POLLRDNORM (Linux)
+      if ((fds[0].revents & (POLLRDNORM | POLLHUP | POLLERR)) != 0)
         schedule_event(STDIN_EVENT);
       break;
     }
@@ -413,7 +414,9 @@ static bool poll_stdin(void)
   fd.fd = STDIN_FILENO;
   fd.events = POLLRDNORM;
   fd.revents = 0;
-  return (poll(&fd, 1, 0) == 1) && ((fd.revents & POLLRDNORM) != 0);
+  // A closed pipe reports POLLHUP without POLLRDNORM (Linux)
+  return (poll(&fd, 1, 0) == 1) &&
+         ((fd.revents & (POLLRDNORM | POLLHUP | POLLERR)) != 0);
 }
 
 static void wakeup_poll_thread(int poll_stdin_pipe[2], char c)
@@ -1638,7 +1641,7 @@ bool texpresso_main(struct persistent_state *ps)
     if (e.type == ps->custom_event)
     {
       int page_count;
-      *(char *)e.user.data1 = 0;
+      SDL_AtomicSet(e.user.data1, 0);
       switch (e.user.code)
       {
         case SCAN_EVENT:
