@@ -214,7 +214,7 @@ void synctex_rollback(fz_context *ctx, synctex_t *stx, size_t offset)
       int pages = stx->page_off.len / 2;
       if (stx->scanned_pages > pages)
         stx->scanned_pages = pages;
-      if (stx->candidate_page > pages)
+      if (stx->candidate_page >= pages)
         stx->candidate_page = -1;
     }
   }
@@ -316,15 +316,23 @@ static void synctex_process_line(fz_context *ctx, synctex_t *stx, int offset, co
 void synctex_update(fz_context *ctx, synctex_t *stx, fz_buffer *buf)
 {
   int cur = stx->cur, len = buf->len;
+  uint8_t *ptr = buf->data;
 
-  if (len <= cur)
+  if (len < cur)
   {
-    if (len < cur)
-      synctex_rollback(ctx, stx, len);
-    return;
+    // A line cut by the rollback has been processed already: forget it, it
+    // will be processed again once complete
+    int bol = len;
+    while (bol > 0 && ptr[bol - 1] != '\n')
+      bol -= 1;
+    synctex_rollback(ctx, stx, bol);
+    stx->bol = bol;
+    cur = stx->cur;
   }
 
-  uint8_t *ptr = buf->data;
+  if (len <= cur)
+    return;
+
   int bol = stx->bol;
 
   if (bol > cur)
@@ -559,7 +567,7 @@ static float rect_area(fz_irect r)
 
 static int get_filename(synctex_t *stx, fz_buffer *buf, struct candidate *c, int tag)
 {
-  if (tag <= 0)
+  if (tag <= 0 || tag > stx->input_off.len)
     return 0;
 
   const uint8_t *filename = &buf->data[int_abs(stx->input_off.ptr[tag - 1])];
@@ -627,7 +635,7 @@ parse_tree(synctex_t *stx, fz_buffer *buf, const uint8_t *ptr, int x, int y, str
         break;
       case STEX_ENTER_H:
       case STEX_ENTER_V:
-        if (fz_is_point_inside_irect(x, y, rect))
+        if (fz_is_point_inside_irect(x, y, rect) && nest < 256)
         {
           // fprintf(stderr, "synctex pre-candidate\n");
           float area = rect_area(rect);
@@ -724,8 +732,9 @@ void synctex_set_target(synctex_t *stx, int current_page, const char *path, int 
   int length = strlen(path);
   if (length >= sizeof(stx->target_path))
   {
-    // FIXME: Warn about path too long?!
-    abort();
+    fprintf(stderr, "[synctex] path too long, ignoring forward search: %s\n", path);
+    stx->target_path[0] = 0;
+    return;
   }
 
   memcpy(stx->target_path, path, length);
@@ -804,7 +813,7 @@ synctex_backscan_page(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int page,
     // Remember the first location of the page to skip it:
     // it is the location where the shipout procedure was invoked
     // not the location of actual source contents
-    if (r0.link.tag == -1 && (r.kind == STEX_ENTER_H || STEX_ENTER_V))
+    if (r0.link.tag == -1 && (r.kind == STEX_ENTER_H || r.kind == STEX_ENTER_V))
     {
       r0 = r;
 
