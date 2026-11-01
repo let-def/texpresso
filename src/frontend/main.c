@@ -36,6 +36,7 @@
 #include "page_buffer.h"
 #include "page_collection.h"
 #include "viewer.h"
+#include "fd_poll.h"
 #include "engine.h"
 #include "driver.h"
 #include "synctex.h"
@@ -830,58 +831,6 @@ static void ui_mouse_wheel(fz_context *ctx, ui_state *ui, float dx, float dy,
     txp_viewer_scroll(ctx, v, ui->pages, scale.x * dx * 5, -scale.y * dy * 5);
 }
 
-/* Stdin polling */
-
-static int SDLCALL poll_stdin_thread_main(void *data)
-{
-  int *pipes = data;
-  char c;
-  int n;
-
-  while (1)
-  {
-    n = read(pipes[0], &c, 1);
-    if (n == -1)
-    {
-      if (errno == EINTR)
-        continue;
-      return 1;
-    }
-
-    if (n == 0)
-      return 1;
-
-    if (c == 'q')
-      return 0;
-
-    if (c != 'c')
-      abort();
-
-    struct pollfd fds[2];
-    fds[0].fd = STDIN_FILENO;
-    fds[0].events = POLLRDNORM;
-    fds[0].revents = 0;
-    fds[1].fd = pipes[0];
-    fds[1].events = POLLRDNORM;
-    fds[1].revents = 0;
-
-    while (1)
-    {
-      n = poll(fds, 2, -1);
-      if (n == -1)
-      {
-        if (errno == EINTR)
-          continue;
-        return 1;
-      }
-      // A closed pipe reports POLLHUP without POLLRDNORM (Linux)
-      if ((fds[0].revents & (POLLRDNORM | POLLHUP | POLLERR)) != 0)
-        schedule_event(STDIN_EVENT);
-      break;
-    }
-  }
-}
-
 // In initialize mode, stop once the first page is ready or the engine is done
 static bool initialize_done(struct persistent_state *ps, ui_state *ui, bool stdin_eof)
 {
@@ -889,32 +838,6 @@ static bool initialize_done(struct persistent_state *ps, ui_state *ui, bool stdi
          (send(page_count, ui->eng) > 0 ||
           (send(get_status, ui->eng) == DOC_TERMINATED && stdin_eof));
 }
-
-static bool poll_stdin(void)
-{
-  struct pollfd fd;
-  fd.fd = STDIN_FILENO;
-  fd.events = POLLRDNORM;
-  fd.revents = 0;
-  // A closed pipe reports POLLHUP without POLLRDNORM (Linux)
-  return (poll(&fd, 1, 0) == 1) &&
-         ((fd.revents & (POLLRDNORM | POLLHUP | POLLERR)) != 0);
-}
-
-static void wakeup_poll_thread(int poll_stdin_pipe[2], char c)
-{
-  while (1)
-  {
-    int n = write(poll_stdin_pipe[1], &c, 1);
-    if (n == 1)
-      break;
-    if (n == -1 && errno == EINTR)
-      continue;
-    perror("write(poll_stdin_pipe, _, _)");
-    break;
-  }
-}
-
 
 /* Navigation */
 
@@ -1576,7 +1499,6 @@ static void interpret_command(struct persistent_state *ps,
       {
         int page = txp_viewer_current_page(ps->ctx, ui->viewer, ui->pages);
         synctex_set_target(stx, page < 0 ? 0 : page, path, cmd.synctex_forward.line);
-        schedule_event(STDIN_EVENT);
       }
     }
     break;
@@ -1664,6 +1586,80 @@ static void document_changed(struct persistent_state *ps, ui_state *ui)
     check_pages(ui);
   }
   schedule_event(RELOAD_EVENT);
+}
+
+/* Stdin commands */
+
+struct stdin_state
+{
+  vstack *cmd_stack;
+  prot_parser cmd_parser;
+  bool eof;
+};
+
+static bool poll_stdin(void)
+{
+  struct pollfd fd;
+  fd.fd = STDIN_FILENO;
+  fd.events = POLLRDNORM;
+  fd.revents = 0;
+  // A closed pipe reports POLLHUP without POLLRDNORM (Linux)
+  return (poll(&fd, 1, 0) == 1) &&
+         ((fd.revents & (POLLRDNORM | POLLHUP | POLLERR)) != 0);
+}
+
+// Read and interpret the commands available on stdin, then watch it again.
+// Returns true if the document changed.
+static bool stdin_process(struct persistent_state *ps, ui_state *ui,
+                          struct stdin_state *st, txp_fd_poller *poller)
+{
+  fz_context *ctx = ps->ctx;
+  send(begin_changes, ui->eng, ctx);
+  char buffer[4096];
+  while (!st->eof && poll_stdin())
+  {
+    int n = read(STDIN_FILENO, buffer, 4096);
+    if (n == -1 && errno == EINTR)
+      continue;
+    if (n <= 0)
+    {
+      // End of file, or an error that would repeat
+      if (n == -1)
+        perror("read stdin");
+      st->eof = true;
+      break;
+    }
+
+    fprintf(stderr, "stdin: %.*s\n", n, buffer);
+
+    const char *ptr = buffer, *lim = buffer + n;
+    fz_try(ctx)
+    {
+      while ((ptr = prot_parse(ctx, &st->cmd_parser, st->cmd_stack, ptr, lim)))
+      {
+        val cmds = vstack_get_values(ctx, st->cmd_stack);
+        int n_cmds = val_array_length(ctx, st->cmd_stack, cmds);
+        for (int i = 0; i < n_cmds; i++)
+        {
+          val cmd = val_array_get(ctx, st->cmd_stack, cmds, i);
+          interpret_command(ps, ui, st->cmd_stack, cmd);
+        }
+      }
+    }
+    fz_catch(ctx)
+    {
+      fprintf(stderr, "error while reading stdin commands: %s\n",
+              fz_caught_message(ctx));
+      vstack_reset(ctx, st->cmd_stack);
+      prot_reinitialize(&st->cmd_parser);
+    }
+  }
+  if (!st->eof)
+    txp_fd_poller_watch(poller, STDIN_FILENO);
+  if (!send(end_changes, ui->eng, ctx))
+    return false;
+  document_changed(ps, ui);
+  return true;
 }
 
 /* Entry point */
@@ -1792,21 +1788,17 @@ bool texpresso_main(struct persistent_state *ps)
   struct repaint_on_resize_env repaint_on_resize_env = {.ctx = ctx, .ui = ui};
   SDL_AddEventWatch(repaint_on_resize, &repaint_on_resize_env);
 
-  vstack *cmd_stack = vstack_new(ctx);
-  prot_parser cmd_parser;
-  prot_initialize(&cmd_parser, (ps->protocol == EDITOR_JSON));
+  struct stdin_state stdin_st = {.cmd_stack = vstack_new(ctx)};
+  prot_initialize(&stdin_st.cmd_parser, (ps->protocol == EDITOR_JSON));
 
-  // Start watching stdin
-  int poll_stdin_pipe[2];
-  if (pipe(poll_stdin_pipe) == -1)
-  {
-    perror("pipe");
+  // Stdin commands arrive as ps->fd_event events. Process those already sent
+  // before the engine advances: a file registered at startup must be known
+  // before the engine looks it up.
+  txp_fd_poller *poller = txp_fd_poller_new(ps->fd_event);
+  if (!poller)
     abort();
-  }
+  stdin_process(ps, ui, &stdin_st, poller);
 
-  SDL_Thread *poll_stdin_thread =
-    SDL_CreateThread(poll_stdin_thread_main, "poll_stdin_thread", poll_stdin_pipe);
-  bool stdin_eof = 0;
   int rerun_count = 0;
   uint32_t last_frame_ticks = SDL_GetTicks();
 
@@ -1814,52 +1806,6 @@ bool texpresso_main(struct persistent_state *ps)
   {
     SDL_Event e;
     bool has_event = SDL_PollEvent(&e);
-
-    // Process stdin
-    send(begin_changes, ui->eng, ctx);
-    char buffer[4096];
-    int n = -1;
-    while (!stdin_eof && poll_stdin() && (n = read(STDIN_FILENO, buffer, 4096)) != 0)
-    {
-      if (n == -1)
-      {
-        if (errno == EINTR)
-          continue;
-        perror("poll stdin");
-        break;
-      }
-
-      fprintf(stderr, "stdin: %.*s\n", n, buffer);
-
-      const char *ptr = buffer, *lim = buffer + n;
-      fz_try(ctx)
-      {
-        while ((ptr = prot_parse(ctx, &cmd_parser, cmd_stack, ptr, lim)))
-        {
-          val cmds = vstack_get_values(ctx, cmd_stack);
-          int n_cmds = val_array_length(ctx, cmd_stack, cmds);
-          for (int i = 0; i < n_cmds; i++)
-          {
-            val cmd = val_array_get(ctx, cmd_stack, cmds, i);
-            interpret_command(ps, ui, cmd_stack, cmd);
-          }
-        }
-      }
-      fz_catch(ctx)
-      {
-        fprintf(stderr, "error while reading stdin commands: %s\n",
-                fz_caught_message(ctx));
-        vstack_reset(ctx, cmd_stack);
-        prot_reinitialize(&cmd_parser);
-      }
-    }
-    if (n == 0) stdin_eof = 1;
-
-    if (send(end_changes, ui->eng, ctx))
-    {
-      document_changed(ps, ui);
-      rerun_count = 0;
-    }
 
     // Process document
     {
@@ -1907,7 +1853,7 @@ bool texpresso_main(struct persistent_state *ps)
         if (advance)
           continue;
         // Nothing might wake us up if the engine stopped without output
-        if (initialize_done(ps, ui, stdin_eof))
+        if (initialize_done(ps, ui, stdin_st.eof))
         {
           fprintf(stderr, "[info] Initialize mode: terminating engine process\n");
           quit = 1;
@@ -1916,16 +1862,13 @@ bool texpresso_main(struct persistent_state *ps)
 
         if (!txp_viewer_is_idle(ui->viewer))
         {
-          // Next animation frame (stdin is polled at each iteration)
+          // Next animation frame
           if (!SDL_WaitEventTimeout(&e, 10))
             continue;
           has_event = 1;
         }
         else
         {
-          if (!stdin_eof)
-            wakeup_poll_thread(poll_stdin_pipe, 'c');
-
           bool rerun_eligible = ps->rerun_enabled
                                 && rerun_count < MAX_RERUNS
                                 && aux_ready;
@@ -2177,25 +2120,21 @@ bool texpresso_main(struct persistent_state *ps)
           sync_pages(ps, ui);
           ui->dirty = true;
           break;
-
-        case STDIN_EVENT:
-          break;
       }
     }
-    if (initialize_done(ps, ui, stdin_eof))
+    else if (e.type == ps->fd_event && e.user.code == STDIN_FILENO)
+    {
+      if (stdin_process(ps, ui, &stdin_st, poller))
+        rerun_count = 0;
+    }
+    if (initialize_done(ps, ui, stdin_st.eof))
     {
       fprintf(stderr, "[info] Initialize mode: terminating engine process\n");
       quit = 1;
     }
   }
 
-  {
-    int status = 0;
-    wakeup_poll_thread(poll_stdin_pipe, 'q');
-    SDL_WaitThread(poll_stdin_thread, &status);
-    close(poll_stdin_pipe[0]);
-    close(poll_stdin_pipe[1]);
-  }
+  txp_fd_poller_free(poller);
 
   SDL_DelEventWatch(repaint_on_resize, &repaint_on_resize_env);
   SDL_SetRelativeMouseMode(SDL_FALSE);
@@ -2210,7 +2149,7 @@ bool texpresso_main(struct persistent_state *ps)
     ps->initial.initialized = 0;
   }
 
-  vstack_free(ctx, cmd_stack);
+  vstack_free(ctx, stdin_st.cmd_stack);
   txp_page_buffer_free(ctx, ui->buffer);
   send(destroy, ui->eng, ctx);
 

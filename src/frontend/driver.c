@@ -38,7 +38,7 @@
 
 /* Custom SDL events  */
 
-Uint32 custom_event = 0;
+Uint32 custom_event = 0, fd_event = 0;
 
 // Events can be scheduled from other threads (stdin, signals).
 // The main loop clears the flag when processing the event (user.data1).
@@ -343,7 +343,8 @@ int main(int argc, const char **argv)
     abort();
   }
 
-  custom_event = SDL_RegisterEvents(1);
+  custom_event = SDL_RegisterEvents(2);
+  fd_event = custom_event + 1;
   setup_signals();
 
   //Create window
@@ -404,6 +405,7 @@ int main(int argc, const char **argv)
       .doc_name = doc_name,
       .inclusion_path = inclusion_path,
       .custom_event = custom_event,
+      .fd_event = fd_event,
       .schedule_event = &schedule_event,
       .should_reload_binary = &should_reload_binary,
 

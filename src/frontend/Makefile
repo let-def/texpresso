@@ -1,4 +1,4 @@
-OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o prefix_sum.o page_collection.o page_buffer.o viewer.o engine_tex.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o
+OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o fd_poll.o prefix_sum.o page_collection.o page_buffer.o viewer.o engine_tex.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o
 
 BUILD=../../build
 DIR=$(BUILD)/frontend

@@ -67,6 +67,10 @@ TeXpresso to communicate with TeXpresso-enabled LaTeX processes.
 
 [myabort.c](myabort.c), [myabort.h](myabort.h) is an helper to print backtraces before aborting.
 
+[fd_poll.c](fd_poll.c), [fd_poll.h](fd_poll.h) watches file descriptors (stdin) from a
+background thread and turns their readiness into SDL events, so that the main
+loop only waits on SDL events.
+
 [proxy.c](proxy.c) is a small C tool (compiled using `make texpresso-debug-proxy`) to
 proxy TeXpresso communication from the editor to an instance running through a
 debugger (launched using <../scripts/texpresso-debug>).

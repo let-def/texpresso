@@ -35,7 +35,6 @@ enum custom_events {
   SCAN_EVENT,
   RENDER_EVENT,
   RELOAD_EVENT,
-  STDIN_EVENT,
 
   EVENT_COUNT,
 };
@@ -65,6 +64,8 @@ struct persistent_state {
   struct initial_state initial;
   enum editor_protocol protocol;
   Uint32 custom_event;
+  // Readiness of a watched file descriptor (see fd_poll.h)
+  Uint32 fd_event;
 
   void (*schedule_event)(enum custom_events ev);
   bool (*should_reload_binary)(void);
