@@ -38,7 +38,7 @@ re2c:api:style = free-form;
 re2c:define:YYCURSOR    = *cur;
 re2c:define:YYCTYPE     = int;
 re2c:define:YYLESSTHAN  = "lim <= *cur";
-re2c:define:YYPEEK      = "*cur < lim ? **cur : -1";
+re2c:define:YYPEEK      = "*cur < lim ? (unsigned char)**cur : -1";
 re2c:define:YYSKIP      = "++(*cur);";
 re2c:define:YYBACKUP    = "mar = *cur;";
 re2c:define:YYRESTORE   = "*cur = mar;";

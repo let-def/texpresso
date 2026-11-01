@@ -61,7 +61,7 @@ re2c:api:style = free-form;
 re2c:define:YYCURSOR    = cur;
 re2c:define:YYCTYPE     = int;
 re2c:define:YYLESSTHAN  = "cur >= lim";
-re2c:define:YYPEEK      = "cur < lim ? *cur : -1";
+re2c:define:YYPEEK      = "cur < lim ? (unsigned char)*cur : -1";
 re2c:define:YYSKIP      = "++cur;";
 re2c:define:YYBACKUP    = "mar = cur;";
 re2c:define:YYRESTORE   = "cur = mar;";
@@ -1049,6 +1049,60 @@ static void special_stream(fz_context *ctx, dvi_context *dc, cursor_t cur, curso
 /* Images and PDFs */
 /*******************/
 
+// A page box, in the default user space of the page (not normalized by the
+// page transform of MuPDF)
+static fz_rect page_box(fz_context *ctx, pdf_obj *page, enum pagebox kind)
+{
+  pdf_obj *media = pdf_dict_get_inheritable(ctx, page, PDF_NAME(MediaBox));
+  pdf_obj *crop = pdf_dict_get_inheritable(ctx, page, PDF_NAME(CropBox));
+  pdf_obj *box = NULL;
+
+  switch (kind)
+  {
+    case BOX_UNDEFINED:
+      // Like dvipdfmx: the first box defined, in this order
+      box = crop;
+      if (!box) box = pdf_dict_get(ctx, page, PDF_NAME(ArtBox));
+      if (!box) box = pdf_dict_get(ctx, page, PDF_NAME(TrimBox));
+      if (!box) box = pdf_dict_get(ctx, page, PDF_NAME(BleedBox));
+      break;
+    case BOX_MEDIABOX: box = media; break;
+    case BOX_CROPBOX: box = crop; break;
+    case BOX_ARTBOX: box = pdf_dict_get(ctx, page, PDF_NAME(ArtBox)); break;
+    case BOX_BLEEDBOX: box = pdf_dict_get(ctx, page, PDF_NAME(BleedBox)); break;
+    case BOX_TRIMBOX: box = pdf_dict_get(ctx, page, PDF_NAME(TrimBox)); break;
+  }
+
+  if (!box && kind != BOX_UNDEFINED)
+    box = crop;
+  if (!box)
+    box = media;
+  if (!box)
+    return fz_make_rect(0, 0, 612, 792);
+  return pdf_to_rect(ctx, box);
+}
+
+// The /Rotate entry of a page, as a matrix that keeps the lower-left corner of
+// the box in place (see set_transform_matrix in dvipdfmx)
+static fz_matrix page_rotation(fz_context *ctx, pdf_obj *page, fz_rect b)
+{
+  int rot = pdf_to_int(ctx, pdf_dict_get_inheritable(ctx, page, PDF_NAME(Rotate)));
+  rot %= 360;
+  if (rot < 0)
+    rot += 360;
+  switch (rot)
+  {
+    case 90:
+      return fz_make_matrix(0, -1, 1, 0, b.x0 - b.y0, b.y0 + b.x1);
+    case 180:
+      return fz_make_matrix(-1, 0, 0, -1, b.x0 + b.x1, b.y0 + b.y1);
+    case 270:
+      return fz_make_matrix(0, 1, -1, 0, b.x0 + b.y1, b.y0 - b.x0);
+    default:
+      return fz_identity;
+  }
+}
+
 static void
 embed_pdf(fz_context *ctx, dvi_context *dc, fz_matrix ctm, struct xform_spec *xf, const char *filename)
 {
@@ -1063,29 +1117,82 @@ embed_pdf(fz_context *ctx, dvi_context *dc, fz_matrix ctm, struct xform_spec *xf
 
     page = pdf_load_page(ctx, doc, xf->page > 0 ? xf->page - 1 : 0);
 
-    // Bounds of the page in MuPDF coordinates (origin at the top-left corner)
-    fz_rect bounds = pdf_bound_page(ctx, page, FZ_CROP_BOX);
-    float bw = bounds.x1 - bounds.x0, bh = bounds.y1 - bounds.y0;
-    if (bw <= 0 || bh <= 0)
-      bw = bh = 1;
+    // Follow dvipdfmx: the page is a form whose BBox is the selected page box
+    // and whose Matrix implements /Rotate. It is then scaled to the requested
+    // dimensions, computed from the rotated box (or the user bbox).
+    fz_rect box = page_box(ctx, page->obj, xf->pagebox);
+    fz_matrix rotation = page_rotation(ctx, page->obj, box);
+    fz_rect rbox = fz_transform_rect(box, rotation);
 
-    float sx = 1, sy = 1;
-    float w = xf->width, h = xf->height;
+    bool user_bbox = !fz_is_infinite_rect(xf->bbox);
+    fz_rect ref = user_bbox ? xf->bbox : rbox;
+    float bw = ref.x1 - ref.x0, bh = ref.y1 - ref.y0;
+    if (bw == 0) bw = 1;
+    if (bh == 0) bh = 1;
+
+    float sx = 1, sy = 1, dp = 0;
+    float w = xf->width, h = xf->height, d = xf->depth == xf->depth ? xf->depth : 0;
     if (w == w && h == h)
     {
       sx = w / bw;
-      sy = h / bh;
+      sy = (h + d) / bh;
+      dp = d;
     }
     else if (w == w)
       sx = sy = w / bw;
     else if (h == h)
-      sx = sy = h / bh;
+    {
+      sx = sy = (h + d) / bh;
+      dp = d;
+    }
 
-    // Map the page to user space, lower-left corner at the origin
-    ctm = fz_concat(xf->ctm, ctm);
-    ctm = fz_pre_scale(fz_pre_translate(ctm, 0, bh * sy), sx, -sy);
-    ctm = fz_pre_translate(ctm, -bounds.x0, -bounds.y0);
-    pdf_run_page(ctx, page, dc->dev, ctm, NULL);
+    fz_matrix scale = fz_make_matrix(sx, 0, 0, sy, 0, -dp);
+    if (user_bbox)
+      scale = fz_pre_translate(scale, -ref.x0, -ref.y0);
+
+    // From the default user space of the page to the device
+    fz_matrix place = fz_concat(scale, fz_concat(xf->ctm, ctm));
+    fz_matrix form = fz_concat(rotation, place);
+
+    // pdf_run_page_contents applies MuPDF page transform, cancel it
+    fz_rect mediabox;
+    fz_matrix page_ctm;
+    pdf_page_transform(ctx, page, &mediabox, &page_ctm);
+
+    fz_path *path = fz_new_path(ctx);
+    fz_try(ctx)
+    {
+      fz_rectto(ctx, path, box.x0, box.y0, box.x1, box.y1);
+      fz_clip_path(ctx, dc->dev, path, 0, form, fz_infinite_rect);
+      if (xf->clip && user_bbox)
+      {
+        fz_path *user = fz_new_path(ctx);
+        fz_try(ctx)
+        {
+          fz_rectto(ctx, user, ref.x0, ref.y0, ref.x1, ref.y1);
+          fz_clip_path(ctx, dc->dev, user, 0, place, fz_infinite_rect);
+        }
+        fz_always(ctx)
+          fz_drop_path(ctx, user);
+        fz_catch(ctx)
+          fz_rethrow(ctx);
+      }
+    }
+    fz_always(ctx)
+      fz_drop_path(ctx, path);
+    fz_catch(ctx)
+      fz_rethrow(ctx);
+
+    fz_try(ctx)
+      pdf_run_page_contents(ctx, page, dc->dev, fz_concat(fz_invert_matrix(page_ctm), form), NULL);
+    fz_always(ctx)
+    {
+      if (xf->clip && user_bbox)
+        fz_pop_clip(ctx, dc->dev);
+      fz_pop_clip(ctx, dc->dev);
+    }
+    fz_catch(ctx)
+      fz_rethrow(ctx);
   }
   fz_always(ctx)
     fz_drop_page(ctx, (fz_page*)page);
@@ -2501,14 +2608,15 @@ pdf_literal(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, curso
 static bool
 pdf_content(fz_context *ctx, dvi_context *dc, dvi_state *st, cursor_t cur, cursor_t lim)
 {
-  int depth = st->gs_stack.depth;
+  // Like dvipdfmx, this is "q cm CODE Q": CODE does not have to be balanced
+  // (trimclip opens a group with "pdf:content q" and closes it with
+  // "pdf:literal direct Q")
   if (!gs_push(st))
     return 0;
   fz_point cp = current_point(dc, st);
   st->gs.ctm = fz_pre_translate(st->gs.ctm, cp.x, cp.y);
   bool result = pdf_code(ctx, dc, st, cur, lim);
-  while (st->gs_stack.depth > depth)
-    gs_pop(ctx, dc, st);
+  gs_pop(ctx, dc, st);
   return result;
 }
 

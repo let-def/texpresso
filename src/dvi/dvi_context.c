@@ -107,13 +107,15 @@ void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev, f
 
   // The default user space of PDF: origin at the bottom-left of the page
   fz_matrix page_ctm = fz_make_matrix(1, 0, 0, -1, 0, page_height);
-  dvi_graphicstate_init(&st->gs, page_ctm);
   st->base_ctm = page_ctm;
   st->resources = dvi_pdfstore_page_resources(dc->pdfstore);
 
-  // DVI origin is one inch right and down from the top-left corner
-  st->origin.h = -72 / dc->scale;
-  st->origin.v = (page_height - 72) / dc->scale;
+  // Like dvipdfmx, page content starts by moving the origin of user space to
+  // the DVI origin, one inch right and down from the top-left corner.
+  // Raw PDF code (pdf:code, pdf:literal direct) is relative to this point.
+  dvi_graphicstate_init(&st->gs, fz_pre_translate(page_ctm, 72, page_height - 72));
+  st->origin.h = 0;
+  st->origin.v = 0;
 
   drop_forms(ctx, dc);
   dc->replay_depth = 0;
@@ -132,11 +134,38 @@ void dvi_context_begin_frame(fz_context *ctx, dvi_context *dc, fz_device *dev, f
 
 void dvi_context_end_frame(fz_context *ctx, dvi_context *dc)
 {
+  dvi_state *st = &dc->root;
   if (dc->forms_depth > 0)
   {
     fprintf(stderr, "pdf:bxobj: ending frame with %d unterminated forms\n", dc->forms_depth);
+    // Go back to the state of the page before the outermost form
+    for (int i = 0; i < dc->forms_depth; i++)
+    {
+      if (!dc->forms[i].restore)
+        continue;
+      dc->dev = dc->forms[i].dev;
+      st->gs = dc->forms[i].gs;
+      st->gs_stack.depth = dc->forms[i].gs_depth;
+      break;
+    }
     drop_forms(ctx, dc);
   }
+
+  // Unbalanced specials (e.g. a clip outside of q/Q) can leave clips on the
+  // device. Close them, devices refuse unbalanced content.
+  int clips = st->gs.clip_depth;
+  if (dc->dev)
+  {
+    fz_try(ctx)
+    {
+      for (int i = 0; i < clips; i++)
+        fz_pop_clip(ctx, dc->dev);
+    }
+    fz_catch(ctx)
+      fz_report_error(ctx);
+  }
+  st->gs_stack.depth = 0;
+  st->gs.clip_depth = 0;
   dvi_scratch_clear(ctx, &dc->scratch);
   dvi_context_set_device(ctx, dc, NULL);
 
