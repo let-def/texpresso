@@ -27,8 +27,17 @@
 
 #include <mupdf/fitz/context.h>
 #include <mupdf/fitz/buffer.h>
+#include <stdbool.h>
 
 typedef struct synctex_s synctex_t;
+
+// Source location found by synctex_scan; fname points into the synctex buffer
+typedef struct {
+  const char *fname;
+  int len;
+  int line;
+  int column;
+} synctex_hit_t;
 
 synctex_t *synctex_new(fz_context *ctx);
 void synctex_free(fz_context *ctx, synctex_t *stx);
@@ -38,7 +47,7 @@ int synctex_page_count(synctex_t *stx);
 int synctex_input_count(synctex_t *stx);
 void synctex_page_offset(fz_context *ctx, synctex_t *stx, unsigned index, int *bop, int *eop);
 int synctex_input_offset(fz_context *ctx, synctex_t *stx, unsigned index);
-void synctex_scan(fz_context *ctx, synctex_t *stx, fz_buffer *buf, const char *doc_dir, unsigned page, int x, int y);
+bool synctex_scan(fz_context *ctx, synctex_t *stx, fz_buffer *buf, unsigned page, int x, int y, synctex_hit_t *hit);
 
 int synctex_has_target(synctex_t *stx);
 void synctex_set_target(synctex_t *stx, int current_page, const char *path, int line);

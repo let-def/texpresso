@@ -681,16 +681,16 @@ static int get_input(fz_buffer *buf,
   return (fend - filename);
 }
 
-void synctex_scan(fz_context *ctx,
+bool synctex_scan(fz_context *ctx,
                   synctex_t *stx,
                   fz_buffer *buf,
-                  const char *doc_dir,
                   unsigned page,
                   int x,
-                  int y)
+                  int y,
+                  synctex_hit_t *hit)
 {
   if (synctex_page_count(stx) <= page)
-    return;
+    return false;
 
   int bop, eop;
   synctex_page_offset(ctx, stx, page, &bop, &eop);
@@ -701,18 +701,19 @@ void synctex_scan(fz_context *ctx,
   c.area = INFINITY;
 
   parse_tree(stx, buf, ptr, x, y, &c);
-  if (c.link.tag)
-  {
-    const char *fname;
-    int len = get_input(buf, stx, c.link.tag-1, &fname);
-    fprintf(stderr,
-            "synctex best candidate: (%d,%d)-(%d,%d) "
-            "file:%.*s line:%d column:%d\n",
-            c.rect.x0, c.rect.y0, c.rect.x1, c.rect.y1,
-            len, fname,
-            c.link.line, c.link.column);
-    editor_synctex(doc_dir, fname, len, c.link.line, c.link.column);
-  }
+  if (!c.link.tag)
+    return false;
+
+  hit->len = get_input(buf, stx, c.link.tag-1, &hit->fname);
+  hit->line = c.link.line;
+  hit->column = c.link.column;
+  fprintf(stderr,
+          "synctex best candidate: (%d,%d)-(%d,%d) "
+          "file:%.*s line:%d column:%d\n",
+          c.rect.x0, c.rect.y0, c.rect.x1, c.rect.y1,
+          hit->len, hit->fname,
+          c.link.line, c.link.column);
+  return true;
 }
 
 void synctex_set_target(synctex_t *stx, int current_page, const char *path, int line)

@@ -266,7 +266,9 @@ static void ui_mouse_down(struct persistent_state *ps, ui_state *ui, int x, int 
         // pt.y -= 72;
         fprintf(stderr, "click: (%f,%f) mapped:(%f,%f)\n",
                 pt.x, pt.y, f * pt.x, f * pt.y);
-        synctex_scan(ps->ctx, stx, buf, ps->doc_path, ui->page, f * pt.x, f * pt.y);
+        synctex_hit_t hit;
+        if (synctex_scan(ps->ctx, stx, buf, ui->page, f * pt.x, f * pt.y, &hit))
+          editor_synctex(ps->doc_path, hit.fname, hit.len, hit.line, hit.column);
       }
     }
 
