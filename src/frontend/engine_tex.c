@@ -1011,6 +1011,42 @@ static void revert_trace(trace_entry_t *te)
   te->entry->seen = te->seen;
 }
 
+// Update the views of the outputs (DVI pages, synctex, editor buffers)
+// after processes have been popped
+static void sync_outputs(fz_context *ctx, struct tex_engine *self)
+{
+  if (self->st.document.entry)
+  {
+    fprintf(stderr, "[info] before rollback: %d pages\n", incdvi_page_count(self->dvi));
+    incdvi_update(ctx, self->dvi, self->st.document.entry->saved.data);
+    fprintf(stderr, "[info] after  rollback: %d pages\n", incdvi_page_count(self->dvi));
+  }
+  else
+    incdvi_reset(self->dvi);
+  if (self->st.synctex.entry)
+  {
+    fprintf(stderr, "[info] before rollback: %d pages in synctex\n", synctex_page_count(self->stex));
+    synctex_update(ctx, self->stex, self->st.synctex.entry->saved.data);
+    fprintf(stderr, "[info] after  rollback: %d pages in synctex\n", synctex_page_count(self->stex));
+  }
+  else
+    synctex_rollback(ctx, self->stex, 0);
+  editor_truncate(BUF_OUT, output_data(self->st.stdout.entry));
+  editor_truncate(BUF_LOG, output_data(self->st.log.entry));
+}
+
+// Undo the observations recorded by popped processes:
+// `reverted` is the trace length before popping
+static void revert_popped_trace(struct tex_engine *self, int reverted)
+{
+  int trace_len = self->process_count == 0 ? 0 : get_process(self)->trace_len;
+  while (reverted > trace_len)
+  {
+    reverted--;
+    revert_trace(&self->trace[reverted]);
+  }
+}
+
 static void rollback_processes(fz_context *ctx, struct tex_engine *self, int reverted, int trace)
 {
   self->deferred.active = false;
@@ -1048,12 +1084,7 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
   while (self->process_count > 0 && get_process(self)->trace_len > trace)
     pop_process(ctx, self);
 
-  int trace_len = self->process_count == 0 ? 0 : get_process(self)->trace_len;
-  while (reverted > trace_len)
-  {
-    reverted--;
-    revert_trace(&self->trace[reverted]);
-  }
+  revert_popped_trace(self, reverted);
   clear_convergence_stash(ctx, self);
 
   fprintf(stderr, "after rollback: %d bytes of output\n",
@@ -1062,24 +1093,7 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
     : 0
   );
 
-  if (self->st.document.entry)
-  {
-    fprintf(stderr, "[info] before rollback: %d pages\n", incdvi_page_count(self->dvi));
-    incdvi_update(ctx, self->dvi, self->st.document.entry->saved.data);
-    fprintf(stderr, "[info] after  rollback: %d pages\n", incdvi_page_count(self->dvi));
-  }
-  else
-    incdvi_reset(self->dvi);
-  if (self->st.synctex.entry)
-  {
-    fprintf(stderr, "[info] before rollback: %d pages in synctex\n", synctex_page_count(self->stex));
-    synctex_update(ctx, self->stex, self->st.synctex.entry->saved.data);
-    fprintf(stderr, "[info] after  rollback: %d pages in synctex\n", synctex_page_count(self->stex));
-  }
-  else
-    synctex_rollback(ctx, self->stex, 0);
-  editor_truncate(BUF_OUT, output_data(self->st.stdout.entry));
-  editor_truncate(BUF_LOG, output_data(self->st.log.entry));
+  sync_outputs(ctx, self);
 }
 
 static bool possible_fence(trace_entry_t *te)
@@ -1525,9 +1539,15 @@ static void engine_finish_convergence(txp_engine *_self, fz_context *ctx)
     // Finishing left the latest process dead (fd=-1) at the top of the
     // snapshot stack. Strip dead processes so get_process() returns a
     // live snapshot the next user edit can roll back into.
+    // Popping rolls the outputs back to the snapshot: the trace and the
+    // views of the outputs must follow.
+    int reverted = self->process_count == 0 ? 0 : get_process(self)->trace_len;
     while (self->process_count > 0 && get_process(self)->fd == -1)
       pop_process(ctx, self);
-    if (self->process_count == 0)
+    revert_popped_trace(self, reverted);
+    if (self->process_count > 0)
+      sync_outputs(ctx, self);
+    else
     {
       reset_seen_for_respawn(self);
       incdvi_reset(self->dvi);
